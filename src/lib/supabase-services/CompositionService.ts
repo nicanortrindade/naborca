@@ -55,7 +55,9 @@ export const CompositionService = {
         const { data, error } = await supabase
             .from('compositions')
             .select('*')
-            .or(`code.ilike.%${safeQuery}%,description.ilike.%${safeQuery}%`)
+            .or(
+                `code.ilike.%${safeQuery}%,description.ilike.%${safeQuery}%`
+            )
             .limit(50); // Busca pública
 
         if (error) throw error;
