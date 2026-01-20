@@ -39,15 +39,25 @@ function toItemDomain(row: CompositionItemRow): ComposicaoItem {
 
 export const CompositionService = {
     async getAll(): Promise<Composicao[]> {
-        const { data: { user } } = await supabase.auth.getUser();
-        const { data, error } = await supabase.from('compositions').select('*').eq('user_id', user?.id);
+        const { data, error } = await supabase
+            .from('compositions')
+            .select('*')
+            .limit(1000); // Sem filtro de user_id para composições públicas
+
         if (error) throw error;
         return data.map(toDomain);
     },
 
     async search(query: string): Promise<Composicao[]> {
-        const { data: { user } } = await supabase.auth.getUser();
-        const { data, error } = await supabase.from('compositions').select('*').eq('user_id', user?.id).or(`description.ilike.%${query}%,code.ilike.%${query}%`);
+        const safeQuery = query?.trim();
+        if (!safeQuery) return [];
+
+        const { data, error } = await supabase
+            .from('compositions')
+            .select('*')
+            .or(`description.ilike.%${safeQuery}%,code.ilike.%${safeQuery}%`)
+            .limit(50); // Busca pública
+
         if (error) throw error;
         return data.map(toDomain);
     },
@@ -89,13 +99,9 @@ export const CompositionService = {
     },
 
     async getByCodes(codes: string[]): Promise<Composicao[]> {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return [];
-
         const { data, error } = await supabase
             .from('compositions')
             .select('*')
-            .eq('user_id', user.id)
             .in('code', codes);
 
         if (error) throw error;
