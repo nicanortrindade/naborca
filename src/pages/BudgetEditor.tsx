@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { BudgetService } from '../lib/supabase-services/BudgetService';
 import { BudgetItemService } from '../lib/supabase-services/BudgetItemService'; // Removed prepareItemsForDisplay
@@ -424,82 +424,98 @@ const BudgetEditor = () => {
         }
     };
 
-    useEffect(() => {
-        // Modal principal: Localizar Insumo
-        if (!isAddingItem) {
+    const fetchResources = useCallback(async (query: string = '') => {
+        try {
+            const [insumos, compositions] = await Promise.all([
+                InsumoService.search(query),
+                CompositionService.search(query)
+            ]);
+
+            // Usar normalizador único para garantir consistência
+            const normalizedInsumos = (insumos || []).map(i => normalizeResource(i, 'insumo'));
+            const normalizedCompositions = (compositions || []).map(c => normalizeResource(c, 'composition'));
+
+            // Composições primeiro, depois insumos (prioridade visual)
+            const combined = [...normalizedCompositions, ...normalizedInsumos];
+
+            console.log("[EDITOR] fetchResources combined:", {
+                query,
+                count: combined.length,
+                inputCount: normalizedInsumos.length,
+                compCount: normalizedCompositions.length,
+                sample: combined.slice(0, 3)
+            });
+
+            setFilteredResources(combined);
+
+        } catch (error) {
+            console.error("[fetchResources] Erro ao buscar recursos:", error);
             setFilteredResources([]);
-            return;
         }
+    }, []);
 
-        const fetchResources = async () => {
-            try {
-                const query = searchTerm || '';
+    // Hook sugerido: Disparar busca assim que o modal abrir
+    useEffect(() => {
+        if (isAddingItem) {
+            console.log('[MODAL] isAddingItem=true → trigger fetchResources');
+            fetchResources(searchTerm ?? '');
+        } else {
+            setFilteredResources([]);
+        }
+    }, [isAddingItem, fetchResources]);
 
-                const [insumos, compositions] = await Promise.all([
-                    InsumoService.search(query),
-                    CompositionService.search(query)
-                ]);
+    // Debounce para busca enquanto o modal está aberto
+    useEffect(() => {
+        if (!isAddingItem || !searchTerm) return;
 
-                // Usar normalizador único para garantir consistência
-                const normalizedInsumos = (insumos || []).map(i => normalizeResource(i, 'insumo'));
-                const normalizedCompositions = (compositions || []).map(c => normalizeResource(c, 'composition'));
+        const timeout = setTimeout(() => {
+            fetchResources(searchTerm);
+        }, 300);
 
-                // Composições primeiro, depois insumos (prioridade visual)
-                const combined = [...normalizedCompositions, ...normalizedInsumos];
-
-                console.log("[EDITOR] fetchResources combined:", {
-                    count: combined.length,
-                    inputCount: normalizedInsumos.length,
-                    compCount: normalizedCompositions.length,
-                    sample: combined.slice(0, 3)
-                });
-
-                setFilteredResources(combined);
-
-            } catch (error) {
-                console.error("[fetchResources] Erro ao buscar recursos:", error);
-                setFilteredResources([]);
-            }
-        };
-
-        const timeout = setTimeout(fetchResources, 300);
         return () => clearTimeout(timeout);
-    }, [searchTerm, isAddingItem]);
+    }, [searchTerm, isAddingItem, fetchResources]);
 
     const [compositionFilteredResources, setCompositionFilteredResources] = useState<any[]>([]);
 
-    useEffect(() => {
-        // Modal de composição: Adicionar Insumo para CPU
-        if (!showCompositionSearch) {
+    const fetchCompResources = useCallback(async (query: string = '') => {
+        try {
+            const [insumos, compositions] = await Promise.all([
+                InsumoService.search(query),
+                CompositionService.search(query)
+            ]);
+
+            // Usar normalizador único (mesmo fluxo do modal principal)
+            const normalizedInsumos = (insumos || []).map(i => normalizeResource(i, 'insumo'));
+            const normalizedCompositions = (compositions || []).map(c => normalizeResource(c, 'composition'));
+
+            // Composições primeiro, depois insumos
+            setCompositionFilteredResources([...normalizedCompositions, ...normalizedInsumos]);
+
+        } catch (e) {
+            console.error("[fetchCompResources] Erro ao buscar recursos para composição:", e);
             setCompositionFilteredResources([]);
-            return;
         }
+    }, []);
 
-        const fetchCompResources = async () => {
-            try {
-                const query = compositionSearchTerm || '';
+    // Hook para disparar busca assim que o modal de composição abrir
+    useEffect(() => {
+        if (showCompositionSearch) {
+            fetchCompResources(compositionSearchTerm ?? '');
+        } else {
+            setCompositionFilteredResources([]);
+        }
+    }, [showCompositionSearch, fetchCompResources]);
 
-                const [insumos, compositions] = await Promise.all([
-                    InsumoService.search(query),
-                    CompositionService.search(query)
-                ]);
+    // Debounce para busca na composição
+    useEffect(() => {
+        if (!showCompositionSearch || !compositionSearchTerm) return;
 
-                // Usar normalizador único (mesmo fluxo do modal principal)
-                const normalizedInsumos = (insumos || []).map(i => normalizeResource(i, 'insumo'));
-                const normalizedCompositions = (compositions || []).map(c => normalizeResource(c, 'composition'));
+        const timeout = setTimeout(() => {
+            fetchCompResources(compositionSearchTerm);
+        }, 300);
 
-                // Composições primeiro, depois insumos
-                setCompositionFilteredResources([...normalizedCompositions, ...normalizedInsumos]);
-
-            } catch (e) {
-                console.error("[fetchCompResources] Erro ao buscar recursos para composição:", e);
-                setCompositionFilteredResources([]);
-            }
-        };
-
-        const timeout = setTimeout(fetchCompResources, 300);
         return () => clearTimeout(timeout);
-    }, [compositionSearchTerm, showCompositionSearch]);
+    }, [compositionSearchTerm, showCompositionSearch, fetchCompResources]);
 
     useEffect(() => {
         if (showABC) {
