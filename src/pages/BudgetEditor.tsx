@@ -425,10 +425,18 @@ const BudgetEditor = () => {
     };
 
     const fetchResources = useCallback(async (query: string = '') => {
+        const safeQuery = query?.trim();
+
+        if (!safeQuery) {
+            console.log('[EDITOR] empty query → skip fetch');
+            setFilteredResources([]);
+            return;
+        }
+
         try {
             const [insumos, compositions] = await Promise.all([
-                InsumoService.search(query),
-                CompositionService.search(query)
+                InsumoService.search(safeQuery),
+                CompositionService.search(safeQuery)
             ]);
 
             // Usar normalizador único para garantir consistência
@@ -478,10 +486,18 @@ const BudgetEditor = () => {
     const [compositionFilteredResources, setCompositionFilteredResources] = useState<any[]>([]);
 
     const fetchCompResources = useCallback(async (query: string = '') => {
+        const safeQuery = query?.trim();
+
+        if (!safeQuery) {
+            console.log('[EDITOR] empty query (comp) → skip fetch');
+            setCompositionFilteredResources([]);
+            return;
+        }
+
         try {
             const [insumos, compositions] = await Promise.all([
-                InsumoService.search(query),
-                CompositionService.search(query)
+                InsumoService.search(safeQuery),
+                CompositionService.search(safeQuery)
             ]);
 
             // Usar normalizador único (mesmo fluxo do modal principal)
