@@ -1442,12 +1442,7 @@ const BudgetEditor = () => {
                 totalGlobalFinal: calcResult?.totalGlobalFinal
             };
 
-            // BUG A FIX: Log de prova OBRIGATÓRIO
-            console.log("[EXPORT TOTALS]", {
-                base: calcResult?.totalGlobalBase,
-                bdi: (calcResult?.totalGlobalFinal || 0) - (calcResult?.totalGlobalBase || 0),
-                total: calcResult?.totalGlobalFinal
-            });
+            // Logs removidos para produção
 
             if (abcType === 'servicos') {
                 await exportABCServicosExcel(exportData);
@@ -1714,12 +1709,8 @@ const BudgetEditor = () => {
                 totalGlobalFinal: calcResult?.totalGlobalFinal
             };
 
-            // BUG A FIX: Log de prova OBRIGATÓRIO
-            console.log("[EXPORT TOTALS]", {
-                base: calcResult?.totalGlobalBase,
-                bdi: (calcResult?.totalGlobalFinal || 0) - (calcResult?.totalGlobalBase || 0),
-                total: calcResult?.totalGlobalFinal
-            });
+            // Logs removidos para produção
+
 
             if (type === 'synthetic') {
                 await exportPDFSynthetic(exportData);
@@ -1732,22 +1723,41 @@ const BudgetEditor = () => {
         }
     };
 
-    const handleExportExcel = async () => {
+    const handleExportExcel = async (type: 'synthetic' | 'analytic' = 'synthetic') => {
+        if (type === 'analytic') {
+            const isValid = await validateAnalytics();
+            if (!isValid) return;
+        }
+
         try {
             if (!budget || !items) return;
 
-            const { exportExcelSynthetic } = await import('../utils/budgetExport');
+            const { exportExcelSynthetic, exportExcelAnalytic } = await import('../utils/budgetExport');
 
-            const exportItems = visibleRows; // Passagem direta (já é flat e SSOT)
+            // Flatten rows for export using visibleRows (SSOT)
+            // Reusing logic from handleExportPDF to ensure consistency
+            const exportItems = await Promise.all(visibleRows.map(async (row) => {
+                // Fetch composition RAW for analytic
+                const compositionRaw = type === 'analytic'
+                    ? await BudgetItemCompositionService.getByBudgetItemId(row.id!)
+                    : [];
 
-            // BUG A FIX: Log de prova OBRIGATÓRIO
-            console.log("[EXPORT TOTALS]", {
-                base: calcResult?.totalGlobalBase,
-                bdi: (calcResult?.totalGlobalFinal || 0) - (calcResult?.totalGlobalBase || 0),
-                total: calcResult?.totalGlobalFinal
-            });
+                // Apply Adjustment to Composition
+                const composition = compositionRaw.map(c => ({
+                    ...c,
+                    unitPrice: applyAdjustment(c.unitPrice, adjustmentFactor),
+                    totalPrice: applyAdjustment(c.totalPrice, adjustmentFactor)
+                }));
 
-            await exportExcelSynthetic({
+                return {
+                    ...row,
+                    composition
+                };
+            }));
+
+            // Logs removidos para produção
+
+            const exportData = {
                 budgetName: budget.name,
                 clientName: budget.client,
                 date: budget.date,
@@ -1757,7 +1767,13 @@ const BudgetEditor = () => {
                 companySettings: settings,
                 totalGlobalBase: calcResult?.totalGlobalBase,
                 totalGlobalFinal: calcResult?.totalGlobalFinal
-            });
+            };
+
+            if (type === 'synthetic') {
+                await exportExcelSynthetic(exportData);
+            } else {
+                await exportExcelAnalytic(exportData);
+            }
 
         } catch (err) {
             console.error("Erro ao gerar Excel:", err);
@@ -1798,49 +1814,7 @@ const BudgetEditor = () => {
         }
     };
 
-    const handleExportExcelAnalytic = async () => {
-        const isValid = await validateAnalytics();
-        if (!isValid) return;
 
-        setIsExportingAnalytic(true);
-        try {
-            if (!budget || !items) return;
-
-            const { exportExcelAnalytic } = await import('../utils/budgetExport');
-
-            // Composição sob demanda
-            const exportItems = await Promise.all(visibleRows.map(async (row) => {
-                const compositionRaw = await BudgetItemCompositionService.getByBudgetItemId(row.id!).catch(() => []);
-                const composition = compositionRaw.map(c => ({
-                    ...c,
-                    unitPrice: applyAdjustment(c.unitPrice, adjustmentFactor),
-                    totalPrice: applyAdjustment(c.totalPrice, adjustmentFactor)
-                }));
-                return {
-                    ...row,
-                    composition
-                };
-            }));
-
-            await exportExcelAnalytic({
-                budgetName: budget.name,
-                clientName: budget.client,
-                date: budget.date,
-                bdi: budget.bdi || 0,
-                encargos: budget.encargosSociais || 0,
-                items: exportItems,
-                companySettings: settings,
-                totalGlobalBase: calcResult?.totalGlobalBase,
-                totalGlobalFinal: calcResult?.totalGlobalFinal
-            });
-
-        } catch (error) {
-            console.error("Erro export excel analitico:", error);
-            alert("Erro ao exportar Excel analítico. Verifique o console.");
-        } finally {
-            setIsExportingAnalytic(false);
-        }
-    };
 
     const handleExportCompleteZip = async () => {
         const isValid = await validateAnalytics();
@@ -2059,7 +2033,7 @@ const BudgetEditor = () => {
                                     <FileText size={18} />
                                 </button>
                                 <button
-                                    onClick={handleExportExcel}
+                                    onClick={() => handleExportExcel('synthetic')}
                                     className="w-10 h-10 flex items-center justify-center bg-green-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform"
                                     title="Excel Sintético"
                                 >
@@ -2212,10 +2186,10 @@ const BudgetEditor = () => {
                                             <FileText size={14} /> PDF Analítico (CPU)
                                         </button>
                                         <div className="h-px bg-slate-100 my-1"></div>
-                                        <button onClick={handleExportExcel} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center gap-2">
+                                        <button onClick={() => handleExportExcel('synthetic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center gap-2">
                                             <FileSpreadsheet size={14} /> Excel Sintético
                                         </button>
-                                        <button onClick={handleExportExcelAnalytic} disabled={isExportingAnalytic} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center justify-between gap-2">
+                                        <button onClick={() => handleExportExcel('analytic')} disabled={isExportingAnalytic} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center justify-between gap-2">
                                             <div className="flex items-center gap-2">
                                                 <FileSpreadsheet size={14} /> Excel Analítico
                                             </div>

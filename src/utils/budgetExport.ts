@@ -665,39 +665,85 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
 
     // GERAÇÃO SINTÉTICA (Limpa e Direta)
     const tableData = data.items.map(item => {
-        // Dados já vêm limpos de visibleRows/flattened
-        // Apenas formatação visual permitida aqui
-
-        // Cast para acessar propriedades flat se necessário ou usar item direto se tipagem bater
         const i: any = item;
-        const unitBDI = i.unitPriceWithBDI; // Já calculado no BudgetEditor
-        const quantity = i.quantity; // Undefined p/ grupo
-        const unitPrice = i.unitPrice; // Undefined p/ grupo
+        const level = getHierarchyLevel(item.itemNumber);
+
+        // CORREÇÃO ESTRUTURAL: Agrupadores (Nível 1 e 2 ou type='group')
+        // NÃO devem mostrar Código, Banco, Unidade, Quantidade, Unitário.
+        // DEVEM mostrar Totais e Peso (que já vêm calculados do BudgetEditor).
+        // DEVEM remover "IMP"/"IMPORT" se vierem sujos.
+
+        const isGroup = level < 3 || item.type === 'group';
+
+        // Sanitização de Código/Banco para Agrupadores
+        let code = item.code || '';
+        let source = item.source || '';
+
+        if (isGroup) {
+            code = '';
+            source = '';
+        } else {
+            // Limpeza extra pra itens reais (caso venham sujos)
+            if (code === 'IMP') code = '';
+            if (source === 'IMPORT') source = '';
+        }
+
+        const unitBDI = i.unitPriceWithBDI;
+
+        // Quantidade e Unitário zerados visualmente para grupos
+        const quantity = isGroup ? null : item.quantity;
+        const unitPrice = isGroup ? null : item.unitPrice;
+        const unitPriceBDI = isGroup ? null : unitBDI;
+        const unit = isGroup ? '' : (item.unit || '');
 
         return [
             item.itemNumber,
-            item.code || '',
-            item.source || '',
+            source,
+            code,
             item.description,
-            item.unit || '',
+            unit,
             quantity != null ? quantity.toFixed(2) : '',
             unitPrice != null ? formatCurrency(unitPrice) : '',
-            unitBDI != null ? formatCurrency(unitBDI) : '',
-            formatCurrency(item.totalPrice || item.finalPrice || 0),
-            formatPercent((i.pesoRaw || 0) * 100) // Formata 0-1 -> 0-100%
+            unitPriceBDI != null ? formatCurrency(unitPriceBDI) : '',
+            formatCurrency(item.totalPrice || item.finalPrice || 0), // Totais sempre visíveis
+            formatPercent((i.pesoRaw || 0) * 100)
         ];
     });
+
     autoTable(doc, {
         startY: 75,
-        head: [['ITEM', 'CÓDIGO', 'BANCO', 'DESCRIÇÃO', 'UND', 'QTD', 'UNIT', 'UNIT/BDI', 'TOTAL', 'PESO']],
+        head: [['ITEM', 'BANCO', 'CÓDIGO', 'DESCRIÇÃO', 'UND', 'QTD', 'UNIT', 'UNIT/BDI', 'TOTAL', 'PESO']],
         body: tableData,
-        headStyles: { fillColor: [30, 58, 138], fontSize: 7 },
-        styles: { fontSize: 7 },
+        headStyles: { fillColor: [30, 58, 138], fontSize: 7, halign: 'center' },
+        styles: { fontSize: 7, valign: 'middle' },
+        columnStyles: {
+            0: { halign: 'center', cellWidth: 15 }, // Item
+            1: { halign: 'center', cellWidth: 15 }, // Banco
+            2: { halign: 'center', cellWidth: 15 }, // Cod
+            3: { halign: 'left' },                  // Descrição
+            4: { halign: 'center', cellWidth: 10 }, // Und
+            5: { halign: 'center', cellWidth: 15 }, // Qtd
+            6: { halign: 'right', cellWidth: 20 },  // Unit
+            7: { halign: 'right', cellWidth: 20 },  // UnitBDI
+            8: { halign: 'right', cellWidth: 22 },  // Total
+            9: { halign: 'center', cellWidth: 12 }  // Peso
+        },
         didParseCell: (d) => {
+            if (d.section === 'head') return;
             const rowIndex = d.row.index;
             const level = getHierarchyLevel(data.items[rowIndex]?.itemNumber || '');
-            if (level === 1) { d.cell.styles.fillColor = [30, 58, 138]; d.cell.styles.textColor = [255, 255, 255]; d.cell.styles.fontStyle = 'bold'; }
-            else if (level === 2) { d.cell.styles.fillColor = [219, 234, 254]; d.cell.styles.fontStyle = 'bold'; }
+
+            if (level === 1) {
+                d.cell.styles.fillColor = [30, 58, 138];
+                d.cell.styles.textColor = [255, 255, 255];
+                d.cell.styles.fontStyle = 'bold';
+            } else if (level === 2) {
+                d.cell.styles.fillColor = [219, 234, 254];
+                d.cell.styles.fontStyle = 'bold';
+                d.cell.styles.textColor = [0, 0, 0];
+            } else {
+                d.cell.styles.textColor = [0, 0, 0];
+            }
         }
     });
 
@@ -712,13 +758,14 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
 export async function generateExcelSyntheticBuffer(data: ExportData): Promise<ArrayBuffer> {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Sint\u00e9tico');
-    const bdiFactor = 1 + (data.bdi || 0) / 100;
+    // bdiFactor is useful but we prefer direct calculated values from BudgetEditor if available.
+    // const bdiFactor = 1 + (data.bdi || 0) / 100;
 
     // Configure columns with minimum widths
     worksheet.columns = [
         { header: 'ITEM', key: 'item', width: 12 },
-        { header: 'C\u00d3DIGO', key: 'code', width: 14 },
         { header: 'BANCO', key: 'source', width: 10 },
+        { header: 'C\u00d3DIGO', key: 'code', width: 14 },
         { header: 'DESCRI\u00c7\u00c3O', key: 'description', width: 50 },
         { header: 'UND', key: 'unit', width: 8 },
         { header: 'QTD', key: 'quantity', width: 12 },
@@ -733,7 +780,7 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
 
     // Track header row number
     const headerRowNum = worksheet.rowCount + 1;
-    const headerRow = worksheet.addRow(['ITEM', 'C\u00d3DIGO', 'BANCO', 'DESCRI\u00c7\u00c3O', 'UND', 'QTD', 'UNIT', 'UNIT/BDI', 'TOTAL', 'PESO (%)']);
+    const headerRow = worksheet.addRow(['ITEM', 'BANCO', 'C\u00d3DIGO', 'DESCRI\u00c7\u00c3O', 'UND', 'QTD', 'UNIT', 'UNIT/BDI', 'TOTAL', 'PESO (%)']);
     headerRow.height = 22;
     headerRow.eachCell((cell, colNumber) => {
         cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
@@ -751,35 +798,38 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
     data.items.forEach((item, index) => {
         const i: any = item;
         const level = getHierarchyLevel(item.itemNumber);
+        const isGroup = item.type === 'group' || level < 3;
         const isEven = index % 2 === 0;
-        const isGroup = item.type === 'group';
 
-        // Peso Raw (0-1) para Excel formatar
-        const pesoRaw = i.pesoRaw || 0;
+        // Sanitização de colunas
+        let code = item.code;
+        let source = item.source;
+        if (isGroup) {
+            code = ''; source = '';
+        } else {
+            if (code === 'IMP') code = '';
+            if (source === 'IMPORT') source = '';
+        }
 
         const row = worksheet.addRow([
             item.itemNumber,
-            item.code, // Já limpo
-            item.source, // Já limpo
+            source,
+            code,
             item.description,
-            item.unit, // Já limpo
-            item.quantity, // Value or undefined
-            item.unitPrice,
-            i.unitPriceWithBDI,
-            (item.totalPrice || item.finalPrice),
-            pesoRaw
+            isGroup ? '' : item.unit,
+            isGroup ? null : item.quantity,
+            isGroup ? null : item.unitPrice,
+            isGroup ? null : i.unitPriceWithBDI,
+            (item.totalPrice || item.finalPrice || 0), // Totais visíveis sempre
+            (i.pesoRaw || 0)
         ]);
 
         // Apply formatting to each cell
         row.eachCell((cell, colNumber) => {
-            // Center alignment and wrap text
             cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-
-            // Description column - left align for readability
-            if (colNumber === 4) {
+            if (colNumber === 4) { // Descrição
                 cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
             }
-
             // Borders
             cell.border = {
                 top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
@@ -805,6 +855,10 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
         if (level === 1) {
             row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
             row.font = { color: { argb: 'FFFFFFFF' }, bold: true };
+            // Ensure borders match bg
+            row.eachCell((cell) => {
+                cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
+            });
         } else if (level === 2) {
             row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
             row.font = { bold: true };
@@ -813,8 +867,8 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
 
     // Financial Summary
     worksheet.addRow([]);
-    const summaryStart = worksheet.rowCount + 1;
 
+    // ... Summary logic (reused) ...
     const sumRow1 = worksheet.addRow(['', '', '', '', '', '', '', 'TOTAL SEM BDI', totalSemBDI, '']);
     sumRow1.font = { bold: true };
     sumRow1.getCell(9).numFmt = '"R$ "#,##0.00';
@@ -843,7 +897,6 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
 
 export async function generatePDFAnalyticBuffer(data: ExportData): Promise<ArrayBuffer> {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    // BUG A FIX: Usar totais vindos do Engine (Fonte única da verdade)
     const bdiFactor = 1 + (data.bdi || 0) / 100;
     const totalSemBDI = data.totalGlobalBase ?? data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
     const totalGeral = data.totalGlobalFinal ?? (totalSemBDI * bdiFactor);
@@ -860,67 +913,93 @@ export async function generatePDFAnalyticBuffer(data: ExportData): Promise<Array
     // Prepare flattened table data
     const tableData: any[] = [];
     data.items.forEach(item => {
-        const itemTotal = (item.totalPrice || 0) * bdiFactor;
-        const isGroup = item.type === 'group';
+        const level = getHierarchyLevel(item.itemNumber);
+        const isGroup = level < 3 || item.type === 'group';
 
-        // Item Row
+        let code = item.code || '';
+        let source = item.source || '';
+        if (isGroup) { code = ''; source = ''; }
+        else { if (code === 'IMP') code = ''; if (source === 'IMPORT') source = ''; }
+
+        const i: any = item;
+        const unitBDI = i.unitPriceWithBDI ?? (item.unitPrice * bdiFactor);
+        // Se visibleRows já tiver unitPriceWithBDI (o que é ideal), use-o.
+
+        // Linha Principal
         tableData.push([
             item.itemNumber,
-            isGroup ? '' : (item.code || ''),
-            isGroup ? '' : (item.source || ''),
+            source,
+            code,
             item.description,
-            isGroup ? '' : (item.unit || ''),
-            isGroup ? '' : item.quantity.toFixed(2),
+            isGroup ? '' : item.unit,
+            isGroup ? '' : item.quantity?.toFixed(2),
             isGroup ? '' : formatCurrency(item.unitPrice),
-            isGroup ? '' : formatCurrency(item.unitPrice * bdiFactor),
-            formatCurrency(itemTotal)
+            isGroup ? '' : formatCurrency(unitBDI),
+            formatCurrency(item.totalPrice || item.finalPrice || 0) // Sempre mostra total
         ]);
 
-        // Composition Rows
+        // Linha de Cabeçalho da Composição (Se tiver filhos)
         if (item.composition && item.composition.length > 0) {
+            // Headerzinho discreto para composição
+            tableData.push([
+                '',
+                '',
+                '',
+                'COMPOSIÇÃO ANALÍTICA:',
+                '',
+                '',
+                '',
+                '',
+                ''
+            ]);
+
             item.composition.forEach(c => {
+                // Normalizar dados da composição (preço, total)
+                // Eles já vêm ajustados pelo adjustmentFactor no handler
                 tableData.push([
                     '',
-                    c.code || '',
                     'INSUMO',
+                    c.code || '',
                     `   ${c.description}`,
                     c.unit,
-                    c.quantity.toFixed(4),
+                    c.quantity?.toFixed(4),
                     formatCurrency(c.unitPrice),
-                    '',
+                    '', // Unit BDI em insumo de composição? Geralmente não se lista, mas se quiser: formatCurrency(c.unitPrice * bdiFactor)
                     formatCurrency(c.totalPrice)
                 ]);
             });
+
+            // Spacer visual
+            tableData.push(['', '', '', '', '', '', '', '', '']);
         }
     });
 
     autoTable(doc, {
         startY: 75,
-        head: [['ITEM', 'CÓDIGO', 'BANCO', 'DESCRIÇÃO', 'UND', 'QTD/COEF', 'UNIT', 'UNIT/BDI', 'TOTAL']],
+        head: [['ITEM', 'BANCO', 'CÓDIGO', 'DESCRIÇÃO', 'UND', 'QTD', 'UNIT', 'UNIT/BDI', 'TOTAL']],
         body: tableData,
-        headStyles: { fillColor: [30, 58, 138], fontSize: 7 },
-        styles: { fontSize: 7, cellPadding: 1 },
+        headStyles: { fillColor: [30, 58, 138], fontSize: 7, halign: 'center' },
+        styles: { fontSize: 7, valign: 'middle' },
         columnStyles: {
-            0: { cellWidth: 15 },
-            1: { cellWidth: 15 },
-            2: { cellWidth: 15 },
-            3: { cellWidth: 'auto' },
-            4: { cellWidth: 10 },
-            5: { cellWidth: 15 },
-            6: { cellWidth: 20 },
-            7: { cellWidth: 20 },
-            8: { cellWidth: 20 }
+            0: { halign: 'center', cellWidth: 15 },
+            1: { halign: 'center', cellWidth: 15 },
+            2: { halign: 'center', cellWidth: 15 },
+            3: { halign: 'left' }, // Descrição
+            4: { halign: 'center', cellWidth: 10 },
+            5: { halign: 'center', cellWidth: 15 },
+            6: { halign: 'right', cellWidth: 20 },
+            7: { halign: 'right', cellWidth: 20 },
+            8: { halign: 'right', cellWidth: 20 }
         },
         didParseCell: (d) => {
-            const rowIndex = d.row.index;
-            const rowRaw = tableData[rowIndex];
-
             if (d.section === 'head') return;
+            // Cast raw to any to access array index without TS error
+            const raw = d.row.raw as any;
+            const itemNumber = raw[0];
+            const isItemRow = itemNumber && itemNumber !== '';
 
-            const isItem = rowRaw[0] !== '';
-
-            if (isItem) {
-                const level = getHierarchyLevel(rowRaw[0]);
+            if (isItemRow) {
+                const level = getHierarchyLevel(itemNumber as string);
                 if (level === 1) {
                     d.cell.styles.fillColor = [30, 58, 138];
                     d.cell.styles.textColor = [255, 255, 255];
@@ -928,13 +1007,24 @@ export async function generatePDFAnalyticBuffer(data: ExportData): Promise<Array
                 } else if (level === 2) {
                     d.cell.styles.fillColor = [219, 234, 254];
                     d.cell.styles.fontStyle = 'bold';
+                    d.cell.styles.textColor = [0, 0, 0];
                 } else {
+                    // Nível 3+ (Item normal)
                     d.cell.styles.fontStyle = 'bold';
+                    d.cell.styles.fillColor = [245, 245, 245]; // Leve destaque para linha pai de comp
                 }
             } else {
-                d.cell.styles.textColor = [80, 80, 80];
-                d.cell.styles.fontStyle = 'italic';
-                d.cell.styles.fontSize = 6;
+                // Linhas de Composição (Filhos)
+                const desc = raw[3] as string;
+                if (desc === 'COMPOSIÇÃO ANALÍTICA:') {
+                    d.cell.styles.fontStyle = 'bold';
+                    d.cell.styles.fontSize = 6;
+                    d.cell.styles.textColor = [100, 100, 100];
+                } else {
+                    d.cell.styles.textColor = [80, 80, 80];
+                    d.cell.styles.fontStyle = 'italic';
+                    d.cell.styles.fontSize = 7;
+                }
             }
         }
     });
@@ -953,77 +1043,124 @@ export async function generateExcelAnalyticBuffer(data: ExportData): Promise<Arr
     const bdiFactor = 1 + (data.bdi || 0) / 100;
 
     worksheet.columns = [
-        { header: 'ITEM', width: 10 },
-        { header: 'CÓDIGO', width: 12 },
-        { header: 'DESCRIÇÃO', width: 60 },
-        { header: 'UND', width: 8 },
-        { header: 'COEF/QTD', width: 12 },
-        { header: 'UNIT', width: 15 },
-        { header: 'UNIT/BDI', width: 15 },
-        { header: 'TOTAL', width: 18 }
+        { header: 'ITEM', key: 'item', width: 12 },
+        { header: 'BANCO', key: 'source', width: 12 },
+        { header: 'CÓDIGO', key: 'code', width: 14 },
+        { header: 'DESCRIÇÃO', key: 'description', width: 60 },
+        { header: 'UND', key: 'unit', width: 8 },
+        { header: 'QTD/COEF', key: 'quantity', width: 12 },
+        { header: 'UNIT', key: 'unitPrice', width: 15 },
+        { header: 'UNIT/BDI', key: 'unitPriceBdi', width: 15 },
+        { header: 'TOTAL', key: 'total', width: 18 }
     ];
 
-    addExcelHeader(worksheet, 'ORÇAMENTO ANALÍTICO (CPU)', data.budgetName, data.clientName, data.companySettings, 'H');
+    addExcelHeader(worksheet, 'ORÇAMENTO ANALÍTICO (CPU)', data.budgetName, data.clientName, data.companySettings, 'I', data);
 
-    const headerRow = worksheet.addRow(['ITEM', 'CÓDIGO', 'DESCRIÇÃO', 'UND', 'COEF/QTD', 'UNIT', 'UNIT/BDI', 'TOTAL']);
+    const headerRow = worksheet.addRow(['ITEM', 'BANCO', 'CÓDIGO', 'DESCRIÇÃO', 'UND', 'QTD/COEF', 'UNIT', 'UNIT/BDI', 'TOTAL']);
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+    headerRow.eachCell((cell) => {
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    });
 
     for (const item of data.items) {
         const level = getHierarchyLevel(item.itemNumber);
-        if (item.type === 'group') {
-            const row = worksheet.addRow([item.itemNumber, '', item.description?.toUpperCase(), '', '', '', '', '']);
-            if (level === 1) {
-                row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
-                row.font = { color: { argb: 'FFFFFFFF' }, bold: true };
-            } else {
-                row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
-                row.font = { bold: true };
-            }
-            continue;
-        }
+        const isGroup = level < 3 || item.type === 'group';
+
+        let code = item.code || '';
+        let source = item.source || '';
+        if (isGroup) { code = ''; source = ''; }
+        else { if (code === 'IMP') code = ''; if (source === 'IMPORT') source = ''; }
 
         // Linha Principal do Item
         const itemRow = worksheet.addRow([
             item.itemNumber,
-            item.code,
+            source,
+            code,
             item.description,
-            item.unit,
-            item.quantity,
-            item.unitPrice,
-            item.unitPrice * bdiFactor,
-            item.totalPrice * bdiFactor
+            isGroup ? '' : item.unit,
+            isGroup ? null : item.quantity,
+            isGroup ? null : item.unitPrice,
+            isGroup ? null : ((item as any).unitPriceWithBDI ?? (item.unitPrice * bdiFactor)),
+            (item.totalPrice || item.finalPrice || 0)
         ]);
-        itemRow.font = { bold: true };
-        itemRow.getCell(6).numFmt = '"R$ "#,##0.00';
-        itemRow.getCell(7).numFmt = '"R$ "#,##0.00';
-        itemRow.getCell(8).numFmt = '"R$ "#,##0.00';
+
+        // Formatação da linha principal
+        itemRow.eachCell((cell) => { cell.alignment = { vertical: 'middle' }; });
+        itemRow.getCell(1).alignment = { horizontal: 'center' }; // Item
+        itemRow.getCell(2).alignment = { horizontal: 'center' }; // Cod
+        itemRow.getCell(3).alignment = { horizontal: 'center' }; // Banco
+        itemRow.getCell(5).alignment = { horizontal: 'center' }; // Und
+        itemRow.getCell(6).alignment = { horizontal: 'center' }; // Qtd
+
+        // Estilos de Nível
+        if (level === 1) {
+            itemRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+            itemRow.font = { color: { argb: 'FFFFFFFF' }, bold: true };
+        } else if (level === 2) {
+            itemRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+            itemRow.font = { bold: true, color: { argb: 'FF000000' } };
+        } else {
+            // Item real
+            itemRow.font = { bold: true };
+            itemRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
+            itemRow.getCell(6).numFmt = '#,##0.00';
+            itemRow.getCell(7).numFmt = '"R$ "#,##0.00';
+            itemRow.getCell(8).numFmt = '"R$ "#,##0.00';
+            itemRow.getCell(9).numFmt = '"R$ "#,##0.00';
+        }
 
         // Composições
-        if (item.composition) {
+        if (item.composition && item.composition.length > 0) {
+            // Spacer row or Header for comp?
+            const compHeader = worksheet.addRow(['', '', '', 'COMPOSIÇÃO ANALÍTICA:', '', '', '', '', '']);
+            compHeader.font = { size: 8, bold: true, color: { argb: 'FF666666' } };
+
             item.composition.forEach(c => {
                 const compRow = worksheet.addRow([
                     '',
+                    'INSUMO',
                     c.code,
-                    `   ${c.description}`,
+                    `     ${c.description}`,
                     c.unit,
                     c.quantity,
                     c.unitPrice,
-                    '',
+                    '', // Unit BDI?
                     c.totalPrice
                 ]);
-                compRow.font = { size: 9, italic: true, color: { argb: 'FF666666' } };
-                compRow.getCell(6).numFmt = '"R$ "#,##0.00';
-                compRow.getCell(8).numFmt = '"R$ "#,##0.00';
+                compRow.font = { size: 9, italic: true, color: { argb: 'FF444444' } };
+                compRow.getCell(6).numFmt = '#,##0.0000';
+                compRow.getCell(7).numFmt = '"R$ "#,##0.00';
+                compRow.getCell(9).numFmt = '"R$ "#,##0.00';
+                compRow.getCell(4).alignment = { indent: 1 };
             });
+            worksheet.addRow([]); // Spacer
         }
     }
 
     const totalSemBDI = data.totalGlobalBase ?? data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
     const totalGlobalFinal = data.totalGlobalFinal ?? (totalSemBDI * bdiFactor);
+
+    // Summary Final
     worksheet.addRow([]);
-    worksheet.addRow(['', '', '', '', '', '', 'TOTAL SEM BDI', totalSemBDI]).font = { bold: true };
-    worksheet.addRow(['', '', '', '', '', '', 'TOTAL COM BDI', totalGlobalFinal]).font = { bold: true };
+    const totalRowBase = worksheet.addRow(['', '', '', '', '', '', '', 'TOTAL SEM BDI', totalSemBDI]);
+    totalRowBase.font = { bold: true };
+    totalRowBase.getCell(8).alignment = { horizontal: 'right' };
+    totalRowBase.getCell(9).numFmt = '"R$ "#,##0.00';
+
+    const totalRowBDI = worksheet.addRow(['', '', '', '', '', '', '', `BDI (${data.bdi}%)`, totalSemBDI * (data.bdi / 100)]);
+    totalRowBDI.font = { bold: true };
+    totalRowBDI.getCell(8).alignment = { horizontal: 'right' };
+    totalRowBDI.getCell(9).numFmt = '"R$ "#,##0.00';
+
+    const totalRowFinal = worksheet.addRow(['', '', '', '', '', '', '', 'TOTAL COM BDI', totalGlobalFinal]);
+    totalRowFinal.font = { bold: true, size: 12 };
+    totalRowFinal.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+    totalRowFinal.getCell(8).alignment = { horizontal: 'right' };
+    totalRowFinal.getCell(9).numFmt = '"R$ "#,##0.00';
+
+    // Footer
+    addExcelFooter(worksheet, data.companySettings, 'I');
 
     return await workbook.xlsx.writeBuffer();
 }
