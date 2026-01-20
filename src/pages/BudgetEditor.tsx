@@ -138,6 +138,11 @@ const BudgetEditor = () => {
                 };
             });
 
+            console.log("[DEBUG] hydratedItems length:", hydratedItems.length);
+            setItems(hydratedItems);
+
+            // LOGS REAIS SOLICITADOS (EDITOR)
+
             // LOGS REAIS SOLICITADOS (EDITOR)
             console.log("========== [EDITOR PIPELINE START] ==========");
             console.log("[EDITOR] budgetId=", budgetId);
@@ -1547,7 +1552,12 @@ const BudgetEditor = () => {
     // DATASET OFICIAL (Source of Truth) para GRID e EXPORTS
     // =========================================================================================
     const visibleRows = useMemo(() => {
-        if (!items || !budget) return [];
+        if (!items || !budget) {
+            console.log("[DEBUG] visibleRows skipped: items/budget missing");
+            return [];
+        }
+
+        console.log("[DEBUG] visibleRows calc start. items:", items.length);
 
         // Calculate factor dynamically
         const factor = calculateAdjustmentFactor(budget.metadata?.global_adjustment, calcResult?.totalGlobalBase || 0);
