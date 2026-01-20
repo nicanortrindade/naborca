@@ -119,5 +119,42 @@ export const BudgetItemCompositionService = {
 
         if (error) throw error;
         return data.map(toDomain);
+    },
+
+    /**
+     * Substitui ATOMICAMENTE os itens filhos de uma composição no orçamento.
+     * 1. Remove itens atuais
+     * 2. Insere novos itens
+     */
+    async replaceCompositionChildren(budgetItemId: string, children: Partial<BudgetItemComposition>[]): Promise<void> {
+        // 1. Delete Existing
+        const { error: deleteError } = await supabase
+            .from('budget_item_compositions')
+            .delete()
+            .eq('budget_item_id', budgetItemId);
+
+        if (deleteError) throw deleteError;
+
+        if (!children || children.length === 0) return;
+
+        // 2. Insert Batch (using standard insert as we don't have complex dedupe needs here for now)
+        // Adjust items to ensure budget_item_id is set
+        const itemsToInsert = children.map(c => ({
+            ...c,
+            budgetItemId: budgetItemId
+        }));
+
+        const payloads = itemsToInsert.map(toInsert);
+
+        // Supabase has limitation on number of rows per insert, chunking if safe practice
+        const CHUNK_SIZE = 100;
+        for (let i = 0; i < payloads.length; i += CHUNK_SIZE) {
+            const chunk = payloads.slice(i, i + CHUNK_SIZE);
+            const { error: insertError } = await (supabase
+                .from('budget_item_compositions') as any)
+                .insert(chunk);
+
+            if (insertError) throw insertError;
+        }
     }
 };

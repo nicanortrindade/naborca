@@ -1640,6 +1640,35 @@ export async function exportCompleteProject(data: ExportData, onProgress?: Expor
     saveAs(content, `Projeto_Completo_${nameClean}.zip`);
 }
 
+/**
+ * Valida se existem composições sem analítica (cruas) antes de exportar.
+ * Retorna lista de itens problemáticos ou array vazio se OK.
+ * A UI deve capturar este retorno e impedir a continuação se necessário.
+ * 
+ * @param items Lista completa de itens do orçamento
+ */
+export function validateAnalytics(items: ExportItem[]): ExportItem[] {
+    const rawCompositions: ExportItem[] = [];
+
+    items.forEach(item => {
+        // Checar se é do tipo COMPOSITION (ou group se tiver lógica extra, mas foco é composição)
+        // OBS: normalizeResource usa 'COMPOSITION', mas aqui pode vir 'composition' (normalized type vs export type)
+        // O type vindo de BudgetEditor -> exportData costuma ser o normalized type.
+        // Verificando ambos os cases para segurança.
+        const isComposition = item.type === 'COMPOSITION' || item.type === 'composition';
+
+        if (isComposition) {
+            // Verificar se tem filhos
+            const hasChildren = item.composition && item.composition.length > 0;
+            if (!hasChildren) {
+                rawCompositions.push(item);
+            }
+        }
+    });
+
+    return rawCompositions;
+}
+
 export async function generateExcelScheduleBuffer(data: ExportData): Promise<ArrayBuffer> {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Cronograma');

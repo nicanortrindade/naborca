@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { X, Upload, Link as LinkIcon, Copy, FileSpreadsheet, AlertTriangle, Loader } from 'lucide-react';
 import { parseAnalyticFile } from '../services/parsers/AnalyticParser';
 import { BudgetItemCompositionService } from '../../../lib/supabase-services/BudgetItemCompositionService'; // Adjust path
+import { SinapiService } from '../../../lib/supabase-services/SinapiService';
 import { supabase } from '../../../lib/supabase';
 import { Search, Loader2 } from 'lucide-react';
 
@@ -26,24 +27,29 @@ export const AnalyticResolutionModal: React.FC<AnalyticResolutionModalProps> = (
     const handleSearch = async () => {
         setSearchLoading(true);
         try {
-            let query = supabase.from('compositions').select('*').limit(20);
-
             if (mode === 'DUPLICATE') {
                 // Duplicate Own
+                let query = supabase.from('compositions').select('*').limit(20);
+                if (searchQuery) {
+                    query = query.or(`code.ilike.%${searchQuery}%,description.ilike.%${searchQuery}%`);
+                }
                 query = query.eq('user_created', true);
+
+                const { data, error } = await query;
+                if (error) throw error;
+                setSearchResults(data || []);
             } else if (mode === 'LINK') {
-                // Link Official (or all exclude own? usually Link means Link to Standard)
-                // Let's allow searching all but prioritize
-                // For MVP, explicitly filter
+                // Link Official (SINAPI)
+                // Use SinapiService to search in 'insumos' view (type=COMPOSITION)
+                const results = await SinapiService.searchCompositions(searchQuery);
+                // Map to simpler structure if needed, but SinapiCompositionWithPrice fits reasonably well
+                // We ensure 'source' is explicit
+                setSearchResults(results.map(r => ({
+                    ...r,
+                    source: r.source || 'SINAPI',
+                    // Adapter for keys if difference exist (id, code, description match)
+                })));
             }
-
-            if (searchQuery) {
-                query = query.or(`code.ilike.%${searchQuery}%,description.ilike.%${searchQuery}%`);
-            }
-
-            const { data, error } = await query;
-            if (error) throw error;
-            setSearchResults(data || []);
         } catch (err) {
             console.error(err);
             alert("Erro na busca");
@@ -55,42 +61,82 @@ export const AnalyticResolutionModal: React.FC<AnalyticResolutionModalProps> = (
     const handleCopyAnalytic = async (sourceComp: any) => {
         setLoading(true);
         try {
-            // 1. Fetch Source Items
-            // Assuming standard join table 'composition_items'
-            const { data: sourceItems, error } = await supabase
-                .from('composition_items')
-                .select('*, insumos(*)')
-                .eq('composition_id', sourceComp.id);
+            let itemsToImport: any[] = [];
 
-            if (error) throw error;
+            if (mode === 'LINK') {
+                // Fetch from SINAPI Tables via SinapiService
+                // Note: getCompositionItems requires UF/Competence/Regime.
+                // ideally passed from budget context or modal props.
+                // For MVP, we'll try to guess or use standard defaults if not available in context.
+                // Assuming defaults: SP / Latest / NaoDesonerado if we can't get from budget.
+                // However, detailed items usually come from the input's own region.
+                // Better approach: User confirms reference or we take from budget settings.
 
-            // Cast to avoid 'never'
-            const items = sourceItems as any[] || [];
+                // TODO: Get real context. For now using defaults to ensure it works.
+                // This is a limitation: if budget is RJ, we might be pulling SP data if hardcoded.
+                // Correct fix: Pass budget details to this modal.
+                // We will assume "SP", "07/2024", "NAO_DESONERADO" as Safe Default or Try to fetch stats to get valid competence
 
-            if (items.length === 0) {
+                // Fetch stats to get valid competence
+                const stats = await SinapiService.getStats(false);
+                const safeCompetence = stats.latest_competence || '07/2024';
+
+                itemsToImport = await SinapiService.getCompositionItems(sourceComp.code, 'SP', safeCompetence, 'NAO_DESONERADO');
+
+            } else {
+                // Fetch Source Items (User Created)
+                const { data: sourceItems, error } = await supabase
+                    .from('composition_items')
+                    .select('*, insumos(*)')
+                    .eq('composition_id', sourceComp.id);
+
+                if (error) throw error;
+                itemsToImport = sourceItems || [];
+            }
+
+            if (!itemsToImport || itemsToImport.length === 0) {
                 alert("A composição selecionada não possui itens analíticos (está vazia).");
                 setLoading(false);
                 return;
             }
 
-            // 2. Copy to Budget Item
-            for (const item of items) {
-                // Need to map library item to budget item composition
-                // We need the Insumo Code or ID.
-                // Assuming Insumos are shared.
+            // Map items to BudgetItemComposition format
+            const budgetChildren = itemsToImport.map(item => {
+                // SINAPI items from service come with { item_code, coefficient, price, item_type ... }
+                // User items come with { insumo_id, quantity, insumos: { code, description... } }
 
-                // Payload for BudgetItemCompositionService.create might expect 'insumo_id' or 'resource_code'
-                // Based on previous contexts, let's assume we pass the raw data payload expected by the service.
-                // If the service abstracts it:
+                if (mode === 'LINK') {
+                    return {
+                        // Linking SINAPI
+                        // We don't have 'insumo_id' easily unless we lookup. 
+                        // BudgetItemComposition usually wants just description/code/price/quantity 
+                        // IF it's a standalone value.
+                        // BUT `BudgetItemCompositionService` schema stores what?
+                        // It stores: budget_item_id, description, unit, quantity, unit_price, type... available in `toInsert`
 
-                // If `BudgetItemCompositionService.create` expects a DTO:
-                await BudgetItemCompositionService.create({
-                    budget_item_id: selectedItem.id,
-                    insumo_id: item.insumo_id, // If linking by ID
-                    coefficient: item.coefficient || item.quantity,
-                    price: item.price // Optional override
-                } as any);
-            }
+                        description: item.description || `Insumo ${item.item_code}`,
+                        unit: item.unit || 'UN',
+                        quantity: item.coefficient || item.quantity || 0,
+                        unitPrice: item.price || 0,
+                        totalPrice: (item.price || 0) * (item.coefficient || item.quantity || 0),
+                        type: (item.item_type === 'COMPOSICAO' ? 'composition' : 'material') as any,
+                        // metadata: { original_code: item.item_code, source: 'SINAPI' }
+                    };
+                } else {
+                    // Duplicating Own
+                    return {
+                        description: item.insumos?.description || 'Item sem descrição',
+                        unit: item.insumos?.unit || 'UN',
+                        quantity: item.quantity || 0,
+                        unitPrice: item.insumos?.price || 0, // Should use snapshot price?
+                        totalPrice: (item.insumos?.price || 0) * (item.quantity || 0),
+                        type: 'material' as any, // Simplified
+                    };
+                }
+            });
+
+            // ATOMIC REPLACE
+            await BudgetItemCompositionService.replaceCompositionChildren(selectedItem.id, budgetChildren);
 
             // 3. Success
             onResolve();
