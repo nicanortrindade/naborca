@@ -33,6 +33,9 @@ export interface ExportItem {
     peso?: number;
     pesoRaw?: number; // 0-1 (Fonte da Verdade)
     composition?: ExportCompositionItem[];
+    // Campos para identificar CPU
+    itemType?: 'insumo' | 'composicao';
+    compositionId?: string;
 }
 
 export interface CompanySettings {
@@ -1641,23 +1644,30 @@ export async function exportCompleteProject(data: ExportData, onProgress?: Expor
 }
 
 /**
- * Valida se existem composições sem analítica (cruas) antes de exportar.
- * Retorna lista de itens problemáticos ou array vazio se OK.
- * A UI deve capturar este retorno e impedir a continuação se necessário.
- * 
- * @param items Lista completa de itens do orçamento
+ * Determina se um item requer analítica (é uma Composição/CPU).
+ * Critério: itemType='composicao' OU tem compositionId definido.
  */
+export function isAnalyticRequiredItem(item: ExportItem): boolean {
+    if (item.type === 'group') return false;
+
+    // 1. Sinal explícito do banco (item_type)
+    if (item.itemType === 'composicao') return true;
+
+    // 2. Sinal por referência de composição
+    if (item.compositionId && item.compositionId.length > 0) return true;
+
+    // 3. Fallback: tipo normalizado (caso vindo da memória/editor antes de salvar)
+    if (item.type === 'COMPOSITION' || item.type === 'composition') return true;
+
+    return false;
+}
+
 export function validateAnalytics(items: ExportItem[]): ExportItem[] {
     const rawCompositions: ExportItem[] = [];
 
     items.forEach(item => {
-        // Checar se é do tipo COMPOSITION (ou group se tiver lógica extra, mas foco é composição)
-        // OBS: normalizeResource usa 'COMPOSITION', mas aqui pode vir 'composition' (normalized type vs export type)
-        // O type vindo de BudgetEditor -> exportData costuma ser o normalized type.
-        // Verificando ambos os cases para segurança.
-        const isComposition = item.type === 'COMPOSITION' || item.type === 'composition';
-
-        if (isComposition) {
+        // Usar função canônica para detectar CPU
+        if (isAnalyticRequiredItem(item)) {
             // Verificar se tem filhos
             const hasChildren = item.composition && item.composition.length > 0;
             if (!hasChildren) {

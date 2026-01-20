@@ -1624,7 +1624,14 @@ const BudgetEditor = () => {
             const divergent: any[] = [];
 
             // Check visible items that should have composition
-            const candidates = visibleRows.filter(r => r.kind === 'ITEM' && (r.resourceType === 'COMPOSITION' || r.isComposition));
+            // FIX: Usar itemType ou compositionId pois type='service' pode ser CPU
+            const candidates = visibleRows.filter(r =>
+                r.kind === 'ITEM' && (
+                    r.itemType === 'composicao' ||
+                    (r.compositionId && r.compositionId.length > 0) ||
+                    r.type === 'COMPOSITION' // Legacy/Optimistic
+                )
+            );
 
             await Promise.all(candidates.map(async (item) => {
                 const children = await BudgetItemCompositionService.getByBudgetItemId(item.id!);
