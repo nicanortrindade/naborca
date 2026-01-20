@@ -66,7 +66,7 @@ export const InsumoService = {
             .limit(50);
 
         if (error) throw error;
-        return data.map(toDomain);
+        return (data || []).map(toDomain);
     },
 
     async create(insumo: Partial<Insumo>): Promise<Insumo> {

@@ -18,6 +18,7 @@ import { generateBDIReport, generateEncargosReport, generateEncargosFullReport }
 import { useIsMobile } from '../App';
 import { ENCARGOS_SOCIAIS_BASES, calcularTotalBase } from '../data/encargosSociais';
 import { BudgetImporter } from '../features/importer';
+import { calculateAdjustmentFactor, applyAdjustment } from '../utils/globalAdjustment';
 
 /**
  * Normalizador único de recursos (insumos e composições)
@@ -94,6 +95,11 @@ const BudgetEditor = () => {
     const [budget, setBudget] = useState<any>(null);
     const [items, setItems] = useState<any[]>([]);
     const [calcResult, setCalcResult] = useState<any>(null); // Armazena resultado do engine
+
+    // Global Adjustment Factor (Source of Truth for Display)
+    const adjustmentFactor = useMemo(() => {
+        return calculateAdjustmentFactor(budget?.metadata?.global_adjustment, calcResult?.totalGlobalBase || 0);
+    }, [budget, calcResult]);
     const [settings, setSettings] = useState<any>(null);
     const [loading, setLoading] = useState(false);
 
@@ -253,9 +259,27 @@ const BudgetEditor = () => {
         setLoading(true);
 
         try {
+            // Novo modelo: Salva no Metadata (Source of Truth)
+            const adjustmentType = type === 'percentage' ? 'percentage' : 'fixed';
+
+            const meta = {
+                ...budget.metadata,
+                global_adjustment: {
+                    type: adjustmentType,
+                    value: value
+                }
+            };
+
+            await BudgetService.update(budget.id, { metadata: meta });
+            await loadBudget();
+
+            setShowAdjustmentModal(false);
+            alert("Ajuste Global configurado com sucesso! Os valores foram recalculados dinamicamente.");
+            return; // Encerra aqui, ignorando lógica legada abaixo
+
             // Helpers para logs (Passo 1 OBRIGATÓRIO)
-            const pickFirstLeaf = (arr: any[]) => arr.find(i => i.level >= 3 && i.type !== 'group');
-            const pick3Leaves = (arr: any[]) => arr.filter(i => i.level >= 3 && i.type !== 'group').slice(0, 3);
+            // const pickFirstLeaf = (arr: any[]) => arr.find(i => i.level >= 3 && i.type !== 'group');
+            const pickFirstLeaf = null; // Legacy placeholder
 
             // LOG A: BEFORE
             console.log("[GA] BEFORE", {
@@ -263,7 +287,7 @@ const BudgetEditor = () => {
                 mode: type,
                 inputValue: value,
                 applyToAnalytic,
-                firstLeaf: pickFirstLeaf(items),
+                firstLeaf: null, // picked removed legacy logic
                 beforeTotals: { base: calcResult?.totalGlobalBase, final: calcResult?.totalGlobalFinal }
             });
 
@@ -295,7 +319,7 @@ const BudgetEditor = () => {
                     id: item.id,
                     oldUnitPrice: item.unitPrice || 0,
                     unitPrice: Math.round((item.unitPrice || 0) * safeFactor * 100) / 100,
-                    isComposition: item.resourceType === 'COMPOSITION' || item.isComposition
+                    isComposition: !!(item.compositionId && item.compositionId.length > 0)
                 }));
 
             // Aplica localmente para o Engine recalcular
@@ -705,12 +729,28 @@ const BudgetEditor = () => {
 
     // REGRA 3: Calculate Global Total (Only Level 3+ Items using finalPrice)
     // finalPrice já inclui: quantity * unitPrice * (1 + BDI)
-    const totalBudget = items?.reduce((acc, item) => {
+    // CÁLCULO DE TOTAIS VISUAIS (Sintéticos Ajustados)
+    const totalBaseRaw = items?.reduce((acc, item) => {
         if (item.level >= 3 && item.type !== 'group') {
-            return acc + safeNumber(item.finalPrice);
+            return acc + safeNumber(item.totalPrice);
         }
         return acc;
     }, 0) || 0;
+
+    const totalBase = applyAdjustment(totalBaseRaw, adjustmentFactor);
+
+    const totalFinalRaw = items?.reduce((acc, item) => {
+        if (item.level >= 3 && item.type !== 'group') {
+            return acc + (item.finalPrice || 0);
+        }
+        return acc;
+    }, 0) || 0;
+
+    // totalFinal ajustado
+    const totalFinal = applyAdjustment(totalFinalRaw, adjustmentFactor);
+
+    // Alias para compatibilidade com Mobile Header que usa totalBudget
+    const totalBudget = totalBase;
 
     // Sync Total Global if needed
     useEffect(() => {
@@ -1513,13 +1553,28 @@ const BudgetEditor = () => {
     // =========================================================================================
     const visibleRows = useMemo(() => {
         if (!items || !budget) return [];
-        const totalFinal = calcResult?.totalGlobalFinal || 0;
+
+        // Calculate factor dynamically
+        const factor = calculateAdjustmentFactor(budget.metadata?.global_adjustment, calcResult?.totalGlobalBase || 0);
         const bdiFactor = 1 + ((budget.bdi || 0) / 100);
+
+        // Recalculate Global Total Final Adjusted for Weight calc
+        // (Approximation: if factor applied to all items, total scales by factor too)
+        const totalFinalRaw = calcResult?.totalGlobalFinal || 0;
+        const totalFinalAdj = totalFinalRaw * factor;
 
         return items.map((item, idx) => {
             const isGroup = item.type === 'group';
-            const itemTotal = item.finalPrice || 0;
-            const pesoRaw = totalFinal > 0 ? (itemTotal / totalFinal) : 0;
+
+            // Apply Adjustment (Visual & Export)
+            const unitPriceAdj = applyAdjustment(item.unitPrice || 0, factor);
+            // Re-calculate totals based on adjusted unit
+            // Note: quantity is raw.
+            const totalPriceAdj = (item.quantity || 0) * unitPriceAdj;
+            const finalPriceAdj = totalPriceAdj * bdiFactor;
+
+            const itemTotal = finalPriceAdj || 0;
+            const pesoRaw = totalFinalAdj > 0 ? (itemTotal / totalFinalAdj) : 0;
             const itemNumber = getItemNumber(idx);
 
             // Flattened Row (SSOT) - Campos Canônicos na Raiz
@@ -1535,12 +1590,14 @@ const BudgetEditor = () => {
                 source: isGroup ? '' : (item.source || ''),
                 unit: isGroup ? '' : (item.unit || ''),
 
-                // Valores Numéricos
+                // Valores Numéricos AJUSTADOS
                 quantity: isGroup ? undefined : item.quantity,
-                unitPrice: isGroup ? undefined : item.unitPrice,
-                unitPriceWithBDI: isGroup ? undefined : (item.unitPrice || 0) * bdiFactor,
+                unitPrice: isGroup ? undefined : unitPriceAdj,
+                unitPriceWithBDI: isGroup ? undefined : unitPriceAdj * bdiFactor, // Recalculado
 
-                // Totais Calculados
+                // Totais Calculados AJUSTADOS
+                totalPrice: isGroup ? 0 : totalPriceAdj, // Override totalPrice original
+                finalPrice: isGroup ? 0 : finalPriceAdj, // Override finalPrice original
                 total: itemTotal,
                 pesoRaw: pesoRaw
             };
@@ -1578,9 +1635,11 @@ const BudgetEditor = () => {
                     missing.push(item);
                 } else {
                     // 2. Check Divergence (Deep Check)
-                    const synthUnit = item.unitPrice || 0;
-                    // BudgetItemCompositionService.getByBudgetItemId returns EFFECTIVE prices (with overrides)
-                    const analyticSum = children.reduce((acc, c) => acc + (c.unitPrice * c.quantity), 0);
+                    const synthUnit = item.unitPrice || 0; // Já ajustado em visibleRows? Sim.
+
+                    // BudgetItemCompositionService returns RAW effective prices.
+                    const analyticSumRaw = children.reduce((acc, c) => acc + (c.unitPrice * c.quantity), 0);
+                    const analyticSum = applyAdjustment(analyticSumRaw, adjustmentFactor);
 
                     if (Math.abs(synthUnit - analyticSum) > 0.01) {
                         divergent.push({ ...item, analyticSum, expected: synthUnit });
@@ -1625,9 +1684,18 @@ const BudgetEditor = () => {
             // Flatten rows for export using visibleRows (SSOT)
             // Como visibleRows já é flat, apenas carregamos composição se necessário
             const exportItems = await Promise.all(visibleRows.map(async (row) => {
-                const composition = type === 'analytic'
+                // Fetch composition RAW
+                const compositionRaw = type === 'analytic'
                     ? await BudgetItemCompositionService.getByBudgetItemId(row.id!)
                     : [];
+
+                // Apply Adjustment to Composition
+                const composition = compositionRaw.map(c => ({
+                    ...c,
+                    unitPrice: applyAdjustment(c.unitPrice, adjustmentFactor),
+                    totalPrice: applyAdjustment(c.totalPrice, adjustmentFactor)
+                }));
+
                 return {
                     ...row,
                     composition
@@ -1742,7 +1810,12 @@ const BudgetEditor = () => {
 
             // Composição sob demanda
             const exportItems = await Promise.all(visibleRows.map(async (row) => {
-                const composition = await BudgetItemCompositionService.getByBudgetItemId(row.id!).catch(() => []);
+                const compositionRaw = await BudgetItemCompositionService.getByBudgetItemId(row.id!).catch(() => []);
+                const composition = compositionRaw.map(c => ({
+                    ...c,
+                    unitPrice: applyAdjustment(c.unitPrice, adjustmentFactor),
+                    totalPrice: applyAdjustment(c.totalPrice, adjustmentFactor)
+                }));
                 return {
                     ...row,
                     composition
@@ -1786,11 +1859,26 @@ const BudgetEditor = () => {
 
             // Preparar itens com numeração e composições
             const itemsWithNumbers = await Promise.all(items.map(async (item, idx) => {
-                const composition = item.type !== 'group'
+                const compositionRaw = item.type !== 'group'
                     ? await BudgetItemCompositionService.getByBudgetItemId(item.id!).catch(() => [])
                     : [];
+
+                const composition = compositionRaw.map(c => ({
+                    ...c,
+                    unitPrice: applyAdjustment(c.unitPrice, adjustmentFactor),
+                    totalPrice: applyAdjustment(c.totalPrice, adjustmentFactor)
+                }));
+
+                // Apply adjustment to item itself (since 'items' is RAW)
+                const unitPriceAdj = applyAdjustment(item.unitPrice || 0, adjustmentFactor);
+                const totalPriceAdj = applyAdjustment(item.totalPrice || 0, adjustmentFactor);
+                const finalPriceAdj = applyAdjustment(item.finalPrice || 0, adjustmentFactor);
+
                 return {
                     ...item,
+                    unitPrice: unitPriceAdj,
+                    totalPrice: totalPriceAdj,
+                    finalPrice: finalPriceAdj,
                     itemNumber: getItemNumber(idx),
                     composition
                 };
@@ -1866,22 +1954,7 @@ const BudgetEditor = () => {
     // CÁLCULO DE TOTAIS VISUAIS - REGRA 4 e 5
     // totalBase: Soma de totalPrice (que já é Base de Custo Direto)
 
-    const totalBase = items?.reduce((acc, item) => {
-        if (item.level >= 3 && item.type !== 'group') {
-            return acc + safeNumber(item.totalPrice);
-        }
-        return acc;
-    }, 0) || 0;
-
-    // totalFinal: Soma de finalPrice (que já inclui BDI)
-    // Se o engine estiver rodando certo, currentTotalGlobal já faz isso.
-    // Mas para segurança visual mantemos a redução dos itens L3
-    const totalFinal = items?.reduce((acc, item) => {
-        if (item.level >= 3 && item.type !== 'group') {
-            return acc + (item.finalPrice || 0);
-        }
-        return acc;
-    }, 0) || 0;
+    // Totais calculados anteriormente (acima)
 
     return (
         <div className="flex flex-col h-full overflow-hidden bg-background">
@@ -2917,76 +2990,81 @@ const BudgetEditor = () => {
                                         </div>
                                     )}
 
-                                    {filteredResources.map(res => (
-                                        <div
-                                            key={res.id}
-                                            onClick={() => setSelectedResource(res)}
-                                            className={clsx(
-                                                "p-4 border rounded-xl cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99]",
-                                                selectedResource?.id === res.id
-                                                    ? (addItemTab === 'CPU' ? "border-amber-500 bg-amber-50 ring-2 ring-amber-200" : "border-blue-500 bg-blue-50 ring-2 ring-blue-200")
-                                                    : "border-slate-100 hover:border-blue-300 hover:bg-white hover:shadow-md bg-white"
-                                            )}
-                                        >
-                                            <div className="flex justify-between items-start gap-4">
-                                                <div className="flex-1">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <span className={clsx(
-                                                            "text-[10px] font-black px-1.5 py-0.5 rounded",
-                                                            addItemTab === 'CPU' ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
-                                                        )}>
-                                                            {addItemTab === 'CPU' ? 'CPU' : 'INS'}
-                                                        </span>
-                                                        <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                                                            {res.code}
-                                                        </span>
-                                                        <span className="text-[10px] uppercase font-bold text-slate-400">
-                                                            {res.source || 'SINAPI'}
-                                                        </span>
+                                    {filteredResources && filteredResources.length > 0 && filteredResources.map(res => {
+                                        if (!res) return null;
+                                        return (
+                                            <div
+                                                key={res.id || Math.random()}
+                                                onClick={() => setSelectedResource(res)}
+                                                className={clsx(
+                                                    "p-4 border rounded-xl cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99]",
+                                                    selectedResource?.id === res.id
+                                                        ? (addItemTab === 'CPU' ? "border-amber-500 bg-amber-50 ring-2 ring-amber-200" : "border-blue-500 bg-blue-50 ring-2 ring-blue-200")
+                                                        : "border-slate-100 hover:border-blue-300 hover:bg-white hover:shadow-md bg-white"
+                                                )}
+                                            >
+                                                <div className="flex justify-between items-start gap-4">
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <span className={clsx(
+                                                                "text-[10px] font-black px-1.5 py-0.5 rounded",
+                                                                addItemTab === 'CPU' ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
+                                                            )}>
+                                                                {addItemTab === 'CPU' ? 'CPU' : 'INS'}
+                                                            </span>
+                                                            <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                                                                {res.code}
+                                                            </span>
+                                                            <span className="text-[10px] uppercase font-bold text-slate-400">
+                                                                {res.source || 'SINAPI'}
+                                                            </span>
+                                                        </div>
+                                                        <p className="font-bold text-slate-700 leading-snug">{res.description || 'Sem descrição'}</p>
                                                     </div>
-                                                    <p className="font-bold text-slate-700 leading-snug">{res.description}</p>
-                                                </div>
-                                                <div className="text-right shrink-0 bg-slate-50 p-2 rounded-lg">
-                                                    <p className="text-[10px] text-slate-400 uppercase font-black">Preço Ref.</p>
-                                                    <p className="font-black text-lg text-slate-800">
-                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price)}
-                                                    </p>
-                                                    <p className="text-[10px] text-slate-500 lowercase font-medium text-right mt-1">
-                                                        / {res.unit}
-                                                    </p>
+                                                    <div className="text-right shrink-0 bg-slate-50 p-2 rounded-lg">
+                                                        <p className="text-[10px] text-slate-400 uppercase font-black">Preço Ref.</p>
+                                                        <p className="font-black text-lg text-slate-800">
+                                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price || 0)}
+                                                        </p>
+                                                        <p className="text-[10px] text-slate-500 lowercase font-medium text-right mt-1">
+                                                            / {res.unit || 'UN'}
+                                                        </p>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             </div>
-                            <div className="p-4 md:p-6 bg-slate-50 border-t flex flex-col md:flex-row items-center gap-4 md:gap-6">
-                                <div className="flex-1 min-w-0 w-full">
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Item Selecionado</p>
-                                    <p className="text-sm font-bold text-slate-700 truncate" title={selectedResource.description}>
-                                        {selectedResource.description}
-                                    </p>
-                                </div>
-                                <div className="flex items-center gap-4 w-full md:w-auto">
-                                    <div className="w-24 md:w-32">
-                                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-center md:text-left">Quantidade</label>
-                                        <input
-                                            type="number"
-                                            value={quantity}
-                                            onChange={(e) => setQuantity(Number(e.target.value))}
-                                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-center focus:border-accent transition-all bg-white"
-                                            min="0.001"
-                                            step="0.001"
-                                        />
+                            {selectedResource && (
+                                <div className="p-4 md:p-6 bg-slate-50 border-t flex flex-col md:flex-row items-center gap-4 md:gap-6">
+                                    <div className="flex-1 min-w-0 w-full">
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Item Selecionado</p>
+                                        <p className="text-sm font-bold text-slate-700 truncate" title={selectedResource.description || ''}>
+                                            {selectedResource.description || 'Sem descrição'}
+                                        </p>
                                     </div>
-                                    <button
-                                        onClick={handleAddItem}
-                                        className="flex-1 md:flex-initial bg-green-600 text-white px-8 py-3.5 rounded-xl font-black hover:bg-green-700 shadow-lg shadow-green-200 active:scale-95 transition-all text-sm uppercase whitespace-nowrap"
-                                    >
-                                        Adicionar
-                                    </button>
+                                    <div className="flex items-center gap-4 w-full md:w-auto">
+                                        <div className="w-24 md:w-32">
+                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-center md:text-left">Quantidade</label>
+                                            <input
+                                                type="number"
+                                                value={quantity}
+                                                onChange={(e) => setQuantity(Number(e.target.value))}
+                                                className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-center focus:border-accent transition-all bg-white"
+                                                min="0.001"
+                                                step="0.001"
+                                            />
+                                        </div>
+                                        <button
+                                            onClick={handleAddItem}
+                                            className="flex-1 md:flex-initial bg-green-600 text-white px-8 py-3.5 rounded-xl font-black hover:bg-green-700 shadow-lg shadow-green-200 active:scale-95 transition-all text-sm uppercase whitespace-nowrap"
+                                        >
+                                            Adicionar
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                         </div>
                     </div>
                 )
