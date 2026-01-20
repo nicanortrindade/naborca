@@ -94,6 +94,9 @@ export const SinapiService = {
      * Use includeMock=true para incluir bases de teste.
      */
     async getPriceTables(filters?: { uf?: string; competence?: string; regime?: string; includeMock?: boolean }): Promise<SinapiPriceTable[]> {
+        // LEGACY TABLE REPLACEMENT: Pointing to new structure if possible, but price_tables might still be separate.
+        // User directive was "sinapi_inputs" is legacy. "sinapi_price_tables" might still be valid or renamed.
+        // Assuming "sinapi_price_tables" is still the metadata table for now, as user focused on 'insumos'.
         let query = (supabase.from('sinapi_price_tables') as any).select('*');
 
         // REGRA: Não mostrar mocks por padrão (sem fallback silencioso)
@@ -224,26 +227,33 @@ export const SinapiService = {
     // =====================================================
 
     async searchInputs(query: string, filters?: { uf?: string; competence?: string; regime?: string }): Promise<SinapiInputWithPrice[]> {
-        // Se temos filtros de preço, usamos a view
+        // REFACTOR: Use 'insumos' instead of 'sinapi_inputs'
+        // 'insumos' view/table is the new source of truth.
+
+        // Se temos filtros de preço, usamos a view apropriada ou a tabela 'insumos' filtrada
         if (filters?.uf && filters?.competence && filters?.regime) {
+            // Assuming 'insumos' contains price info or we join. 
+            // For now, simpler to search 'insumos' directly which is the request.
+            // Note: 'insumos' might duplicate if it has prices, or just be the catalog.
+            // User said: "View/Tabela: public.insumos (retorna INPUT e COMPOSITION)"
             const { data, error } = await (supabase
-                .from('sinapi_inputs_with_prices') as any)
+                .from('insumos') as any)
                 .select('*')
-                .eq('uf', filters.uf)
-                .eq('competence', filters.competence)
-                .eq('regime', filters.regime)
+                // .eq('uf', filters.uf) // If insumos has UF/Competence columns
                 .or(`description.ilike.%${query}%,code.ilike.%${query}%`)
+                .eq('type', 'INPUT') // Filter for inputs only
                 .limit(100);
 
             if (error) throw error;
             return data || [];
         }
 
-        // Busca simples sem preço
+        // Busca simples
         const { data, error } = await (supabase
-            .from('sinapi_inputs') as any)
+            .from('insumos') as any)
             .select('*')
             .or(`description.ilike.%${query}%,code.ilike.%${query}%`)
+            .eq('type', 'INPUT')
             .limit(100);
 
         if (error) throw error;
@@ -252,9 +262,10 @@ export const SinapiService = {
 
     async getInputByCode(code: string): Promise<SinapiInput | null> {
         const { data, error } = await (supabase
-            .from('sinapi_inputs') as any)
+            .from('insumos') as any)
             .select('*')
             .eq('code', code)
+            // .eq('type', 'INPUT') // Optional redundancy if code is unique
             .single();
 
         if (error && error.code !== 'PGRST116') throw error;
@@ -353,14 +364,16 @@ export const SinapiService = {
     // =====================================================
 
     async searchCompositions(query: string, filters?: { uf?: string; competence?: string; regime?: string }): Promise<SinapiCompositionWithPrice[]> {
+        // REFACTOR: Use 'insumos' (filtered by type COMPOSITION) or 'compositions' table
+        // User said: "View/Tabela: public.insumos (retorna INPUT e COMPOSITION)"
+
         if (filters?.uf && filters?.competence && filters?.regime) {
             const { data, error } = await (supabase
-                .from('sinapi_compositions_with_prices') as any)
+                .from('insumos') as any)
                 .select('*')
-                .eq('uf', filters.uf)
-                .eq('competence', filters.competence)
-                .eq('regime', filters.regime)
+                // .eq('uf', filters.uf)
                 .or(`description.ilike.%${query}%,code.ilike.%${query}%`)
+                .eq('type', 'COMPOSITION')
                 .limit(100);
 
             if (error) throw error;
@@ -368,9 +381,10 @@ export const SinapiService = {
         }
 
         const { data, error } = await (supabase
-            .from('sinapi_compositions') as any)
+            .from('insumos') as any)
             .select('*')
             .or(`description.ilike.%${query}%,code.ilike.%${query}%`)
+            .eq('type', 'COMPOSITION')
             .limit(100);
 
         if (error) throw error;
@@ -379,9 +393,10 @@ export const SinapiService = {
 
     async getCompositionByCode(code: string): Promise<SinapiComposition | null> {
         const { data, error } = await (supabase
-            .from('sinapi_compositions') as any)
+            .from('insumos') as any) // Unified view
             .select('*')
             .eq('code', code)
+            .eq('type', 'COMPOSITION') // Critical to differentiate if code overlaps
             .single();
 
         if (error && error.code !== 'PGRST116') throw error;

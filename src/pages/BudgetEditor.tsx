@@ -423,6 +423,59 @@ const BudgetEditor = () => {
             setLoading(false);
         }
     };
+    function normalizeResource(res: any, kind: ResourceKind): NormalizedResource {
+        if (!res) {
+            console.warn('[normalizeResource] Recebeu objeto vazio/null');
+            return {
+                type: kind === 'insumo' ? 'INPUT' : 'COMPOSITION',
+                code: '',
+                description: 'Recurso inválido',
+                level: 0,
+                unit: '',
+                price: 0,
+                source: '',
+                raw: res
+            };
+        }
+
+        // Determinar tipo baseado no kind OU na propriedade type/tipo do objeto
+        // Isso permite que o InsumoService retorne Compositions corretamente tipadas
+        let type: 'INPUT' | 'COMPOSITION' = kind === 'insumo' ? 'INPUT' : 'COMPOSITION';
+
+        if (res.type === 'COMPOSITION' || res.tipo === 'COMPOSITION') {
+            type = 'COMPOSITION';
+        } else if (res.type === 'INPUT' || res.tipo === 'INPUT') {
+            type = 'INPUT';
+        }
+
+        // Extrair code com fallbacks (codigo, code, id)
+        const code = res.codigo || res.code || res.id || '';
+
+        // Extrair description com fallbacks (descricao, description, nome, name)
+        const description = res.descricao || res.description || res.nome || res.name || 'Sem descrição';
+
+        // Extrair unit com fallbacks (unidade, unit, un)
+        const unit = res.unidade || res.unit || res.un || '';
+
+        // Extrair price com fallbacks (preco, price, valor, custoTotal, total_cost)
+        const priceRaw = res.preco ?? res.price ?? res.valor ?? res.custoTotal ?? res.total_cost ?? 0;
+        const price = typeof priceRaw === 'number' ? priceRaw : parseFloat(priceRaw) || 0;
+
+        // Extrair source com fallback
+        const source = res.fonte || res.source || (type === 'INPUT' ? 'SINAPI' : 'PROPRIO');
+
+        return {
+            id: res.id,
+            type,
+            code,
+            description,
+            level: res.level || 0,
+            unit,
+            price,
+            source,
+            raw: res
+        };
+    }
 
     const fetchResources = useCallback(async (query: string = '') => {
         const safeQuery = query?.trim();
@@ -443,14 +496,30 @@ const BudgetEditor = () => {
             const normalizedInsumos = (insumos || []).map(i => normalizeResource(i, 'insumo'));
             const normalizedCompositions = (compositions || []).map(c => normalizeResource(c, 'composition'));
 
-            // Composições primeiro, depois insumos (prioridade visual)
-            const combined = [...normalizedCompositions, ...normalizedInsumos];
+            // Deduplicação por Código
+            const resourceMap = new Map<string, NormalizedResource>();
+
+            // Adiciona composições primeiro (prioridade)
+            normalizedCompositions.forEach(c => resourceMap.set(c.code, c));
+
+            // Adiciona insumos (sobrescreve apenas se não existir, ou se for logicamente preferível)
+            normalizedInsumos.forEach(i => {
+                if (!resourceMap.has(i.code)) {
+                    resourceMap.set(i.code, i);
+                } else {
+                    // Se já existe, verifique se o novo é "mais correto" (ex: tipo explícito)
+                    // Mas como demos prioridade a compositions (Service dedicado), mantemos o que está no map.
+                    // A menos que normalizedInsumos tenha trazido uma Composition que o outro não trouxe.
+                    // Neste caso, o código é a chave.
+                }
+            });
+
+            const combined = Array.from(resourceMap.values());
 
             console.log("[EDITOR] fetchResources combined:", {
                 query,
                 count: combined.length,
-                inputCount: normalizedInsumos.length,
-                compCount: normalizedCompositions.length,
+                duplicatesRemoved: (normalizedInsumos.length + normalizedCompositions.length) - combined.length,
                 sample: combined.slice(0, 3)
             });
 
