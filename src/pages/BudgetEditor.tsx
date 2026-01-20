@@ -138,30 +138,7 @@ const BudgetEditor = () => {
                 };
             });
 
-            console.log("[DEBUG] hydratedItems length:", hydratedItems.length);
             setItems(hydratedItems);
-
-            // LOGS REAIS SOLICITADOS (EDITOR)
-
-            // LOGS REAIS SOLICITADOS (EDITOR)
-            console.log("========== [EDITOR PIPELINE START] ==========");
-            console.log("[EDITOR] budgetId=", budgetId);
-            console.log("[EDITOR] raw.items.length=", viewItems?.length);
-            console.log("[EDITOR] raw.sample10=", viewItems?.slice(0, 10).map(i => ({
-                id: i.id, level: i.level, desc: i.description, parentId: i.parentId
-            })));
-
-            console.log("[EDITOR] afterRepair.items.length=", repairedItems?.length);
-            console.log("[EDITOR] afterRepair.sample10=", repairedItems?.slice(0, 10).map(i => ({
-                id: i.id, level: i.level, desc: i.description, parentId: i.parentId
-            })));
-
-            console.log("[EDITOR] computed.totalGlobal=", result.totalGlobalFinal);
-
-            console.log("[EDITOR] hydrated.sample10=", hydratedItems?.slice(0, 10).map(i => ({
-                id: i.id, level: i.level, desc: i.description, parentId: i.parentId, finalPrice: i.finalPrice
-            })));
-            console.log("========== [EDITOR PIPELINE END] ==========");
 
             // 4. ORGANIZAR (Apenas visual, agora que parentIds já foram corrigidos no passo 1)
             const organized = organizeHierarchy(hydratedItems);
@@ -1556,11 +1533,8 @@ const BudgetEditor = () => {
     // =========================================================================================
     const visibleRows = useMemo(() => {
         if (!items || !budget) {
-            console.log("[DEBUG] visibleRows skipped: items/budget missing");
             return [];
         }
-
-        console.log("[DEBUG] visibleRows calc start. items:", items.length);
 
         // Calculate factor dynamically
         const factor = calculateAdjustmentFactor(budget.metadata?.global_adjustment, calcResult?.totalGlobalBase || 0);
