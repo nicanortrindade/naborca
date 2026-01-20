@@ -913,19 +913,22 @@ const BudgetEditor = () => {
 
             // 1. Verificar se existe pelo menos uma ETAPA (Nível 1)
             const lastEtapa = [...items].reverse().find(i => i.level === 1);
-            if (!lastEtapa) {
-                alert("Erro: Crie uma ETAPA primeiro antes de adicionar itens.");
-                setLoading(false);
-                return;
-            }
+            // ALLOW ORPHANS: If no etapa exists, we add as root items (level=3, parentId=null)
+            // if (!lastEtapa) {
+            //    alert("Erro: Crie uma ETAPA primeiro antes de adicionar itens.");
+            //    setLoading(false);
+            //    return;
+            // }
 
             // 2. Definir o Pai: Prioridade para a última SUBETAPA (L2) DESTA etapa, senão usa a própria ETAPA (L1)
-            let targetParentId = lastEtapa.id!;
+            let targetParentId: string | undefined = lastEtapa?.id;
 
             // Busca a última subetapa que pertença a esta etapa específica
-            const lastSubEtapa = [...items].reverse().find(i => i.level === 2 && i.parentId === lastEtapa.id);
-            if (lastSubEtapa && lastSubEtapa.id) {
-                targetParentId = lastSubEtapa.id;
+            if (lastEtapa) {
+                const lastSubEtapa = [...items].reverse().find(i => i.level === 2 && i.parentId === lastEtapa.id);
+                if (lastSubEtapa && lastSubEtapa.id) {
+                    targetParentId = lastSubEtapa.id;
+                }
             }
 
             // 3. Criar o Item na Subetapa ou Etapa Alvo
