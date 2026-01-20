@@ -8,6 +8,7 @@ import { BudgetItemCompositionService } from '../lib/supabase-services/BudgetIte
 import GlobalAdjustmentModal from '../components/budgets/GlobalAdjustmentModal';
 import { InsumoService } from '../lib/supabase-services/InsumoService';
 import { CompositionService } from '../lib/supabase-services/CompositionService';
+import { SinapiService } from '../lib/supabase-services/SinapiService';
 import { CompanyService } from '../lib/supabase-services/CompanyService';
 import { ArrowLeft, Plus, Trash2, Search, X, Download, FileText, FileSpreadsheet, BarChart, Calculator, Percent, Lock, Unlock, Copy, RefreshCcw, AlertTriangle, TrendingUp, Save, Database, Calendar, Activity, Eye, ChevronDown, ChevronUp, AlertOctagon, Edit2, ListOrdered, Loader, Package } from 'lucide-react';
 
@@ -171,6 +172,9 @@ const BudgetEditor = () => {
     };
 
     const [isAddingItem, setIsAddingItem] = useState(false);
+    // NEW: Toggle State for Add Item Modal
+    const [addItemTab, setAddItemTab] = useState<'INS' | 'CPU'>('INS');
+
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedResource, setSelectedResource] = useState<any>(null);
     const [quantity, setQuantity] = useState(1);
@@ -423,61 +427,11 @@ const BudgetEditor = () => {
             setLoading(false);
         }
     };
-    function normalizeResource(res: any, kind: ResourceKind): NormalizedResource {
-        if (!res) {
-            console.warn('[normalizeResource] Recebeu objeto vazio/null');
-            return {
-                type: kind === 'insumo' ? 'INPUT' : 'COMPOSITION',
-                code: '',
-                description: 'Recurso inválido',
-                level: 0,
-                unit: '',
-                price: 0,
-                source: '',
-                raw: res
-            };
-        }
 
-        // Determinar tipo baseado no kind OU na propriedade type/tipo do objeto
-        // Isso permite que o InsumoService retorne Compositions corretamente tipadas
-        let type: 'INPUT' | 'COMPOSITION' = kind === 'insumo' ? 'INPUT' : 'COMPOSITION';
+    // Removed duplicate normalizeResource function
 
-        if (res.type === 'COMPOSITION' || res.tipo === 'COMPOSITION') {
-            type = 'COMPOSITION';
-        } else if (res.type === 'INPUT' || res.tipo === 'INPUT') {
-            type = 'INPUT';
-        }
 
-        // Extrair code com fallbacks (codigo, code, id)
-        const code = res.codigo || res.code || res.id || '';
-
-        // Extrair description com fallbacks (descricao, description, nome, name)
-        const description = res.descricao || res.description || res.nome || res.name || 'Sem descrição';
-
-        // Extrair unit com fallbacks (unidade, unit, un)
-        const unit = res.unidade || res.unit || res.un || '';
-
-        // Extrair price com fallbacks (preco, price, valor, custoTotal, total_cost)
-        const priceRaw = res.preco ?? res.price ?? res.valor ?? res.custoTotal ?? res.total_cost ?? 0;
-        const price = typeof priceRaw === 'number' ? priceRaw : parseFloat(priceRaw) || 0;
-
-        // Extrair source com fallback
-        const source = res.fonte || res.source || (type === 'INPUT' ? 'SINAPI' : 'PROPRIO');
-
-        return {
-            id: res.id,
-            type,
-            code,
-            description,
-            level: res.level || 0,
-            unit,
-            price,
-            source,
-            raw: res
-        };
-    }
-
-    const fetchResources = useCallback(async (query: string = '') => {
+    const fetchResources = useCallback(async (query: string = '', typeFilter: 'INS' | 'CPU' = 'INS') => {
         const safeQuery = query?.trim();
 
         if (!safeQuery) {
@@ -487,43 +441,29 @@ const BudgetEditor = () => {
         }
 
         try {
-            const [insumos, compositions] = await Promise.all([
-                InsumoService.search(safeQuery),
-                CompositionService.search(safeQuery)
-            ]);
+            // FIX: Explicit search based on Tab
+            let results: any[] = [];
 
-            // Usar normalizador único para garantir consistência
-            const normalizedInsumos = (insumos || []).map(i => normalizeResource(i, 'insumo'));
-            const normalizedCompositions = (compositions || []).map(c => normalizeResource(c, 'composition'));
+            if (typeFilter === 'INS') {
+                // Search ONLY Inputs
+                results = await InsumoService.search(safeQuery);
+                // Map to normalized (force type INPUT for display consistency if needed)
+                results = results.map(i => normalizeResource(i, 'insumo'));
+            } else {
+                // Search ONLY Compositions (CPUs)
+                // Using SinapiService directly to get from 'insumos' view with type=COMPOSITION
+                // Or CompositionService if it points to user compositions. 
+                // Given the context of "Localizar CPU", we want SINAPI CPUs too.
+                // SinapiService.searchCompositions queries 'insumos' view with type='COMPOSITION'.
+                const sinapiCPUs = await SinapiService.searchCompositions(safeQuery);
 
-            // Deduplicação por Código
-            const resourceMap = new Map<string, NormalizedResource>();
+                // Also search user compositions? CompositionService.search?
+                // Let's mix both or just use SinapiService for now as per requirement "backend/Supabase (tabela/endpoint onde ficam as composições importadas do SINAPI)"
 
-            // Adiciona composições primeiro (prioridade)
-            normalizedCompositions.forEach(c => resourceMap.set(c.code, c));
+                results = sinapiCPUs.map(c => normalizeResource(c, 'composition'));
+            }
 
-            // Adiciona insumos (sobrescreve apenas se não existir, ou se for logicamente preferível)
-            normalizedInsumos.forEach(i => {
-                if (!resourceMap.has(i.code)) {
-                    resourceMap.set(i.code, i);
-                } else {
-                    // Se já existe, verifique se o novo é "mais correto" (ex: tipo explícito)
-                    // Mas como demos prioridade a compositions (Service dedicado), mantemos o que está no map.
-                    // A menos que normalizedInsumos tenha trazido uma Composition que o outro não trouxe.
-                    // Neste caso, o código é a chave.
-                }
-            });
-
-            const combined = Array.from(resourceMap.values());
-
-            console.log("[EDITOR] fetchResources combined:", {
-                query,
-                count: combined.length,
-                duplicatesRemoved: (normalizedInsumos.length + normalizedCompositions.length) - combined.length,
-                sample: combined.slice(0, 3)
-            });
-
-            setFilteredResources(combined);
+            setFilteredResources(results);
 
         } catch (error) {
             console.error("[fetchResources] Erro ao buscar recursos:", error);
@@ -531,26 +471,26 @@ const BudgetEditor = () => {
         }
     }, []);
 
-    // Hook sugerido: Disparar busca assim que o modal abrir
+    // Hook sugerido: Disparar busca assim que o modal abrir ou a tab mudar
     useEffect(() => {
         if (isAddingItem) {
-            console.log('[MODAL] isAddingItem=true → trigger fetchResources');
-            fetchResources(searchTerm ?? '');
+            console.log(`[MODAL] isAddingItem=true Tab=${addItemTab} → trigger fetchResources`);
+            fetchResources(searchTerm ?? '', addItemTab);
         } else {
             setFilteredResources([]);
         }
-    }, [isAddingItem, fetchResources]);
+    }, [isAddingItem, addItemTab, fetchResources]);
 
-    // Debounce para busca enquanto o modal está aberto
+    // Debounce para busca enquanto o modal está aberto, considerando a TAB
     useEffect(() => {
         if (!isAddingItem || !searchTerm) return;
 
         const timeout = setTimeout(() => {
-            fetchResources(searchTerm);
+            fetchResources(searchTerm, addItemTab);
         }, 300);
 
         return () => clearTimeout(timeout);
-    }, [searchTerm, isAddingItem, fetchResources]);
+    }, [searchTerm, isAddingItem, addItemTab, fetchResources]);
 
     const [compositionFilteredResources, setCompositionFilteredResources] = useState<any[]>([]);
 
@@ -958,9 +898,10 @@ const BudgetEditor = () => {
                 unitPrice: selectedResource.price,
                 type: selectedResource.type,
                 source: selectedResource.source,
-                itemType: selectedResource.type === 'COMPOSITION' ? 'composicao' : 'insumo',
-                compositionId: selectedResource.type === 'COMPOSITION' ? selectedResource.id : undefined,
-                insumoId: selectedResource.type !== 'COMPOSITION' ? selectedResource.id : undefined,
+                itemType: addItemTab === 'CPU' ? 'composicao' : 'insumo', // FORÇA TIPO BASEADO NA TAB
+                // FIX: Use ONLY valid UUIDs from ID field. NEVER use code.
+                compositionId: addItemTab === 'CPU' ? (selectedResource.id || selectedResource.raw?.id) : null,
+                insumoId: addItemTab === 'INS' ? (selectedResource.id || selectedResource.raw?.id) : null,
             });
 
             await loadBudget();
@@ -1624,13 +1565,9 @@ const BudgetEditor = () => {
             const divergent: any[] = [];
 
             // Check visible items that should have composition
-            // FIX: Usar itemType ou compositionId pois type='service' pode ser CPU
+            // FIX: Usar APENAS compositionId como sinal de CPU (Definitivo)
             const candidates = visibleRows.filter(r =>
-                r.kind === 'ITEM' && (
-                    r.itemType === 'composicao' ||
-                    (r.compositionId && r.compositionId.length > 0) ||
-                    r.type === 'COMPOSITION' // Legacy/Optimistic
-                )
+                r.kind === 'ITEM' && r.compositionId && r.compositionId.length > 0
             );
 
             await Promise.all(candidates.map(async (item) => {
@@ -2931,79 +2868,125 @@ const BudgetEditor = () => {
                                 <button onClick={() => setIsAddingItem(false)} className="text-slate-400 hover:text-slate-600"><ArrowLeft size={24} /></button>
                             </div>
 
-                            <div className="p-6 border-b">
-                                <div className="relative">
-                                    <Search className="absolute left-4 top-4 text-slate-400" size={20} />
+                            <div className="flex-1 min-h-0 flex flex-col">
+                                {/* TABS Toggle */}
+                                <div className="px-6 pt-4 pb-2 flex items-center justify-center gap-4">
+                                    <button
+                                        onClick={() => { setAddItemTab('INS'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
+                                        className={clsx(
+                                            "px-4 py-2 text-xs font-bold rounded-lg border transition-all",
+                                            addItemTab === 'INS'
+                                                ? "bg-blue-600 text-white border-blue-600 shadow-md"
+                                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                        )}
+                                    >
+                                        [INS] Insumos
+                                    </button>
+                                    <button
+                                        onClick={() => { setAddItemTab('CPU'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
+                                        className={clsx(
+                                            "px-4 py-2 text-xs font-bold rounded-lg border transition-all",
+                                            addItemTab === 'CPU'
+                                                ? "bg-amber-600 text-white border-amber-600 shadow-md"
+                                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                        )}
+                                    >
+                                        [CPU] Composições
+                                    </button>
+                                </div>
+
+                                <div className="relative px-6 py-4 border-b border-slate-100 shrink-0">
+                                    <Search className="absolute left-10 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                                     <input
                                         autoFocus
-                                        className="w-full pl-12 pr-6 py-4 border-2 border-slate-100 rounded-xl outline-none focus:border-accent transition-all text-lg"
-                                        placeholder="Comece a digitar para buscar..."
+                                        className={clsx(
+                                            "w-full pl-12 pr-6 py-4 border-2 rounded-xl outline-none transition-all text-lg shadow-sm font-bold",
+                                            addItemTab === 'CPU'
+                                                ? "border-amber-100 focus:border-amber-500 bg-amber-50/30"
+                                                : "border-slate-100 focus:border-blue-500"
+                                        )}
+                                        placeholder={addItemTab === 'CPU' ? "Buscar Composição (CPU)..." : "Buscar Insumo (INS)..."}
                                         value={searchTerm}
                                         onChange={(e) => setSearchTerm(e.target.value)}
                                     />
                                 </div>
-                            </div>
+                                <div className="flex-1 overflow-y-auto p-6 space-y-2">
+                                    {filteredResources.length === 0 && (
+                                        <div className="text-center text-slate-400 py-10">
+                                            <p>Digite para buscar {addItemTab === 'CPU' ? 'composições' : 'insumos'}...</p>
+                                        </div>
+                                    )}
 
-                            <div className="flex-1 overflow-auto divide-y divide-slate-50">
-                                {filteredResources?.map(res => (
-                                    <div
-                                        key={res.id}
-                                        onClick={() => setSelectedResource(res)}
-                                        className={`p-4 flex justify-between items-center cursor-pointer hover:bg-blue-50 transition-colors ${selectedResource?.id === res.id ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''}`}
-                                    >
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                {/* Indicador de Tipo: [INS] ou [CPU] */}
-                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-black ${res.type === 'COMPOSITION'
-                                                    ? 'bg-purple-100 text-purple-700'
-                                                    : 'bg-blue-100 text-blue-700'
-                                                    }`}>
-                                                    {res.type === 'COMPOSITION' ? '[CPU]' : '[INS]'}
-                                                </span>
-                                                <span className="bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-[10px] font-black">{res.source}</span>
-                                                <span className="text-xs font-mono text-slate-400">{res.code}</span>
-                                            </div>
-                                            <div className="font-semibold text-slate-800">{res.description}</div>
-                                        </div>
-                                        <div className="text-right ml-8">
-                                            <div className="text-xs text-slate-400 mb-1">{res.unit}</div>
-                                            <div className="text-lg font-black text-slate-700">
-                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price)}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {selectedResource && (
-                                <div className="p-4 md:p-6 bg-slate-50 border-t flex flex-col md:flex-row items-center gap-4 md:gap-6">
-                                    <div className="flex-1 min-w-0 w-full">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Item Selecionado</p>
-                                        <p className="text-sm font-bold text-slate-700 truncate" title={selectedResource.description}>
-                                            {selectedResource.description}
-                                        </p>
-                                    </div>
-                                    <div className="flex items-center gap-4 w-full md:w-auto">
-                                        <div className="w-24 md:w-32">
-                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-center md:text-left">Quantidade</label>
-                                            <input
-                                                type="number"
-                                                value={quantity}
-                                                onChange={(e) => setQuantity(Number(e.target.value))}
-                                                className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-center focus:border-accent transition-all bg-white"
-                                                min="0.001"
-                                                step="0.001"
-                                            />
-                                        </div>
-                                        <button
-                                            onClick={handleAddItem}
-                                            className="flex-1 md:flex-initial bg-green-600 text-white px-8 py-3.5 rounded-xl font-black hover:bg-green-700 shadow-lg shadow-green-200 active:scale-95 transition-all text-sm uppercase whitespace-nowrap"
+                                    {filteredResources.map(res => (
+                                        <div
+                                            key={res.id}
+                                            onClick={() => setSelectedResource(res)}
+                                            className={clsx(
+                                                "p-4 border rounded-xl cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99]",
+                                                selectedResource?.id === res.id
+                                                    ? (addItemTab === 'CPU' ? "border-amber-500 bg-amber-50 ring-2 ring-amber-200" : "border-blue-500 bg-blue-50 ring-2 ring-blue-200")
+                                                    : "border-slate-100 hover:border-blue-300 hover:bg-white hover:shadow-md bg-white"
+                                            )}
                                         >
-                                            Adicionar
-                                        </button>
-                                    </div>
+                                            <div className="flex justify-between items-start gap-4">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className={clsx(
+                                                            "text-[10px] font-black px-1.5 py-0.5 rounded",
+                                                            addItemTab === 'CPU' ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
+                                                        )}>
+                                                            {addItemTab === 'CPU' ? 'CPU' : 'INS'}
+                                                        </span>
+                                                        <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                                                            {res.code}
+                                                        </span>
+                                                        <span className="text-[10px] uppercase font-bold text-slate-400">
+                                                            {res.source || 'SINAPI'}
+                                                        </span>
+                                                    </div>
+                                                    <p className="font-bold text-slate-700 leading-snug">{res.description}</p>
+                                                </div>
+                                                <div className="text-right shrink-0 bg-slate-50 p-2 rounded-lg">
+                                                    <p className="text-[10px] text-slate-400 uppercase font-black">Preço Ref.</p>
+                                                    <p className="font-black text-lg text-slate-800">
+                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price)}
+                                                    </p>
+                                                    <p className="text-[10px] text-slate-500 lowercase font-medium text-right mt-1">
+                                                        / {res.unit}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
-                            )}
+                            </div>
+                            <div className="p-4 md:p-6 bg-slate-50 border-t flex flex-col md:flex-row items-center gap-4 md:gap-6">
+                                <div className="flex-1 min-w-0 w-full">
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Item Selecionado</p>
+                                    <p className="text-sm font-bold text-slate-700 truncate" title={selectedResource.description}>
+                                        {selectedResource.description}
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-4 w-full md:w-auto">
+                                    <div className="w-24 md:w-32">
+                                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-center md:text-left">Quantidade</label>
+                                        <input
+                                            type="number"
+                                            value={quantity}
+                                            onChange={(e) => setQuantity(Number(e.target.value))}
+                                            className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-center focus:border-accent transition-all bg-white"
+                                            min="0.001"
+                                            step="0.001"
+                                        />
+                                    </div>
+                                    <button
+                                        onClick={handleAddItem}
+                                        className="flex-1 md:flex-initial bg-green-600 text-white px-8 py-3.5 rounded-xl font-black hover:bg-green-700 shadow-lg shadow-green-200 active:scale-95 transition-all text-sm uppercase whitespace-nowrap"
+                                    >
+                                        Adicionar
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )

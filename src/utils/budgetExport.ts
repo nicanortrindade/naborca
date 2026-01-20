@@ -1650,14 +1650,8 @@ export async function exportCompleteProject(data: ExportData, onProgress?: Expor
 export function isAnalyticRequiredItem(item: ExportItem): boolean {
     if (item.type === 'group') return false;
 
-    // 1. Sinal explícito do banco (item_type)
-    if (item.itemType === 'composicao') return true;
-
-    // 2. Sinal por referência de composição
+    // SINAL ÚNICO DE CPU: Tem compositionId definido
     if (item.compositionId && item.compositionId.length > 0) return true;
-
-    // 3. Fallback: tipo normalizado (caso vindo da memória/editor antes de salvar)
-    if (item.type === 'COMPOSITION' || item.type === 'composition') return true;
 
     return false;
 }
