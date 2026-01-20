@@ -1,0 +1,66 @@
+[
+    {
+        "code": "01.01.01",
+        "description": "MOBILIZAÇÃO E DESMOBILIZAÇÃO",
+        "unit": "UN",
+        "price": 5000.00,
+        "source": "SETOP",
+        "type": "service"
+    },
+    {
+        "code": "02.01.01",
+        "description": "LIMPEZA MECANIZADA DE TERRENO COM REMOÇÃO DE CAMADA VEGETAL",
+        "unit": "M2",
+        "price": 1.85,
+        "source": "SETOP",
+        "type": "service"
+    },
+    {
+        "code": "03.01.01",
+        "description": "ESCAVAÇÃO CARGA E TRANSPORTE DE MATERIAL DE 1A CATEGORIA - DMT 50 A 200M",
+        "unit": "M3",
+        "price": 12.40,
+        "source": "SETOP",
+        "type": "service"
+    },
+    {
+        "code": "03.02.01",
+        "description": "COMPACTAÇÃO DE ATERROS A 95% DO PROCTOR NORMAL",
+        "unit": "M3",
+        "price": 8.50,
+        "source": "SETOP",
+        "type": "service"
+    },
+    {
+        "code": "04.01.01",
+        "description": "BASE DE BRITA GRADUADA",
+        "unit": "M3",
+        "price": 185.00,
+        "source": "SETOP",
+        "type": "service"
+    },
+    {
+        "code": "04.02.01",
+        "description": "REVESTIMENTO EM CONCRETO BETUMINOSO USINADO A QUENTE - CBUQ",
+        "unit": "T",
+        "price": 485.00,
+        "source": "SETOP",
+        "type": "service"
+    },
+    {
+        "code": "05.01.01",
+        "description": "GUIA (MEIO-FIO) DE CONCRETO PRÉ-MOLDADO",
+        "unit": "M",
+        "price": 42.00,
+        "source": "SETOP",
+        "type": "service"
+    },
+    {
+        "code": "05.02.01",
+        "description": "SARJETA DE CONCRETO MOLDADA NO LOCAL",
+        "unit": "M",
+        "price": 38.50,
+        "source": "SETOP",
+        "type": "service"
+    }
+]

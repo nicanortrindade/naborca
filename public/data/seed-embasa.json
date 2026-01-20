@@ -1,0 +1,50 @@
+[
+    {
+        "code": "EMB-001",
+        "description": "ASSENTAMENTO DE TUBO PVC PARA REDE DE ESGOTO DN 150MM",
+        "unit": "M",
+        "price": 65.40,
+        "source": "EMBASA",
+        "type": "service"
+    },
+    {
+        "code": "EMB-002",
+        "description": "ASSENTAMENTO DE TUBO PVC PARA REDE DE AGUA DN 60MM",
+        "unit": "M",
+        "price": 32.10,
+        "source": "EMBASA",
+        "type": "service"
+    },
+    {
+        "code": "EMB-003",
+        "description": "LIGAÇÃO PREDIAL DE ESGOTO DN 100MM",
+        "unit": "UN",
+        "price": 450.00,
+        "source": "EMBASA",
+        "type": "service"
+    },
+    {
+        "code": "EMB-004",
+        "description": "LIGAÇÃO PREDIAL DE AGUA DN 20MM",
+        "unit": "UN",
+        "price": 280.00,
+        "source": "EMBASA",
+        "type": "service"
+    },
+    {
+        "code": "EMB-005",
+        "description": "POÇO DE VISITA EM ALVENARIA DE TIJOLO MACIÇO DN 1.20M",
+        "unit": "UN",
+        "price": 2850.00,
+        "source": "EMBASA",
+        "type": "service"
+    },
+    {
+        "code": "EMB-006",
+        "description": "CAIXA DE INSPEÇÃO EM PVC PARA ESGOTO",
+        "unit": "UN",
+        "price": 185.00,
+        "source": "EMBASA",
+        "type": "service"
+    }
+]

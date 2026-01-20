@@ -1,0 +1,114 @@
+[
+    {
+        "code": "I0001",
+        "description": "AJUDANTE",
+        "unit": "H",
+        "price": 21.80,
+        "source": "SEINFRA",
+        "type": "labor"
+    },
+    {
+        "code": "I0002",
+        "description": "ARMADOR",
+        "unit": "H",
+        "price": 28.15,
+        "source": "SEINFRA",
+        "type": "labor"
+    },
+    {
+        "code": "I0003",
+        "description": "CARPINTEIRO",
+        "unit": "H",
+        "price": 28.15,
+        "source": "SEINFRA",
+        "type": "labor"
+    },
+    {
+        "code": "I0004",
+        "description": "PEDREIRO",
+        "unit": "H",
+        "price": 28.15,
+        "source": "SEINFRA",
+        "type": "labor"
+    },
+    {
+        "code": "I0005",
+        "description": "SERVENTE",
+        "unit": "H",
+        "price": 21.80,
+        "source": "SEINFRA",
+        "type": "labor"
+    },
+    {
+        "code": "M0001",
+        "description": "CIMENTO PORTLAND",
+        "unit": "KG",
+        "price": 0.82,
+        "source": "SEINFRA",
+        "type": "material"
+    },
+    {
+        "code": "M0002",
+        "description": "AREIA MEDIA",
+        "unit": "M3",
+        "price": 105.00,
+        "source": "SEINFRA",
+        "type": "material"
+    },
+    {
+        "code": "M0003",
+        "description": "BRITA",
+        "unit": "M3",
+        "price": 92.00,
+        "source": "SEINFRA",
+        "type": "material"
+    },
+    {
+        "code": "M0004",
+        "description": "TIJOLO CERAMICO FURADO 9X19X19CM",
+        "unit": "UN",
+        "price": 0.75,
+        "source": "SEINFRA",
+        "type": "material"
+    },
+    {
+        "code": "S0001",
+        "description": "ALVENARIA DE TIJOLO CERAMICO FURADO (9x19x19)cm C/ ARGAMASSA MISTA DE CAL HIDRATADA ESP.=9cm (1:2:8)",
+        "unit": "M2",
+        "price": 54.20,
+        "source": "SEINFRA",
+        "type": "service"
+    },
+    {
+        "code": "S0002",
+        "description": "CHAPISCO C/ ARGAMASSA DE CIMENTO E AREIA S/PENEIRAR TRACO 1:3 ESP.= 5mm P/ PAREDE",
+        "unit": "M2",
+        "price": 6.95,
+        "source": "SEINFRA",
+        "type": "service"
+    },
+    {
+        "code": "S0003",
+        "description": "EMBOCO C/ ARGAMASSA MISTA DE CIMENTO, CAL HIDRATADA E AREIA PENEIRADA TRACO 1:2:9 ESP.= 20mm P/ PAREDE",
+        "unit": "M2",
+        "price": 36.40,
+        "source": "SEINFRA",
+        "type": "service"
+    },
+    {
+        "code": "S0004",
+        "description": "REBOCO C/ ARGAMASSA DE CIMENTO E AREIA PENEIRADA, TRACO 1:3",
+        "unit": "M2",
+        "price": 17.80,
+        "source": "SEINFRA",
+        "type": "service"
+    },
+    {
+        "code": "S0005",
+        "description": "CONCRETO P/VIBRACO, FCK 20 MPa COM AGREGADO ADQUIRIDO",
+        "unit": "M3",
+        "price": 428.00,
+        "source": "SEINFRA",
+        "type": "service"
+    }
+]
