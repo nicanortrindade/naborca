@@ -179,9 +179,20 @@ export function calculateBudget(items: BudgetItem[], bdiPercent: number): Budget
         if (etapaCalc) {
             etapaCalc.baseTotal = etapaBaseTotal;
             etapaCalc.finalTotal = etapaFinalTotal;
+        }
+    });
 
-            totalGlobalBase += etapaBaseTotal;
-            totalGlobalFinal += etapaFinalTotal;
+    // ROBUST CALCULATION: Sum all Level 3+ items directly for Global Total
+    // This ensures that even if items are orphaned (not under an L1 Etapa), they are counted.
+    totalGlobalBase = 0;
+    totalGlobalFinal = 0;
+
+    itemMap.forEach(calc => {
+        // Sum only leaf nodes (Level 3+) or explicit items to avoid double counting groups
+        // Assuming groups are L1/L2 or type='group'
+        if ((calc.level >= 3 && !calc.isGroup)) {
+            totalGlobalBase += calc.baseTotal;
+            totalGlobalFinal += calc.finalTotal;
         }
     });
 

@@ -193,13 +193,18 @@ function toInsert(item: Partial<BudgetItem>): Omit<BudgetItemInsert, 'user_id' |
 
 export const BudgetItemService = {
     async getByBudgetId(budgetId: string): Promise<BudgetItem[]> {
+        console.log(`[BudgetItemService] Fetching items for budget: ${budgetId}`);
         const { data, error } = await supabase
             .from('budget_items')
             .select('*')
             .eq('budget_id', budgetId)
             .order('order_index', { ascending: true });
 
-        if (error) throw error;
+        if (error) {
+            console.error('[BudgetItemService] Fetch Error:', error);
+            throw error;
+        }
+        console.log(`[BudgetItemService] Fetched ${data?.length} items.`);
         return data.map(toDomain);
     },
 
@@ -223,6 +228,8 @@ export const BudgetItemService = {
             created_at: new Date().toISOString()
         };
 
+        console.log('[BudgetItemService] Creating item payload:', payload);
+
         const { data, error } = await (supabase
             .from('budget_items') as any)
             .insert(payload)
@@ -234,6 +241,7 @@ export const BudgetItemService = {
             alert(`Erro no Banco de Dados: ${error.message}\n\nCódigo: ${error.code}\nDetalhe: ${error.details || 'Verifique as permissões de acesso.'}`);
             throw error;
         }
+        console.log('[BudgetItemService] Item created successfully:', data?.id);
         return toDomain(data);
     },
 
