@@ -11,6 +11,7 @@ import { CompositionService } from '../lib/supabase-services/CompositionService'
 import { SinapiService } from '../lib/supabase-services/SinapiService';
 import { CompanyService } from '../lib/supabase-services/CompanyService';
 import { ArrowLeft, Plus, Trash2, Search, X, Download, FileText, FileSpreadsheet, BarChart, Calculator, Percent, Lock, Unlock, Copy, RefreshCcw, AlertTriangle, TrendingUp, Save, Database, Calendar, Activity, Eye, ChevronDown, ChevronUp, AlertOctagon, Edit2, ListOrdered, Loader, Package } from 'lucide-react';
+import { supabase } from '../supabase';
 
 import { clsx } from "clsx";
 import { AnalyticResolutionModal } from '../features/importer/components/AnalyticResolutionModal';
@@ -1032,8 +1033,8 @@ const BudgetEditor = () => {
         let c2 = 0; // Sub
         let c3 = 0; // Item
 
-        // Preparar Updates
-        const updates = repairedItems.map((item, i) => {
+        // Preparar Payload para RPC
+        const payload = repairedItems.map((item) => {
             if (item.level === 1) {
                 c1++; c2 = 0; c3 = 0;
             } else if (item.level === 2) {
@@ -1047,25 +1048,31 @@ const BudgetEditor = () => {
             else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
             else itemNumberStr = `${c1}.${c2}.${c3}`;
 
-            // Persistir Order + ParentId + ItemNumber
-            // Importante salvar parentId pois o repairHierarchy pode ter alterado
-            return BudgetItemService.update(item.id!, {
+            // Objeto simplificado para o RPC
+            return {
+                id: item.id,
                 order: item.order,
                 parentId: item.parentId,
                 itemNumber: itemNumberStr
-            });
+            };
         });
 
-        // 5. Persistência
+        // 5. Persistência via RPC (Batch Optimization)
         try {
-            // "Avoid reload que desfaça" -> wait for full persist
-            await Promise.all(updates);
+            const { error } = await supabase.rpc("reorder_budget_items", {
+                items: payload,
+            });
+
+            if (error) {
+                console.error("RPC Error:", error);
+                throw error;
+            }
 
             // Reload garante SSOT do backend (cálculos, etc)
             await loadBudget();
         } catch (e) {
             console.error("Erro ao salvar ordem reorganizada:", e);
-            alert("Erro ao salvar a nova ordem.");
+            alert("Erro ao salvar a nova ordem (RPC Failed).");
         }
 
         setDraggedItemIndex(null);
