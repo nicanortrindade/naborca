@@ -1042,6 +1042,26 @@ const BudgetEditor = () => {
         // Isso garante que se moveu um item para dentro de outra etapa, ele assuma o pai correto
         const repairedItems = repairHierarchy(newItems);
 
+        // 3.1 Validar invariantes de hierarquia (evita "ghost items")
+        const invalid = repairedItems.find((it) => {
+            // Level 1: MUST NOT have parent
+            if (it.level === 1) return it.parentId != null;
+            // Level >= 2: MUST HAVE parent
+            if (it.level >= 2) return it.parentId == null;
+            return false;
+        });
+
+        if (invalid) {
+            console.warn("Drop inválido: item ficou sem pai após repairHierarchy", invalid);
+            alert("Movimento inválido: um item ficou sem pai ou estrutura inconsistente.\n\nTente soltar dentro de uma etapa/sub-etapa válida.");
+
+            // Recarrega SSOT para não deixar UI em estado estranho
+            await loadBudget();
+            setDraggedItemIndex(null);
+            setDragOverIndex(null);
+            return;
+        }
+
         // 4. Renumerar (Reconstruir 1.1, 1.2, 1.2.1)
         // Logica espelhada do handleReorderItems
         let c1 = 0; // Etapa
