@@ -626,7 +626,7 @@ const BudgetSchedulePage: React.FC = () => {
                 <div className="flex items-center gap-6">
                     <div className="text-right">
                         <div className="flex flex-col items-end">
-                            <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1">Custo Total (Sem BDI)</p>
+                            <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1">TOTAL GERAL</p>
                             <div className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 flex items-center gap-4 shadow-sm">
                                 <div className="text-right">
                                     <span className="text-[9px] text-indigo-600 uppercase block leading-none font-bold mb-1">Custo da Obra</span>

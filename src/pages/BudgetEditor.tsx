@@ -1532,6 +1532,7 @@ const BudgetEditor = () => {
     }, [items, budget, adjustmentFactors]);
 
     // Totais Globais atualizados para Header (Baseados no visibleRows)
+    // Totais Globais atualizados para Header (Baseados no visibleRows)
     const { totalBase, totalFinal } = useMemo(() => {
         // Use SSOT Utility
         const result = getAdjustedBudgetTotals(
@@ -1540,7 +1541,7 @@ const BudgetEditor = () => {
             budget?.bdi || 0
         );
         return { totalBase: result.totalBase, totalFinal: result.totalFinal };
-    }, [items, budget]);
+    }, [items, budget?.bdi, JSON.stringify(budget?.settings?.global_adjustment_v2)]);
 
 
     // Alias para compatibilidade
