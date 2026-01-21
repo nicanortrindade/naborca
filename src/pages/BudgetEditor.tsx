@@ -1670,7 +1670,8 @@ const BudgetEditor = () => {
                 items: exportItems,
                 companySettings: settings,
                 totalGlobalBase: calcResult?.totalGlobalBase,
-                totalGlobalFinal: calcResult?.totalGlobalFinal
+                totalGlobalFinal: calcResult?.totalGlobalFinal,
+                adjustmentSettings: budget.settings?.global_adjustment_v2
             };
 
             // Logs removidos para produção
@@ -1739,7 +1740,8 @@ const BudgetEditor = () => {
                 items: exportItems,
                 companySettings: settings,
                 totalGlobalBase: calcResult?.totalGlobalBase,
-                totalGlobalFinal: calcResult?.totalGlobalFinal
+                totalGlobalFinal: calcResult?.totalGlobalFinal,
+                adjustmentSettings: budget.settings?.global_adjustment_v2
             };
 
             if (type === 'synthetic') {

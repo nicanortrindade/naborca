@@ -1,6 +1,11 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import ExcelJS from 'exceljs';
+import {
+    getAdjustedItemValues,
+    calculateAdjustmentFactors,
+    type GlobalAdjustmentV2
+} from './globalAdjustment';
 
 // ===================================================================
 // TIPAGEM E INTERFACES
@@ -101,6 +106,7 @@ export interface ExportData {
         seinfra?: { versao: string; estado: string };
         cpos?: { mes: string };
     };
+    adjustmentSettings?: GlobalAdjustmentV2;
 }
 
 export interface ExportProgressCallback {
@@ -253,9 +259,10 @@ function addPDFFinancialSummary(doc: jsPDF, totalSemBDI: number, bdi: number, to
 
     doc.setFontSize(9);
     // 1. CUSTO TOTAL (SEM BDI) - Black
+    // 1. CUSTO TOTAL (SEM BDI) -> TOTAL
     doc.setTextColor(0, 0, 0);
     doc.setFont('helvetica', 'normal');
-    doc.text('CUSTO TOTAL (SEM BDI):', rightX - 75, sumY);
+    doc.text('TOTAL:', rightX - 75, sumY);
     doc.setFont('helvetica', 'bold');
     doc.text(formatCurrency(totalSemBDI), rightX, sumY, { align: 'right' });
 
@@ -268,9 +275,10 @@ function addPDFFinancialSummary(doc: jsPDF, totalSemBDI: number, bdi: number, to
 
     sumY += 7;
     // 3. TOTAL GLOBAL - Blue Bold
+    // 3. TOTAL GLOBAL -> TOTAL GERAL
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    doc.text('TOTAL GLOBAL:', rightX - 75, sumY);
+    doc.text('TOTAL GERAL:', rightX - 75, sumY);
     doc.text(formatCurrency(totalGeral), rightX, sumY, { align: 'right' });
 
     // Update lastAutoTable for footer positioning
@@ -628,7 +636,6 @@ export async function exportCurvaSPDF(data: ExportData) {
 
 export async function generatePDFSyntheticBuffer(data: ExportData): Promise<ArrayBuffer> {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-
     // BUG A FIX: Usar totais vindos do Engine (Fonte única da verdade)
     const totalSemBDI = data.totalGlobalBase ?? data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
     const totalGeral = data.totalGlobalFinal ?? data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.finalPrice || item.totalPrice || 0)), 0);
@@ -643,50 +650,134 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
         banksUsed: data.banksUsed
     });
 
+    // RECALCULATION SSOT (Global Adjustment V2)
+    // 1. Calculate raw contexts
+    let rawTotalBase = 0;
+    let rawTotalMat = 0;
+    data.items.filter(i => i.type !== 'group' && getHierarchyLevel(i.itemNumber) >= 3).forEach(i => {
+        rawTotalBase += i.totalPrice; // Raw base total
+        if (i.type === 'material' || (i.type === undefined && ['material', 'insumo'].includes((i as any).itemType))) { // Rough estimation or use proper classify if needed
+            rawTotalMat += i.totalPrice;
+        }
+    });
+
+    // Since we don't have rich type context here effectively for all items if they are flattened, 
+    // ideally we trust the item loop to adjust. But we need context for factors.
+    // Better: Calculate factors once using data.totalGlobalBase (Raw).
+
+    const totalBaseRaw = data.totalGlobalBase || rawTotalBase; // Trust passed raw base or calc
+    // Need raw final (Standard BDI) for 'bdi_only' calculation
+    const totalFinalRaw = totalBaseRaw * (1 + (data.bdi || 0) / 100);
+
+    const factors = calculateAdjustmentFactors(data.adjustmentSettings, {
+        totalBase: totalBaseRaw,
+        totalFinal: totalFinalRaw,
+        totalMaterialBase: rawTotalMat // This might be approx if item.type is not perfect, but it's best effort.
+    });
+
+    let accumTotalBase = 0;
+    let accumTotalFinal = 0;
+
     // GERAÇÃO SINTÉTICA (Limpa e Direta)
-    const tableData = data.items.map(item => {
+    const processedItems = data.items.map(item => {
         const i: any = item;
         const level = getHierarchyLevel(item.itemNumber);
-
-        // CORREÇÃO ESTRUTURAL: Agrupadores (Nível 1 e 2 ou type='group')
-        // NÃO devem mostrar Código, Banco, Unidade, Quantidade, Unitário.
-        // DEVEM mostrar Totais e Peso (que já vêm calculados do BudgetEditor).
-        // DEVEM remover "IMP"/"IMPORT" se vierem sujos.
-
         const isGroup = level < 3 || item.type === 'group';
 
-        // Sanitização de Código/Banco para Agrupadores
-        let code = item.code || '';
-        let source = item.source || '';
+        // Apply Adjustment
+        // We act as if the item is 'raw'. ExportItem has unitPrice/totalPrice.
+        // We construct a mini-object for the utility.
+        const adj = getAdjustedItemValues(
+            {
+                unitPrice: item.unitPrice,
+                description: item.description,
+                type: (item.type === 'group' || isGroup) ? undefined : (item.type || 'material') // pass type if leaf
+            },
+            factors,
+            data.bdi || 0
+        );
 
-        if (isGroup) {
-            code = '';
-            source = '';
+        return { ...item, _adj: adj, isGroup, level };
+    });
+
+    // Now map to visual rows
+    // Let's iterate backwards to sum groups!
+    const adjustedMap = new Map<string | number, { tBase: number, tFinal: number, tUnit?: number, tUnitFinal?: number }>(); // id -> { totalBase: number, totalFinal: number }
+    // We need IDs. ExportItem has unitId.
+
+    // First pass: Leaves
+    processedItems.forEach((row, idx) => {
+        if (!row.isGroup) {
+            const qty = row.quantity || 0;
+            const tBase = row._adj.unitPrice * qty;
+            const tFinal = row._adj.finalPrice * qty;
+            adjustedMap.set(row.id, { tBase, tFinal, tUnit: row._adj.unitPrice, tUnitFinal: row._adj.finalPrice });
+
+            accumTotalBase += tBase;
+            accumTotalFinal += tFinal;
+        }
+    });
+
+    // Second pass: Groups (Iterate backwards to ensure children processed before parents?)
+    // Or just filter data.items by level reverse.
+    const sortedLevels = [...processedItems].sort((a, b) => b.level - a.level); // Deepest first (3, then 2, then 1)
+
+    sortedLevels.forEach(row => {
+        if (row.isGroup) {
+            // Find children (brute force or hierarchy check)
+            // ExportItem has 'itemNumber'. Children start with `current.`
+            const myNum = row.itemNumber + '.';
+            // Finding direct children is tricky with just list.
+            // But we can sum ALL descendants that are leaves?
+            // Yes, sum of all leaves starting with myNum.
+
+            let gTotalBase = 0;
+            let gTotalFinal = 0;
+
+            processedItems.forEach(sub => {
+                if (!sub.isGroup && sub.itemNumber.startsWith(myNum)) {
+                    const subCalc = adjustedMap.get(sub.id);
+                    if (subCalc) {
+                        gTotalBase += subCalc.tBase;
+                        gTotalFinal += subCalc.tFinal;
+                    }
+                }
+            });
+            adjustedMap.set(row.id, { tBase: gTotalBase, tFinal: gTotalFinal });
+        }
+    });
+
+    // Now map to visual rows
+    const tableData = processedItems.map(row => {
+        // Sanitização de Código/Banco para Agrupadores
+        let code = row.code || '';
+        let source = row.source || '';
+        if (row.isGroup) {
+            code = ''; source = '';
         } else {
-            // Limpeza extra pra itens reais (caso venham sujos)
             if (code === 'IMP') code = '';
             if (source === 'IMPORT') source = '';
         }
 
-        const unitBDI = i.unitPriceWithBDI;
+        const calc = adjustedMap.get(row.id) || { tBase: 0, tFinal: 0, tUnit: 0, tUnitFinal: 0 };
 
         // Quantidade e Unitário zerados visualmente para grupos
-        const quantity = isGroup ? null : item.quantity;
-        const unitPrice = isGroup ? null : item.unitPrice;
-        const unitPriceBDI = isGroup ? null : unitBDI;
-        const unit = isGroup ? '' : (item.unit || '');
+        const quantity = row.isGroup ? null : row.quantity;
+        const unitPrice = row.isGroup ? null : calc.tUnit;
+        const unitPriceBDI = row.isGroup ? null : calc.tUnitFinal;
+        const unit = row.isGroup ? '' : (row.unit || '');
 
         return [
-            item.itemNumber,
+            row.itemNumber,
             source,
             code,
-            item.description,
+            row.description,
             unit,
             quantity != null ? quantity.toFixed(2) : '',
             unitPrice != null ? formatCurrency(unitPrice) : '',
             unitPriceBDI != null ? formatCurrency(unitPriceBDI) : '',
-            formatCurrency(item.totalPrice || item.finalPrice || 0), // Totais sempre visíveis
-            formatPercent((i.pesoRaw || 0) * 100)
+            formatCurrency(calc.tFinal), // ALWAYS DISPLAY FINAL TOTAL (ADJUSTED)
+            formatPercent((row.pesoRaw || 0) * 100) // Keep weight as passed (or recalc?) Let's keep passed to avoid mess.
         ];
     });
 
@@ -1364,7 +1455,33 @@ export async function generatePDFScheduleBuffer(data: ExportData): Promise<Array
     autoTable(doc, {
         startY: 75,
         head: [['ITEM', 'DESCRIÇÃO', 'VALOR', ...months, 'TOTAL']],
-        body,
+        body: body.map(row => {
+            const itemNumber = row[0] as string;
+            const originalItem = data.items.find(i => i.itemNumber === itemNumber);
+
+            let finalVal = 0;
+            if (originalItem) {
+                const rawT = data.totalGlobalBase || 0;
+                const factors = calculateAdjustmentFactors(data.adjustmentSettings, {
+                    totalBase: rawT, totalFinal: rawT * (1 + (data.bdi || 0) / 100), totalMaterialBase: rawT
+                });
+
+                const isGroup = getHierarchyLevel(itemNumber) < 3;
+
+                let sumLeafs = 0;
+                data.items.filter(sub => !['group'].includes(sub.type) && sub.itemNumber.startsWith(itemNumber + (isGroup ? '.' : '')) && (isGroup ? sub.itemNumber !== itemNumber : sub.itemNumber === itemNumber)).forEach(sub => {
+                    const adj = getAdjustedItemValues({ unitPrice: sub.unitPrice, description: sub.description, type: sub.type }, factors, data.bdi || 0);
+                    sumLeafs += adj.finalPrice * (sub.quantity || 0);
+                });
+                finalVal = sumLeafs;
+            }
+
+            const newRow = [...row];
+            if (originalItem) {
+                newRow[2] = formatCurrency(finalVal);
+            }
+            return newRow;
+        }),
         theme: 'grid',
         headStyles: { fillColor: [30, 58, 138], fontSize: 8 },
         styles: { fontSize: 7 },
