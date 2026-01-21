@@ -269,7 +269,8 @@ const BudgetSchedulePage: React.FC = () => {
 
 
     const getItemNumber = (item: any) => {
-        return item.itemNumber || '';
+        if (item.itemNumber === null || item.itemNumber === undefined) return '';
+        return String(item.itemNumber).trim();
     };
 
 
@@ -407,7 +408,7 @@ const BudgetSchedulePage: React.FC = () => {
             const visibleItems = getVisibleItems();
             const months = periods.map(p => labels[p] || `${p * interval} DIAS`);
             const scheduleItems = visibleItems.map((item) => ({
-                itemNumber: item.itemNumber || getItemNumber(item).trim(),
+                itemNumber: getItemNumber(item),
                 description: item.description || '',
                 totalValue: getItemCost(item),
                 level: item.level,
@@ -448,7 +449,7 @@ const BudgetSchedulePage: React.FC = () => {
             const visibleItems = getVisibleItems();
             const months = periods.map(p => labels[p] || `${p * interval} DIAS`);
             const scheduleItems = visibleItems.map((item) => ({
-                itemNumber: item.itemNumber || getItemNumber(item).trim(),
+                itemNumber: getItemNumber(item),
                 description: item.description || '',
                 totalValue: getItemCost(item),
                 level: item.level,

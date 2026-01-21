@@ -5,12 +5,13 @@ import { clsx } from 'clsx';
 
 interface GlobalAdjustmentModalProps {
     onClose: () => void;
-    onApply: (type: 'percentage' | 'fixed', value: number, applyToAnalytic: boolean) => void;
+    onApply: (mode: 'materials_only' | 'bdi_only' | 'global_all', type: 'percentage' | 'fixed', value: number, applyToAnalytic: boolean) => void;
     currentTotal: number;
 }
 
 const GlobalAdjustmentModal: React.FC<GlobalAdjustmentModalProps> = ({ onClose, onApply, currentTotal }) => {
     const [mode, setMode] = React.useState<'percentage' | 'fixed'>('percentage');
+    const [adjustmentMode, setAdjustmentMode] = React.useState<'materials_only' | 'bdi_only' | 'global_all'>('materials_only');
     const [percentage, setPercentage] = React.useState<string>('0');
     const [fixedValue, setFixedValue] = React.useState<string>(currentTotal.toFixed(2).replace('.', ','));
     const [applyToAnalytic, setApplyToAnalytic] = React.useState(false);
@@ -41,13 +42,13 @@ const GlobalAdjustmentModal: React.FC<GlobalAdjustmentModalProps> = ({ onClose, 
     const handleApply = () => {
         if (mode === 'percentage') {
             const val = parseFloat(percentage.replace(',', '.')) || 0;
-            onApply('percentage', val, applyToAnalytic);
+            onApply(adjustmentMode, 'percentage', val, applyToAnalytic);
         } else {
             if (previewTotal <= 0) {
                 alert("Digite um valor fixo válido.");
                 return;
             }
-            onApply('fixed', previewTotal, applyToAnalytic);
+            onApply(adjustmentMode, 'fixed', previewTotal, applyToAnalytic);
         }
     };
 
@@ -94,6 +95,49 @@ const GlobalAdjustmentModal: React.FC<GlobalAdjustmentModalProps> = ({ onClose, 
                             <DollarSign size={16} />
                             Valor Fixo (R$)
                         </button>
+                    </div>
+
+                    {/* Mode Selector */}
+                    <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Modo de Aplicação</label>
+                        <div className="grid grid-cols-3 gap-2">
+                            <button
+                                onClick={() => setAdjustmentMode('materials_only')}
+                                className={clsx(
+                                    "p-2 rounded-lg border text-sm font-medium transition-all flex flex-col items-center gap-1",
+                                    adjustmentMode === 'materials_only'
+                                        ? "bg-blue-50 border-blue-500 text-blue-700 ring-1 ring-blue-500"
+                                        : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"
+                                )}
+                            >
+                                <span>Materiais</span>
+                                <span className="text-[10px] font-normal text-center opacity-80 leading-tight">Recomendado p/ Licitação</span>
+                            </button>
+                            <button
+                                onClick={() => setAdjustmentMode('bdi_only')}
+                                className={clsx(
+                                    "p-2 rounded-lg border text-sm font-medium transition-all flex flex-col items-center gap-1",
+                                    adjustmentMode === 'bdi_only'
+                                        ? "bg-blue-50 border-blue-500 text-blue-700 ring-1 ring-blue-500"
+                                        : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"
+                                )}
+                            >
+                                <span>BDI</span>
+                                <span className="text-[10px] font-normal text-center opacity-80 leading-tight">Altera apenas lucros/despesas</span>
+                            </button>
+                            <button
+                                onClick={() => setAdjustmentMode('global_all')}
+                                className={clsx(
+                                    "p-2 rounded-lg border text-sm font-medium transition-all flex flex-col items-center gap-1",
+                                    adjustmentMode === 'global_all'
+                                        ? "bg-blue-50 border-blue-500 text-blue-700 ring-1 ring-blue-500"
+                                        : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"
+                                )}
+                            >
+                                <span>Global</span>
+                                <span className="text-[10px] font-normal text-center opacity-80 leading-tight">Altera tudo (Cuidado)</span>
+                            </button>
+                        </div>
                     </div>
 
                     {/* Inputs */}

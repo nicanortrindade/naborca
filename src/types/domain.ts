@@ -34,6 +34,7 @@ export interface Budget {
     createdAt: Date;
     updatedAt: Date;
     metadata?: Record<string, any>; // Extra flags (e.g. divergence)
+    settings?: Record<string, any>; // General budget settings and global adjustments
 }
 
 

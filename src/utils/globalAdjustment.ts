@@ -1,46 +1,99 @@
 
-export type GlobalAdjustmentType = 'percentage' | 'fixed';
+export type GlobalAdjustmentMode = 'materials_only' | 'bdi_only' | 'global_all';
+export type GlobalAdjustmentType = 'percentage' | 'fixed' | 'fixed_target_total' | 'fixed_delta';
 
-export interface GlobalAdjustment {
-    type: GlobalAdjustmentType;
-    value: number; // % (ex: 10) ou Valor R$ (ex: 5000)
+export interface GlobalAdjustmentV2 {
+    mode: GlobalAdjustmentMode;
+    kind: GlobalAdjustmentType;
+    value: number;
 }
 
-/**
- * Calcula o fator multiplicador a ser aplicado nos preços unitários.
- * @param adjustment O objeto de ajuste (do metadata)
- * @param totalBasePrice O valor total BASE (sem BDI) do orçamento (somatório dos itens)
- */
-export function calculateAdjustmentFactor(
-    adjustment: GlobalAdjustment | null | undefined,
-    totalBasePrice: number
-): number {
-    if (!adjustment || adjustment.value === undefined || adjustment.value === null) return 1;
-
-    if (adjustment.type === 'percentage') {
-        // Ex: 10 (%) -> 1.10
-        // Ex: -10 (%) -> 0.90
-        return 1 + (adjustment.value / 100);
-    }
-
-    if (adjustment.type === 'fixed') {
-        // Se Total Base é 10,000 e Ajuste é +1,000 (Delta).
-        // Novo Total = 11,000.
-        // Fator = 11,000 / 10,000 = 1.1.
-
-        if (!totalBasePrice || totalBasePrice === 0) return 1; // Proteção contra divisão por zero
-
-        // Fator = (Base + Delta) / Base
-        return (totalBasePrice + adjustment.value) / totalBasePrice;
-    }
-
-    return 1;
+export interface AdjustmentContext {
+    totalBase: number;
+    totalFinal: number;
+    totalMaterialBase: number;
 }
 
-/**
- * Aplica o fator ao preço.
- */
-export function applyAdjustment(price: number, factor: number): number {
-    if (!factor || factor === 1) return price;
-    return price * factor;
+export interface AdjustedValues {
+    unitPrice: number;
+    finalPrice: number;
+    origin: 'material' | 'labor';
+}
+
+export function classifyItem(description: string, type?: string): 'material' | 'labor' {
+    if (!description) return 'material';
+    const desc = description.toUpperCase();
+    const laborKeywords = [
+        'PEDREIRO', 'SERVENTE', 'ENCARREGADO', 'AJUDANTE',
+        'OPERADOR', 'CARPINTEIRO', 'ARMADOR', 'MONTADOR',
+        'ELETRICISTA', 'ENCANADOR', 'PINTOR', 'MESTRE'
+    ];
+    if (laborKeywords.some(kw => desc.includes(kw))) return 'labor';
+    return 'material';
+}
+
+export function calculateAdjustmentFactors(
+    adjustment: GlobalAdjustmentV2 | null | undefined,
+    context: AdjustmentContext
+): { materialFactor: number; laborFactor: number; bdiFactor: number } {
+    const result = { materialFactor: 1, laborFactor: 1, bdiFactor: 1 };
+    if (!adjustment) return result;
+
+    const { mode, kind, value } = adjustment;
+    let percentFactor = 1;
+
+    // Normalizar Fator
+    if (kind === 'percentage') {
+        percentFactor = 1 + (value / 100);
+    } else {
+        // Absolute: fator = (Total + Delta) / Total
+        let base = context.totalBase;
+        if (mode === 'materials_only') base = context.totalMaterialBase;
+        else if (mode === 'bdi_only') base = context.totalFinal;
+
+        if (base > 0) {
+            if (kind === 'fixed_target_total') {
+                percentFactor = value / base;
+            } else {
+                // 'fixed' (legacy/default to delta) or 'fixed_delta'
+                percentFactor = (base + value) / base;
+            }
+        }
+    }
+
+    switch (mode) {
+        case 'global_all':
+            result.materialFactor = percentFactor;
+            result.laborFactor = percentFactor;
+            break;
+        case 'materials_only':
+            result.materialFactor = percentFactor;
+            break;
+        case 'bdi_only':
+            result.bdiFactor = percentFactor;
+            break;
+    }
+    return result;
+}
+
+export function getAdjustedItemValues(
+    item: { unitPrice: number; description: string; type?: string },
+    factors: { materialFactor: number; laborFactor: number; bdiFactor: number },
+    bdiPercent: number
+): AdjustedValues {
+    const origin = classifyItem(item.description, item.type);
+
+    let factor = 1;
+    if (origin === 'material') factor = factors.materialFactor;
+    else factor = factors.laborFactor;
+
+    const newBaseUnit = item.unitPrice * factor;
+    const bdiMultiplier = 1 + (bdiPercent / 100);
+    const newFinalUnit = newBaseUnit * bdiMultiplier * factors.bdiFactor;
+
+    return {
+        unitPrice: newBaseUnit,
+        finalPrice: newFinalUnit,
+        origin
+    };
 }

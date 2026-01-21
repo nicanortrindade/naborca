@@ -39,7 +39,8 @@ function toDomain(row: BudgetRow): Budget {
         sinapiContractType: (row as any).sinapi_contract_type || 'HORISTA',
         createdAt: new Date(row.created_at),
         updatedAt: new Date(row.updated_at),
-        metadata: (row as any).metadata || undefined
+        metadata: (row as any).metadata || undefined,
+        settings: (row as any).settings || undefined
     };
 }
 
@@ -71,7 +72,8 @@ function toInsert(budget: Partial<Budget>): Omit<BudgetInsert, 'user_id'> {
         is_scenario: budget.isScenario ?? false,
         scenario_name: budget.scenarioName,
         updated_at: new Date().toISOString(),
-        metadata: budget.metadata
+        metadata: budget.metadata,
+        settings: budget.settings
     } as any;
 }
 
@@ -144,6 +146,7 @@ export const BudgetService = {
         if (budget.sinapiRegime !== undefined) payload.sinapi_regime = budget.sinapiRegime;
         if (budget.sinapiContractType !== undefined) payload.sinapi_contract_type = budget.sinapiContractType;
         if (budget.metadata !== undefined) payload.metadata = budget.metadata;
+        if (budget.settings !== undefined) payload.settings = budget.settings;
 
         const { data, error } = await (supabase
             .from('budgets') as any)

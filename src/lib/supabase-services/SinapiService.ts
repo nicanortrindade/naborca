@@ -226,36 +226,17 @@ export const SinapiService = {
     // INPUTS (Insumos)
     // =====================================================
 
-    async searchInputs(query: string, filters?: { uf?: string; competence?: string; regime?: string }): Promise<SinapiInputWithPrice[]> {
-        // REFACTOR: Use 'insumos' instead of 'sinapi_inputs'
-        // 'insumos' view/table is the new source of truth.
-
-        // Se temos filtros de preço, usamos a view apropriada ou a tabela 'insumos' filtrada
-        if (filters?.uf && filters?.competence && filters?.regime) {
-            // Assuming 'insumos' contains price info or we join. 
-            // For now, simpler to search 'insumos' directly which is the request.
-            // Note: 'insumos' might duplicate if it has prices, or just be the catalog.
-            // User said: "View/Tabela: public.insumos (retorna INPUT e COMPOSITION)"
-            const { data, error } = await (supabase
-                .from('insumos') as any)
-                .select('*')
-                // .eq('uf', filters.uf) // If insumos has UF/Competence columns
-                .or(`description.ilike.%${query}%,code.ilike.%${query}%`)
-                .eq('type', 'INPUT') // Filter for inputs only
-                .limit(100);
-
-            if (error) throw error;
-            return data || [];
-        }
-
-        // Busca simples
-        const { data, error } = await (supabase
-            .from('insumos') as any)
+    async searchInputs(query: string, filters?: { uf?: string; competence?: string; regime?: string; sources?: string[] }): Promise<SinapiInputWithPrice[]> {
+        let queryBuilder = (supabase.from('insumos') as any)
             .select('*')
             .or(`description.ilike.%${query}%,code.ilike.%${query}%`)
-            .eq('type', 'INPUT')
-            .limit(100);
+            .eq('type', 'INPUT');
 
+        if (filters?.sources && filters.sources.length > 0) {
+            queryBuilder = queryBuilder.in('fonte', filters.sources);
+        }
+
+        const { data, error } = await queryBuilder.limit(100);
         if (error) throw error;
         return data || [];
     },
@@ -363,30 +344,17 @@ export const SinapiService = {
     // COMPOSITIONS (Composições/CPU)
     // =====================================================
 
-    async searchCompositions(query: string, filters?: { uf?: string; competence?: string; regime?: string }): Promise<SinapiCompositionWithPrice[]> {
-        // REFACTOR: Use 'insumos' (filtered by type COMPOSITION) or 'compositions' table
-        // User said: "View/Tabela: public.insumos (retorna INPUT e COMPOSITION)"
-
-        if (filters?.uf && filters?.competence && filters?.regime) {
-            const { data, error } = await (supabase
-                .from('insumos') as any)
-                .select('*')
-                // .eq('uf', filters.uf)
-                .or(`description.ilike.%${query}%,code.ilike.%${query}%`)
-                .eq('type', 'COMPOSITION')
-                .limit(100);
-
-            if (error) throw error;
-            return data || [];
-        }
-
-        const { data, error } = await (supabase
-            .from('insumos') as any)
+    async searchCompositions(query: string, filters?: { uf?: string; competence?: string; regime?: string; sources?: string[] }): Promise<SinapiCompositionWithPrice[]> {
+        let queryBuilder = (supabase.from('insumos') as any)
             .select('*')
             .or(`description.ilike.%${query}%,code.ilike.%${query}%`)
-            .eq('type', 'COMPOSITION')
-            .limit(100);
+            .eq('type', 'COMPOSITION');
 
+        if (filters?.sources && filters.sources.length > 0) {
+            queryBuilder = queryBuilder.in('fonte', filters.sources);
+        }
+
+        const { data, error } = await queryBuilder.limit(100);
         if (error) throw error;
         return data || [];
     },

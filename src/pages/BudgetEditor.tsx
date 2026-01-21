@@ -18,7 +18,16 @@ import { generateBDIReport, generateEncargosReport, generateEncargosFullReport }
 import { useIsMobile } from '../App';
 import { ENCARGOS_SOCIAIS_BASES, calcularTotalBase } from '../data/encargosSociais';
 import { BudgetImporter } from '../features/importer';
-import { calculateAdjustmentFactor, applyAdjustment } from '../utils/globalAdjustment';
+import {
+    calculateAdjustmentFactors,
+    getAdjustedItemValues,
+    classifyItem
+} from '../utils/globalAdjustment';
+import type {
+    GlobalAdjustmentMode,
+    GlobalAdjustmentType,
+    AdjustmentContext
+} from '../utils/globalAdjustment';
 
 /**
  * Normalizador único de recursos (insumos e composições)
@@ -35,6 +44,7 @@ type NormalizedResource = {
     unit: string;
     price: number;
     source: string;
+    originalType?: string; // e.g. material, labor
     raw?: any; // Objeto original para debug
 };
 
@@ -45,7 +55,7 @@ function normalizeResource(res: any, kind: ResourceKind): NormalizedResource {
             type: kind === 'insumo' ? 'INPUT' : 'COMPOSITION',
             code: '',
             description: 'Recurso inválido',
-            level: 0, // Default level
+            level: 0,
             unit: '',
             price: 0,
             source: '',
@@ -53,7 +63,7 @@ function normalizeResource(res: any, kind: ResourceKind): NormalizedResource {
         };
     }
 
-    // Determinar tipo baseado no kind
+    // Determinar tipo baseado no kind OBRIGATORIAMENTE para o Badge
     const type = kind === 'insumo' ? 'INPUT' : 'COMPOSITION';
 
     // Extrair code com fallbacks (codigo, code, id)
@@ -63,26 +73,30 @@ function normalizeResource(res: any, kind: ResourceKind): NormalizedResource {
     const description = res.descricao || res.description || res.nome || res.name || 'Sem descrição';
 
     // Extrair unit com fallbacks (unidade, unit, un)
-    const unit = res.unidade || res.unit || res.un || '';
+    const unit = res.unidade || res.unit || res.un || 'UN';
 
     // Extrair price com fallbacks (preco, price, valor, custoTotal, total_cost)
-    const priceRaw = res.preco ?? res.price ?? res.valor ?? res.custoTotal ?? res.total_cost ?? 0;
+    const priceRaw = res.preco ?? res.price ?? res.valor ?? res.custoTotal ?? res.total_cost ?? res.price_unit ?? 0;
     const price = typeof priceRaw === 'number' ? priceRaw : parseFloat(priceRaw) || 0;
 
     // Extrair source com fallback
     const source = res.fonte || res.source || (kind === 'insumo' ? 'SINAPI' : 'PROPRIO');
+
+    // Mapear tipo de recurso original (material, labor, etc)
+    const originalType = res.tipo || res.type || res.item_type || (kind === 'insumo' ? 'material' : 'service');
 
     return {
         id: res.id,
         type,
         code,
         description,
-        level: res.level || 0, // Assuming level might come from resource or default to 0
-        peso: res.peso, // Assuming peso might come from resource
+        level: res.level || 3, // Default for items
+        peso: res.peso,
         unit,
         price,
-        source,
-        raw: res // Manter original para debug
+        source: source.toUpperCase(),
+        originalType,
+        raw: res
     };
 }
 
@@ -96,10 +110,43 @@ const BudgetEditor = () => {
     const [items, setItems] = useState<any[]>([]);
     const [calcResult, setCalcResult] = useState<any>(null); // Armazena resultado do engine
 
-    // Global Adjustment Factor (Source of Truth for Display)
-    const adjustmentFactor = useMemo(() => {
-        return calculateAdjustmentFactor(budget?.metadata?.global_adjustment, calcResult?.totalGlobalBase || 0);
-    }, [budget, calcResult]);
+    // Global Adjustment Factors (Source of Truth for Display)
+    const adjustmentFactors = useMemo(() => {
+        const ctx: AdjustmentContext = {
+            totalBase: calcResult?.totalGlobalBase || 0,
+            totalFinal: calcResult?.totalGlobalFinal || 0,
+            totalMaterialBase: 0 // Will calculate if needed
+        };
+
+        // Pre-calc material total if needed for 'materials_only' mode context
+        if (budget?.settings?.global_adjustment_v2?.mode === 'materials_only') {
+            ctx.totalMaterialBase = items?.reduce((acc, item) => {
+                // Basic heuristic scan for context
+                const desc = item.description || '';
+                const type = item.type || '';
+                // Import from same utility (check circular dep? No, util is independent)
+                if (classifyItem(desc, type) === 'material' && item.level >= 3 && item.type !== 'group') {
+                    return acc + (item.totalPrice || 0);
+                }
+                return acc;
+            }, 0) || 0;
+        }
+
+        // V2 Settings take precedence, fallback to legacy if V2 missing
+        let adjData = budget?.settings?.global_adjustment_v2;
+        if (!adjData && (budget?.metadata?.global_adjustment || budget?.settings?.global_adjustment)) {
+            // Migrar legacy visualmente
+            const legacy = budget?.settings?.global_adjustment || budget?.metadata?.global_adjustment;
+            adjData = {
+                mode: 'global_all',
+                kind: legacy.type === 'percentage' ? 'percentage' : 'fixed',
+                value: legacy.value
+            };
+        }
+
+        return calculateAdjustmentFactors(adjData, ctx);
+    }, [budget, calcResult, items]);
+
     const [settings, setSettings] = useState<any>(null);
     const [loading, setLoading] = useState(false);
 
@@ -178,7 +225,18 @@ const BudgetEditor = () => {
     const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
     const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
 
-    // Estados de Loading para Exportações
+    // Estados de Busca e Filtros Multi-Base
+    const [selectedBases, setSelectedBases] = useState<string[]>(() => {
+        const saved = localStorage.getItem('naborca_search_bases');
+        return saved ? JSON.parse(saved) : ['SINAPI'];
+    });
+    const AVAILABLE_BASES = ['SINAPI', 'ORSE', 'EMBASA', 'OWN'];
+
+    useEffect(() => {
+        localStorage.setItem('naborca_search_bases', JSON.stringify(selectedBases));
+    }, [selectedBases]);
+
+    // Estados de Loading para Exportações e Ferramentas
     const [isExportingAnalytic, setIsExportingAnalytic] = useState(false);
     const [isImporterOpen, setIsImporterOpen] = useState(false);
     const [isExportingZip, setIsExportingZip] = useState(false);
@@ -236,199 +294,54 @@ const BudgetEditor = () => {
     const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
     const [divergentItems, setDivergentItems] = useState<any[]>([]);
 
-    const handleGlobalAdjustment = async (type: 'percentage' | 'fixed', value: number, applyToAnalytic: boolean) => {
+    const handleGlobalAdjustment = async (mode: GlobalAdjustmentMode, type: GlobalAdjustmentType, value: number, applyToAnalytic: boolean) => {
         if (!items || items.length === 0) return;
         setLoading(true);
 
         try {
-            // Novo modelo: Salva no Metadata (Source of Truth)
-            const adjustmentType = type === 'percentage' ? 'percentage' : 'fixed';
+            console.log("[GlobalAdjust] Starting...", { mode, type, value, applyToAnalytic });
 
-            const meta = {
-                ...budget.metadata,
-                global_adjustment: {
-                    type: adjustmentType,
-                    value: value
-                }
+            let finalValue = safeNumber(value);
+            let finalKind: GlobalAdjustmentType = type;
+
+            if (type === 'fixed') {
+                // Modal sends Target Total as 'value'. 
+                // We save it as 'fixed_target_total' to be explicit.
+                finalKind = 'fixed_target_total';
+            }
+
+            const currentSettings = budget.settings || {};
+            const currentMetadata = budget.metadata || {};
+
+            const newSettings = {
+                ...currentSettings,
+                global_adjustment_v2: {
+                    mode: mode,
+                    kind: finalKind,
+                    value: finalValue
+                },
+                // Clean legacy
+                global_adjustment: null
             };
 
-            await BudgetService.update(budget.id, { metadata: meta });
-            await loadBudget();
+            const newMetadata = {
+                ...currentMetadata,
+                has_pricing_divergence: !applyToAnalytic,
+                divergence_reason: applyToAnalytic ? null : 'global_adjust_v2_synthetic_only'
+            };
 
+            // Single update call
+            await BudgetService.update(budget.id, {
+                settings: newSettings,
+                metadata: newMetadata
+            });
+
+            await loadBudget();
             setShowAdjustmentModal(false);
-            alert("Ajuste Global configurado com sucesso! Os valores foram recalculados dinamicamente.");
-            return; // Encerra aqui, ignorando lógica legada abaixo
-
-            // Helpers para logs (Passo 1 OBRIGATÓRIO)
-            // const pickFirstLeaf = (arr: any[]) => arr.find(i => i.level >= 3 && i.type !== 'group');
-            const pickFirstLeaf = null; // Legacy placeholder
-
-            // LOG A: BEFORE
-            console.log("[GA] BEFORE", {
-                budgetId,
-                mode: type,
-                inputValue: value,
-                applyToAnalytic,
-                firstLeaf: null, // picked removed legacy logic
-                beforeTotals: { base: calcResult?.totalGlobalBase, final: calcResult?.totalGlobalFinal }
-            });
-
-            // 1. Calcular Fator de Ajuste
-            const currentTotalFinalPrice = items
-                .filter(item => item.level >= 3 && item.type !== 'group')
-                .reduce((acc, item) => acc + (item.finalPrice || 0), 0);
-
-            let factor = 1;
-            if (type === 'percentage') {
-                factor = 1 + (value / 100);
-            } else {
-                if (currentTotalFinalPrice === 0) {
-                    alert("Não é possível ajustar valor fixo de um orçamento zerado.");
-                    setLoading(false);
-                    return;
-                }
-                factor = value / currentTotalFinalPrice;
-            }
-
-            const safeFactor = isNaN(factor) || !isFinite(factor) ? 1 : factor;
-            console.log(`[GA] Fator calculado: ${safeFactor}`);
-
-            // 2. Calcular Items Ajustados (Localmente)
-            // Includes metadata for analytic propagation
-            const updates = items
-                .filter(item => item.level >= 3 && item.type !== 'group')
-                .map(item => ({
-                    id: item.id,
-                    oldUnitPrice: item.unitPrice || 0,
-                    unitPrice: Math.round((item.unitPrice || 0) * safeFactor * 100) / 100,
-                    isComposition: !!(item.compositionId && item.compositionId.length > 0)
-                }));
-
-            // Aplica localmente para o Engine recalcular
-            const updatedItemsMap = new Map(updates.map(u => [u.id, u]));
-            const localAdjustedItems = items.map(item => {
-                const up = updatedItemsMap.get(item.id);
-                return up ? { ...item, unitPrice: up.unitPrice } : item;
-            });
-
-            // Recalcular com Engine para LOG B
-            const resultLocal = calculateBudget(localAdjustedItems, budget?.bdi || 0);
-            const hydratedLocal = localAdjustedItems.map(item => {
-                const calculated = resultLocal.itemMap.get(item.id!);
-                return {
-                    ...item,
-                    totalPrice: calculated?.baseTotal || 0,
-                    finalPrice: calculated?.finalTotal || 0,
-                    peso: calculated?.weight || 0
-                };
-            });
-
-            // 3. Batch Update Synthetic (BudgetItem)
-            // We ALWAYS update synthetic prices to show the desired value immediately.
-            await BudgetItemService.batchUpdate(updates.map(u => ({ id: u.id, unitPrice: u.unitPrice })));
-
-            // 4. Handle Analytic Propagation (The Core Refactor)
-            if (applyToAnalytic) {
-                const compositionsToUpdate = updates.filter(u => u.isComposition);
-                let processed = 0;
-
-                for (const comp of compositionsToUpdate) {
-                    try {
-                        const children = await BudgetItemCompositionService.getByBudgetItemId(comp.id);
-                        if (!children || children.length === 0) continue;
-
-                        if (type === 'percentage') {
-                            // STRATEGY A: Percentage (Factor)
-                            // We apply a multiplicative factor on top of existing overrides or base.
-                            // Logic: metadata.adjustment_factor = (current_factor * safeFactor).
-
-                            await Promise.all(children.map(async (child) => {
-                                const currentFactor = Number(child.metadata?.adjustment_factor) || 1;
-                                const newFactor = currentFactor * safeFactor;
-
-                                const newMeta = {
-                                    ...child.metadata,
-                                    adjustment_factor: newFactor,
-                                    adjustment_amount: null // Clear amount strategy to avoid conflict
-                                };
-
-                                await BudgetItemCompositionService.update(child.id!, { metadata: newMeta });
-                            }));
-
-                        } else {
-                            // STRATEGY B: Fixed Value (Amount)
-                            // We must ensure Sum(child.effective * coef) == NewSyntheticPrice.
-                            // BaseTotal = Sum(child.base * coef).
-                            // Delta = NewSynthetic - BaseTotal.
-                            // Distribute Delta proportional to base cost.
-
-                            const targetTotal = comp.unitPrice;
-
-                            // Calculate Base Total using baseUnitPrice (or unitPrice fallback which IS base now)
-                            const baseTotal = children.reduce((acc, c) => {
-                                const base = c.baseUnitPrice ?? c.unitPrice; // Prioritize base if mapped, else unitPrice (DB value)
-                                return acc + (base * c.quantity);
-                            }, 0);
-
-                            const totalDelta = targetTotal - baseTotal;
-
-                            await Promise.all(children.map(async (child) => {
-                                const childBase = child.baseUnitPrice ?? child.unitPrice;
-                                const childCost = childBase * child.quantity;
-
-                                let adjAmount = 0;
-                                if (baseTotal > 0 && child.quantity > 0) {
-                                    // Allocate proportion of Delta
-                                    const share = childCost / baseTotal;
-                                    const allocatedDelta = totalDelta * share;
-                                    adjAmount = allocatedDelta / child.quantity;
-                                } else if (baseTotal === 0 && children.length > 0 && child.quantity > 0) {
-                                    // Fallback: Equal distribution? Or By Quantity?
-                                    // If base is 0, maybe distribute by quantity weight?
-                                    // Let's assume proportional to quantity?
-                                    // Sum(q * adj) = Delta.
-                                    // If adj is constant per item? adj * Sum(q) = Delta.
-                                    const sumQ = children.reduce((s, c) => s + c.quantity, 0);
-                                    if (sumQ > 0) adjAmount = totalDelta / sumQ;
-                                }
-
-                                const newMeta = {
-                                    ...child.metadata,
-                                    adjustment_amount: adjAmount,
-                                    adjustment_factor: null // Clear factor strategy
-                                };
-
-                                await BudgetItemCompositionService.update(child.id!, { metadata: newMeta });
-                            }));
-                        }
-                        processed++;
-                    } catch (err) {
-                        console.error(`[GA] Error propagating to item ${comp.id}`, err);
-                    }
-                }
-
-                // Clear divergence flag
-                if (budget?.id) {
-                    await BudgetService.update(budget.id, {
-                        metadata: { ...budget.metadata, has_pricing_divergence: false, divergence_reason: null }
-                    });
-                }
-            } else {
-                // Apply only to Synthetic -> Flag Divergence
-                const hasCompositions = updates.some(u => u.isComposition);
-                if (hasCompositions && budget?.id) {
-                    await BudgetService.update(budget.id, {
-                        metadata: { ...budget.metadata, has_pricing_divergence: true, divergence_reason: 'global_adjust_synthetic_only' }
-                    });
-                }
-            }
-
-            // 5. Final Recalculation
-            await loadBudget();
 
         } catch (error: any) {
             console.error("Global Adjustment Failed", error);
-            alert("Erro ao aplicar ajuste global.");
+            alert(`Erro ao aplicar ajuste global: ${error.message || 'Erro desconhecido'}`);
         } finally {
             setLoading(false);
         }
@@ -437,39 +350,52 @@ const BudgetEditor = () => {
     // Removed duplicate normalizeResource function
 
 
-    const fetchResources = useCallback(async (query: string = '', typeFilter: 'INS' | 'CPU' = 'INS') => {
+    const fetchResources = useCallback(async (query: string = '', typeFilter: 'INS' | 'CPU' = 'INS', bases: string[] = []) => {
         const safeQuery = query?.trim();
 
-        if (!safeQuery) {
-            console.log('[EDITOR] empty query → skip fetch');
+        if (safeQuery.length < 3) {
             setFilteredResources([]);
             return;
         }
 
         try {
-            // FIX: Explicit search based on Tab
-            let results: any[] = [];
+            console.log(`[fetchResources] Query="${safeQuery}" Tab=${typeFilter} Bases=`, bases);
+            let results: NormalizedResource[] = [];
 
             if (typeFilter === 'INS') {
-                // Search ONLY Inputs
-                results = await InsumoService.search(safeQuery);
-                // Map to normalized (force type INPUT for display consistency if needed)
-                results = results.map(i => normalizeResource(i, 'insumo'));
+                // PARALLEL SEARCH: User Insumos + Public Bases
+                const [userResults, publicResults] = await Promise.all([
+                    InsumoService.search(safeQuery),
+                    SinapiService.searchInputs(safeQuery, { sources: bases.length > 0 ? bases.filter(b => b !== 'OWN') : undefined })
+                ]);
+
+                const normUser = (userResults || []).map(i => normalizeResource(i, 'insumo'));
+                const normPublic = (publicResults || []).map(i => normalizeResource(i, 'insumo'));
+
+                results = [...normUser, ...normPublic];
             } else {
-                // Search ONLY Compositions (CPUs)
-                // Using SinapiService directly to get from 'insumos' view with type=COMPOSITION
-                // Or CompositionService if it points to user compositions. 
-                // Given the context of "Localizar CPU", we want SINAPI CPUs too.
-                // SinapiService.searchCompositions queries 'insumos' view with type='COMPOSITION'.
-                const sinapiCPUs = await SinapiService.searchCompositions(safeQuery);
+                // PARALLEL SEARCH: User Compositions + Public Bases
+                const [userResults, publicResults] = await Promise.all([
+                    CompositionService.search(safeQuery),
+                    SinapiService.searchCompositions(safeQuery, { sources: bases.length > 0 ? bases.filter(b => b !== 'OWN') : undefined })
+                ]);
 
-                // Also search user compositions? CompositionService.search?
-                // Let's mix both or just use SinapiService for now as per requirement "backend/Supabase (tabela/endpoint onde ficam as composições importadas do SINAPI)"
+                const normUser = (userResults || []).map(i => normalizeResource(i, 'composition'));
+                const normPublic = (publicResults || []).map(c => normalizeResource(c, 'composition'));
 
-                results = sinapiCPUs.map(c => normalizeResource(c, 'composition'));
+                results = [...normUser, ...normPublic];
             }
 
-            setFilteredResources(results);
+            // Deduplicação básica por código e fonte se necessário
+            const seen = new Set();
+            const uniqueResults = results.filter(r => {
+                const key = `${r.source}-${r.code}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+
+            setFilteredResources(uniqueResults);
 
         } catch (error) {
             console.error("[fetchResources] Erro ao buscar recursos:", error);
@@ -477,26 +403,26 @@ const BudgetEditor = () => {
         }
     }, []);
 
-    // Hook sugerido: Disparar busca assim que o modal abrir ou a tab mudar
+    // Hook sugerido: Disparar busca assim que o modal abrir ou a tab mudar ou bases mudarem
     useEffect(() => {
         if (isAddingItem) {
-            console.log(`[MODAL] isAddingItem=true Tab=${addItemTab} → trigger fetchResources`);
-            fetchResources(searchTerm ?? '', addItemTab);
+            console.log(`[MODAL] isAddingItem=true Tab=${addItemTab} Bases=${selectedBases} → trigger fetchResources`);
+            fetchResources(searchTerm ?? '', addItemTab, selectedBases);
         } else {
             setFilteredResources([]);
         }
-    }, [isAddingItem, addItemTab, fetchResources]);
+    }, [isAddingItem, addItemTab, selectedBases, fetchResources]);
 
-    // Debounce para busca enquanto o modal está aberto, considerando a TAB
+    // Debounce para busca enquanto o modal está aberto, considerando a TAB e Bases
     useEffect(() => {
         if (!isAddingItem || !searchTerm) return;
 
         const timeout = setTimeout(() => {
-            fetchResources(searchTerm, addItemTab);
+            fetchResources(searchTerm, addItemTab, selectedBases);
         }, 300);
 
         return () => clearTimeout(timeout);
-    }, [searchTerm, isAddingItem, addItemTab, fetchResources]);
+    }, [searchTerm, isAddingItem, addItemTab, selectedBases, fetchResources]);
 
     const [compositionFilteredResources, setCompositionFilteredResources] = useState<any[]>([]);
 
@@ -711,28 +637,9 @@ const BudgetEditor = () => {
 
     // REGRA 3: Calculate Global Total (Only Level 3+ Items using finalPrice)
     // finalPrice já inclui: quantity * unitPrice * (1 + BDI)
-    // CÁLCULO DE TOTAIS VISUAIS (Sintéticos Ajustados)
-    const totalBaseRaw = items?.reduce((acc, item) => {
-        if (item.level >= 3 && item.type !== 'group') {
-            return acc + safeNumber(item.totalPrice);
-        }
-        return acc;
-    }, 0) || 0;
+    // Totais já calculados no useMemo do visibleRows
+    // Removido lógica redundante de totalBaseRaw/applyAdjustment
 
-    const totalBase = applyAdjustment(totalBaseRaw, adjustmentFactor);
-
-    const totalFinalRaw = items?.reduce((acc, item) => {
-        if (item.level >= 3 && item.type !== 'group') {
-            return acc + (item.finalPrice || 0);
-        }
-        return acc;
-    }, 0) || 0;
-
-    // totalFinal ajustado
-    const totalFinal = applyAdjustment(totalFinalRaw, adjustmentFactor);
-
-    // Alias para compatibilidade com Mobile Header que usa totalBudget
-    const totalBudget = totalBase;
 
     // Sync Total Global if needed
     useEffect(() => {
@@ -766,48 +673,32 @@ const BudgetEditor = () => {
     // agora são calculados diretamente na função prepareItemsForDisplay no carregamento.
 
     // Calcular números hierárquicos (1, 1.1, 1.1.1, 2, 2.1...)
-    // Calcular números hierárquicos (1, 1.1, 1.1.1, 2, 2.1...)
     const getItemNumber = (index: number): string => {
         if (!items) return "";
         const item = items[index];
 
-        // Se já tiver uma numeração explícita (importada), usa ela SE não estivermos reordenando dinamicamente
-        // Mas a regra é explícita sobre hierarquia. Vamos calcular dinamicamente baseado na árvore visual atual.
+        // Se já tiver uma numeração explícita (vinda do banco), retorna ela
+        if (item.itemNumber) return String(item.itemNumber).trim();
 
-        // Vamos reconstruir a numeração baseada no array 'items' que já está ordenado visualmente (Etapa -> Filhos)
-        // Mas o cálculo simples basea-se em counters.
-
-        // Estratégia de Contadores Recursivos requer saber o parent.
-        // Como 'items' está flat, podemos subir na lista procurando o parent? 
-        // Ou melhor: usar o structure path.
-
-        // Abordagem Simplificada compatível com o loop de renderização:
-        // Precisamos calcular isso UMA vez para todos ou ter context.
-        // Fazer on-the-fly pode ser custoso se a lista for grande, mas ok para < 1000 itens.
-
-        // Vamos tentar achar o parent na lista atual para determinar o prefixo.
+        // Fallback: cálculo dinâmico baseado no level (1-2-3)
         if (item.level === 1) {
-            // Conta quantas etapas existem antes deste índice
             let count = 0;
             for (let i = 0; i <= index; i++) if (items[i].level === 1) count++;
             return `${count}`;
         }
 
         if (item.level > 1) {
-            // Acha o objeto parent.
             const parent = items.find(i => i.id === item.parentId);
             if (!parent) return "?";
 
-            // Acha o index do parent
             const parentIndex = items.findIndex(i => i.id === parent.id);
             const parentNum = getItemNumber(parentIndex);
 
-            // Conta quantos irmãos (mesmo parent) existem antes deste, ATÉ chegar no parent
             let siblingCount = 0;
             for (let i = parentIndex + 1; i <= index; i++) {
                 if (items[i].parentId === item.parentId) siblingCount++;
             }
-            return `${parentNum.trim()}.${siblingCount}`;
+            return `${parentNum}.${siblingCount}`;
         }
 
         return "";
@@ -883,19 +774,23 @@ const BudgetEditor = () => {
     };
 
     const handleAddItem = async () => {
-        if (!selectedResource || !items) return;
+        // REGRA: Items DEVE ser um array (mesmo que vazio)
+        if (!selectedResource || !items) {
+            console.error("[handleAddItem] Aborting: selectedResource or items missing", { selectedResource, itemsNull: !items });
+            return;
+        }
 
         try {
             setLoading(true);
+            console.log("[handleAddItem] Starting...", {
+                budgetId,
+                resource: selectedResource.code,
+                tab: addItemTab,
+                itemsCount: items.length
+            });
 
             // 1. Verificar se existe pelo menos uma ETAPA (Nível 1)
             const lastEtapa = [...items].reverse().find(i => i.level === 1);
-            // ALLOW ORPHANS: If no etapa exists, we add as root items (level=3, parentId=null)
-            // if (!lastEtapa) {
-            //    alert("Erro: Crie uma ETAPA primeiro antes de adicionar itens.");
-            //    setLoading(false);
-            //    return;
-            // }
 
             // 2. Definir o Pai: Prioridade para a última SUBETAPA (L2) DESTA etapa, senão usa a própria ETAPA (L1)
             let targetParentId: string | undefined = lastEtapa?.id;
@@ -909,8 +804,7 @@ const BudgetEditor = () => {
             }
 
             // 3. Criar o Item na Subetapa ou Etapa Alvo
-            console.log("Tentando criar Item para Budget:", budgetId, "parentId:", targetParentId);
-            await BudgetItemService.create({
+            const itemData: any = {
                 budgetId: budgetId,
                 order: getNextOrder(),
                 level: 3,
@@ -921,13 +815,18 @@ const BudgetEditor = () => {
                 unit: selectedResource.unit,
                 quantity: Number(quantity),
                 unitPrice: selectedResource.price,
-                type: selectedResource.type,
+                // IMPORTANTE: Restaurar tipo original (material, labor, etc)
+                type: selectedResource.originalType || (addItemTab === 'CPU' ? 'service' : 'material'),
                 source: selectedResource.source,
-                itemType: addItemTab === 'CPU' ? 'composicao' : 'insumo', // FORÇA TIPO BASEADO NA TAB
-                // FIX: Use ONLY valid UUIDs from ID field. NEVER use code.
+                itemType: addItemTab === 'CPU' ? 'composicao' : 'insumo',
+                // Linkage UUIDs - Priorizar ID do objeto se disponível
                 compositionId: addItemTab === 'CPU' ? (selectedResource.id || selectedResource.raw?.id) : null,
                 insumoId: addItemTab === 'INS' ? (selectedResource.id || selectedResource.raw?.id) : null,
-            });
+            };
+
+            console.log("[handleAddItem] Calling BudgetItemService.create with:", itemData);
+            const newItem = await BudgetItemService.create(itemData);
+            console.log("[handleAddItem] Created successfully:", newItem.id);
 
             await loadBudget();
             setIsAddingItem(false);
@@ -1018,43 +917,34 @@ const BudgetEditor = () => {
         if (!items) return;
         setLoading(true);
         try {
-            // Ordenar por 'order' atual ou índice
             const sortedItems = [...items].sort((a, b) => (a.order || 0) - (b.order || 0));
 
-            let c0 = 0; // Título
-            let c1 = 0; // Sub-Título
-            let c2 = 0; // Item
+            let c1 = 0; // Etapa (L1)
+            let c2 = 0; // Sub-etapa (L2)
+            let c3 = 0; // Item (L3)
 
             const updates = sortedItems.map((item, i) => {
-                // Recalcular numeração hierárquica baseada na lógica visual
-                if (item.level === 0) {
-                    c0++;
-                    c1 = 0;
+                if (item.level === 1) {
+                    c1++;
                     c2 = 0;
-                } else if (item.level === 1 || (item.level === 0 && item.type === 'group')) {
-                    if (item.type === 'group' && item.level === 1) {
-                        c1++;
-                        c2 = 0;
-                    } else if (item.type !== 'group') {
-                        c2++;
-                    }
-                } else {
+                    c3 = 0;
+                } else if (item.level === 2) {
                     c2++;
+                    c3 = 0;
+                } else if (item.level >= 3) {
+                    c3++;
                 }
 
                 let itemNumberStr = "";
-                if (item.level === 0) itemNumberStr = `${c0} `;
-                else if (item.level === 1) itemNumberStr = `${c0}.${c1} `;
-                else if (c1 === 0) itemNumberStr = `${c0}.${c2} `;
-                else itemNumberStr = `${c0}.${c1}.${c2} `;
+                if (item.level === 1) itemNumberStr = `${c1}`;
+                else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
+                else itemNumberStr = `${c1}.${c2}.${c3}`;
 
-                // Limpar .0 caso ocorra (ex: 1.0 -> 1) - Ajuste defensivo
-                itemNumberStr = itemNumberStr.replace(/\.0$/, '');
+                const currentOrder = i + 1;
 
-                // Só atualiza se mudou algo
-                if (item.order !== i + 1 || item.itemNumber !== itemNumberStr) {
+                if (item.order !== currentOrder || item.itemNumber !== itemNumberStr) {
                     return BudgetItemService.update(item.id!, {
-                        order: i + 1,
+                        order: currentOrder,
                         itemNumber: itemNumberStr
                     }).catch(err => {
                         console.error(`Falha ao atualizar item ${item.id}: `, err);
@@ -1068,20 +958,14 @@ const BudgetEditor = () => {
             const failures = results.filter((r: any) => r?.error);
 
             if (failures.length > 0) {
-                console.error(`${failures.length} itens falharam ao atualizar`);
-                alert(`Atenção: ${failures.length} itens não puderam ser atualizados.Verifique o console.`);
+                alert(`Atenção: ${failures.length} itens não puderam ser atualizados.`);
             } else {
-                // Sync total também
-                const totalDirect = sortedItems.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
-                const currentTotalGlobal = totalDirect * (1 + (budget?.bdi || 0) / 100);
-                await BudgetService.update(budgetId, { totalValue: currentTotalGlobal });
-
                 await loadBudget();
                 alert("Numeração e Ordem recalculadas com sucesso!");
             }
         } catch (error) {
             console.error("Erro geral ao reordenar:", error);
-            alert("Erro ao recalcular numeração. Verifique o console.");
+            alert("Erro ao recalcular numeração.");
         } finally {
             setLoading(false);
         }
@@ -1536,59 +1420,111 @@ const BudgetEditor = () => {
             return [];
         }
 
-        // Calculate factor dynamically
-        const factor = calculateAdjustmentFactor(budget.metadata?.global_adjustment, calcResult?.totalGlobalBase || 0);
-        const bdiFactor = 1 + ((budget.bdi || 0) / 100);
+        // V2: Use factors obj
+        const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
 
-        // Recalculate Global Total Final Adjusted for Weight calc
-        // (Approximation: if factor applied to all items, total scales by factor too)
-        const totalFinalRaw = calcResult?.totalGlobalFinal || 0;
-        const totalFinalAdj = totalFinalRaw * factor;
+        // BDI Budget (Display)
+        // If mode=bdi_only, bdi is effectively changed on items finalPrice, but global BDI % remains same on budget settings.
+        // Or should we fake the budget BDI? No. Keep it clean. Items have final Price.
 
-        return items.map((item, idx) => {
+        // Recalculate totals for Weight distribution
+        let totalFinalAdj = 0;
+
+        // First Pass: Calculate Adjusted Values & Total
+        const adjustedItems = items.map(item => {
             const isGroup = item.type === 'group';
 
-            // Apply Adjustment (Visual & Export)
-            const unitPriceAdj = applyAdjustment(item.unitPrice || 0, factor);
-            // Re-calculate totals based on adjusted unit
-            // Note: quantity is raw.
-            const totalPriceAdj = (item.quantity || 0) * unitPriceAdj;
-            const finalPriceAdj = totalPriceAdj * bdiFactor;
+            // Calc adjusted parts using V2 Util
+            const adjusted = getAdjustedItemValues(
+                {
+                    unitPrice: item.unitPrice || 0,
+                    description: item.description,
+                    type: item.type
+                },
+                { materialFactor, laborFactor, bdiFactor },
+                budget.bdi || 0
+            );
 
-            const itemTotal = finalPriceAdj || 0;
-            const pesoRaw = totalFinalAdj > 0 ? (itemTotal / totalFinalAdj) : 0;
+            // Totals
+            const quantity = item.quantity || 0;
+            const totalPrice = quantity * adjusted.unitPrice; // Total Base
+            const finalPrice = quantity * adjusted.finalPrice; // Total Final
+
+            if (!isGroup && item.level >= 3) {
+                totalFinalAdj += finalPrice;
+            }
+
+            return {
+                ...item,
+                _adjusted: adjusted,
+                _amounts: {
+                    unitPrice: adjusted.unitPrice,
+                    finalPrice: adjusted.finalPrice, // unit final
+                    totalPrice: totalPrice, // total base
+                    totalFinal: finalPrice, // total final
+                }
+            };
+        });
+
+        return adjustedItems.map((item, idx) => {
+            const isGroup = item.type === 'group';
             const itemNumber = getItemNumber(idx);
 
-            // Flattened Row (SSOT) - Campos Canônicos na Raiz
+            // Values to display
+            const { unitPrice, finalPrice, totalPrice, totalFinal } = item._amounts;
+
+            const itemTotalFinal = totalFinal;
+            const pesoRaw = totalFinalAdj > 0 ? (itemTotalFinal / totalFinalAdj) : 0;
+
+            // Flattened Row (SSOT)
             return {
-                ...item, // Base original
+                ...item, // Base (raw properties)
 
                 // Metadados
                 kind: isGroup ? 'GROUP' : 'ITEM',
                 itemNumber,
+                origin: item._adjusted.origin, // Info extra para debug/UI se quiser
 
-                // Dados Higienizados (Limpos para Grupo)
+                // Dados Higienizados
                 code: isGroup ? '' : (item.code || ''),
                 source: isGroup ? '' : (item.source || ''),
                 unit: isGroup ? '' : (item.unit || ''),
 
-                // Valores Numéricos AJUSTADOS
+                // Valores Numéricos AJUSTADOS (Source of Truth)
                 quantity: isGroup ? undefined : item.quantity,
-                unitPrice: isGroup ? undefined : unitPriceAdj,
-                unitPriceWithBDI: isGroup ? undefined : unitPriceAdj * bdiFactor, // Recalculado
+                unitPrice: isGroup ? undefined : unitPrice,        // Unit Base
+                unitPriceWithBDI: isGroup ? undefined : finalPrice, // Unit Final (com BDI + Ajuste)
 
-                // Totais Calculados AJUSTADOS
-                totalPrice: isGroup ? 0 : totalPriceAdj, // Override totalPrice original
-                finalPrice: isGroup ? 0 : finalPriceAdj, // Override finalPrice original
-                total: itemTotal,
+                // Totais
+                totalPrice: isGroup ? 0 : totalPrice,   // Total Base
+                finalPrice: isGroup ? 0 : itemTotalFinal, // Total Final (Novo conceito: finalPrice agora é TOTAL final, não unit) 
+                // Wait. In legacy code, finalPrice was TOTAL final?
+                // Legacy: `finalPrice = totalPriceAdj * bdiFactor`. Yes, it was TOTAL.
+                // My util `getAdjustedItemValues` returns `finalPrice` as UNIT FINAL.
+                // So I multiplied by Quantity above. Correct.
+
+                total: itemTotalFinal, // Alias para legacy grids
                 pesoRaw: pesoRaw
             };
         });
-    }, [items, budget, calcResult]);
+    }, [items, budget, adjustmentFactors]);
 
-    // =========================================================================================
-    // EXPORT HANDLERS (Blocked by Analytic Check)
-    // =========================================================================================
+    // Totais Globais atualizados para Header (Baseados no visibleRows)
+    const { totalBase, totalFinal } = useMemo(() => {
+        return visibleRows.reduce((acc, row) => {
+            if (row.kind === 'ITEM' && row.level >= 3) {
+                return {
+                    totalBase: acc.totalBase + (row.totalPrice || 0),
+                    totalFinal: acc.totalFinal + (row.finalPrice || 0)
+                };
+            }
+            return acc;
+        }, { totalBase: 0, totalFinal: 0 });
+    }, [visibleRows]);
+
+    // Alias para compatibilidade
+    const totalBudget = totalBase;
+
 
     const validateAnalytics = async (): Promise<boolean> => {
         // Bloqueio por Divergência de Preços (Anti-Desclassificação)
@@ -1617,13 +1553,24 @@ const BudgetEditor = () => {
                     missing.push(item);
                 } else {
                     // 2. Check Divergence (Deep Check)
-                    const synthUnit = item.unitPrice || 0; // Já ajustado em visibleRows? Sim.
+                    const synthUnit = item.unitPrice || 0; // Já ajustado em visibleRows (Base Unit)
 
-                    // BudgetItemCompositionService returns RAW effective prices.
-                    const analyticSumRaw = children.reduce((acc, c) => acc + (c.unitPrice * c.quantity), 0);
-                    const analyticSum = applyAdjustment(analyticSumRaw, adjustmentFactor);
+                    // Recalcular soma analítica ajustada
+                    const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
+
+                    const analyticSum = children.reduce((acc, c) => {
+                        const adj = getAdjustedItemValues(
+                            { unitPrice: c.unitPrice, description: c.description, type: c.type },
+                            { materialFactor, laborFactor, bdiFactor },
+                            budget.bdi || 0
+                        );
+                        // Soma dos unitários base * quantidade
+                        return acc + (adj.unitPrice * c.quantity);
+                    }, 0);
 
                     if (Math.abs(synthUnit - analyticSum) > 0.01) {
+                        // Divergência detectada
+                        // analyticSum aqui é BASE. expected também é BASE.
                         divergent.push({ ...item, analyticSum, expected: synthUnit });
                     }
                 }
@@ -1672,11 +1619,20 @@ const BudgetEditor = () => {
                     : [];
 
                 // Apply Adjustment to Composition
-                const composition = compositionRaw.map(c => ({
-                    ...c,
-                    unitPrice: applyAdjustment(c.unitPrice, adjustmentFactor),
-                    totalPrice: applyAdjustment(c.totalPrice, adjustmentFactor)
-                }));
+                const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
+                const composition = compositionRaw.map(c => {
+                    const adj = getAdjustedItemValues(
+                        { unitPrice: c.unitPrice, description: c.description, type: c.type },
+                        { materialFactor, laborFactor, bdiFactor },
+                        budget.bdi || 0
+                    );
+                    return {
+                        ...c,
+                        unitPrice: adj.unitPrice, // Export base unit
+                        finalPrice: adj.finalPrice,
+                        totalPrice: adj.unitPrice * c.quantity // Total Base
+                    };
+                });
 
                 return {
                     ...row,
@@ -1730,11 +1686,20 @@ const BudgetEditor = () => {
                     : [];
 
                 // Apply Adjustment to Composition
-                const composition = compositionRaw.map(c => ({
-                    ...c,
-                    unitPrice: applyAdjustment(c.unitPrice, adjustmentFactor),
-                    totalPrice: applyAdjustment(c.totalPrice, adjustmentFactor)
-                }));
+                const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
+                const composition = compositionRaw.map(c => {
+                    const adj = getAdjustedItemValues(
+                        { unitPrice: c.unitPrice, description: c.description, type: c.type },
+                        { materialFactor, laborFactor, bdiFactor },
+                        budget.bdi || 0
+                    );
+                    return {
+                        ...c,
+                        unitPrice: adj.unitPrice,
+                        finalPrice: adj.finalPrice,
+                        totalPrice: adj.unitPrice * c.quantity
+                    };
+                });
 
                 return {
                     ...row,
@@ -1818,22 +1783,38 @@ const BudgetEditor = () => {
 
             const { exportCompleteProject } = await import('../utils/budgetExport');
 
-            // Preparar itens com numeração e composições
+            // Preparar itens com numeração e composições (Items RAW -> Adjusted)
+            const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
+
             const itemsWithNumbers = await Promise.all(items.map(async (item, idx) => {
                 const compositionRaw = item.type !== 'group'
                     ? await BudgetItemCompositionService.getByBudgetItemId(item.id!).catch(() => [])
                     : [];
 
-                const composition = compositionRaw.map(c => ({
-                    ...c,
-                    unitPrice: applyAdjustment(c.unitPrice, adjustmentFactor),
-                    totalPrice: applyAdjustment(c.totalPrice, adjustmentFactor)
-                }));
+                const composition = compositionRaw.map(c => {
+                    const adj = getAdjustedItemValues(
+                        { unitPrice: c.unitPrice, description: c.description, type: c.type },
+                        { materialFactor, laborFactor, bdiFactor },
+                        budget.bdi || 0
+                    );
+                    return {
+                        ...c,
+                        unitPrice: adj.unitPrice,
+                        finalPrice: adj.finalPrice,
+                        totalPrice: adj.unitPrice * c.quantity
+                    };
+                });
 
                 // Apply adjustment to item itself (since 'items' is RAW)
-                const unitPriceAdj = applyAdjustment(item.unitPrice || 0, adjustmentFactor);
-                const totalPriceAdj = applyAdjustment(item.totalPrice || 0, adjustmentFactor);
-                const finalPriceAdj = applyAdjustment(item.finalPrice || 0, adjustmentFactor);
+                const itemAdj = getAdjustedItemValues(
+                    { unitPrice: item.unitPrice || 0, description: item.description, type: item.type },
+                    { materialFactor, laborFactor, bdiFactor },
+                    budget.bdi || 0
+                );
+
+                const unitPriceAdj = itemAdj.unitPrice;
+                const totalPriceAdj = (item.quantity || 0) * unitPriceAdj;
+                const finalPriceAdj = itemAdj.finalPrice * (item.quantity || 0);
 
                 return {
                     ...item,
@@ -1845,12 +1826,7 @@ const BudgetEditor = () => {
                 };
             }));
 
-            // BUG A FIX: Log de prova OBRIGATÓRIO
-            console.log("[EXPORT TOTALS]", {
-                base: calcResult?.totalGlobalBase,
-                bdi: (calcResult?.totalGlobalFinal || 0) - (calcResult?.totalGlobalBase || 0),
-                total: calcResult?.totalGlobalFinal
-            });
+
 
             await exportCompleteProject({
                 budgetName: budget.name,
@@ -2929,6 +2905,33 @@ const BudgetEditor = () => {
                                     </button>
                                 </div>
 
+                                {/* BASE Filters Chips */}
+                                <div className="px-6 py-2 flex flex-wrap gap-2 justify-center border-b border-slate-50 bg-slate-50/50">
+                                    {AVAILABLE_BASES.map(base => {
+                                        const isActive = selectedBases.includes(base);
+                                        return (
+                                            <button
+                                                key={base}
+                                                onClick={() => {
+                                                    const newBases = isActive
+                                                        ? selectedBases.filter(b => b !== base)
+                                                        : [...selectedBases, base];
+                                                    setSelectedBases(newBases);
+                                                }}
+                                                className={clsx(
+                                                    "px-3 py-1 text-[10px] font-bold rounded-full border transition-all flex items-center gap-1.5",
+                                                    isActive
+                                                        ? "bg-slate-800 text-white border-slate-800 shadow-sm"
+                                                        : "bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600"
+                                                )}
+                                            >
+                                                <div className={clsx("w-1.5 h-1.5 rounded-full", isActive ? "bg-green-400" : "bg-slate-300")} />
+                                                {base}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
                                 <div className="relative px-6 py-4 border-b border-slate-100 shrink-0">
                                     <Search className="absolute left-10 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                                     <input
@@ -2947,7 +2950,11 @@ const BudgetEditor = () => {
                                 <div className="flex-1 overflow-y-auto p-6 space-y-2">
                                     {filteredResources.length === 0 && (
                                         <div className="text-center text-slate-400 py-10">
-                                            <p>Digite para buscar {addItemTab === 'CPU' ? 'composições' : 'insumos'}...</p>
+                                            <p className="text-sm">
+                                                {searchTerm.length < 3
+                                                    ? "Digite pelo menos 3 caracteres..."
+                                                    : `Nenhum resultado em ${selectedBases.join(', ')}`}
+                                            </p>
                                         </div>
                                     )}
 
@@ -2955,32 +2962,43 @@ const BudgetEditor = () => {
                                         if (!res) return null;
                                         return (
                                             <div
-                                                key={res.id || Math.random()}
+                                                key={`${res.source}-${res.code}-${res.id || Math.random()}`}
                                                 onClick={() => setSelectedResource(res)}
                                                 className={clsx(
-                                                    "p-4 border rounded-xl cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99]",
-                                                    selectedResource?.id === res.id
+                                                    "p-4 border rounded-xl cursor-pointer transition-all hover:scale-[1.005] active:scale-[0.995]",
+                                                    selectedResource?.code === res.code && selectedResource?.source === res.source
                                                         ? (addItemTab === 'CPU' ? "border-amber-500 bg-amber-50 ring-2 ring-amber-200" : "border-blue-500 bg-blue-50 ring-2 ring-blue-200")
                                                         : "border-slate-100 hover:border-blue-300 hover:bg-white hover:shadow-md bg-white"
                                                 )}
                                             >
                                                 <div className="flex justify-between items-start gap-4">
-                                                    <div className="flex-1">
-                                                        <div className="flex items-center gap-2 mb-1">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center flex-wrap gap-2 mb-1.5">
                                                             <span className={clsx(
-                                                                "text-[10px] font-black px-1.5 py-0.5 rounded",
-                                                                addItemTab === 'CPU' ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
+                                                                "text-[9px] font-black px-1.5 py-0.5 rounded tracking-tighter",
+                                                                addItemTab === 'CPU' ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
                                                             )}>
                                                                 {addItemTab === 'CPU' ? 'CPU' : 'INS'}
                                                             </span>
-                                                            <span className="text-xs font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                                                            <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
                                                                 {res.code}
                                                             </span>
-                                                            <span className="text-[10px] uppercase font-bold text-slate-400">
-                                                                {res.source || 'SINAPI'}
+                                                            <span className={clsx(
+                                                                "text-[9px] uppercase font-black px-1.5 py-0.5 rounded",
+                                                                res.source === 'SINAPI' ? "bg-blue-600 text-white" :
+                                                                    res.source === 'ORSE' ? "bg-green-600 text-white" :
+                                                                        res.source === 'EMBASA' ? "bg-teal-600 text-white" :
+                                                                            "bg-slate-400 text-white"
+                                                            )}>
+                                                                {res.source}
                                                             </span>
+                                                            {res.originalType && (
+                                                                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest bg-slate-50 px-1 border border-slate-100 rounded">
+                                                                    {res.originalType}
+                                                                </span>
+                                                            )}
                                                         </div>
-                                                        <p className="font-bold text-slate-700 leading-snug">{res.description || 'Sem descrição'}</p>
+                                                        <p className="font-bold text-slate-700 leading-snug line-clamp-2" title={res.description}>{res.description || 'Sem descrição'}</p>
                                                     </div>
                                                     <div className="text-right shrink-0 bg-slate-50 p-2 rounded-lg">
                                                         <p className="text-[10px] text-slate-400 uppercase font-black">Preço Ref.</p>

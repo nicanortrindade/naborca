@@ -20,7 +20,14 @@ Um sistema completo de gestão de orçamentos para licitações, desenvolvido co
    npm run dev
    ```
 
-3. Acesse `http://localhost:5173`.
+3. Crie um arquivo `.env.local` na raiz do projeto com suas credenciais do Supabase (use `.env.example` como base):
+   ```env
+   VITE_SUPABASE_URL=https://seu-projeto.supabase.co
+   VITE_SUPABASE_ANON_KEY=sua-chave-anon
+   ```
+
+4. Acesse `http://localhost:5173`.
+   - Se já tiver usuário em produção, use o mesmo email/senha.
 
 ## 🌐 Como Hospedar (Deploy Grátis)
 
