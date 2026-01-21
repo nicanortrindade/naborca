@@ -99,17 +99,18 @@ export function getAdjustedItemValues(
 }
 
 /**
- * Calculates the complete Budget Totals applying Global Adjustment V2.
- * SSOT for Editor Cards, PDF Summary, and Schedule.
+ * Computes the Raw Context (Total Base, Total Final with BDI, Total Material)
+ * from the item list. Use this to prepare the context for calculateAdjustmentFactors.
+ * This is the Single Source of Truth for identifying leaf items and summing up raw values.
  */
-export function getAdjustedBudgetTotals(
+export function getAdjustmentContext(
     items: any[],
-    settings: GlobalAdjustmentV2 | null | undefined,
     bdiPercent: number
-): { totalBase: number; totalFinal: number; totalBDI: number } {
-    if (!items || items.length === 0) return { totalBase: 0, totalFinal: 0, totalBDI: 0 };
+): AdjustmentContext {
+    if (!items || items.length === 0) {
+        return { totalBase: 0, totalFinal: 0, totalMaterialBase: 0 };
+    }
 
-    // 1. Calculate Raw Context from items (Source: unmodified unitPrice/quantity)
     let rawBase = 0;
     let rawMaterialBase = 0;
 
@@ -135,11 +136,26 @@ export function getAdjustedBudgetTotals(
 
     const rawFinal = rawBase * (1 + bdiPercent / 100);
 
-    const context: AdjustmentContext = {
+    return {
         totalBase: rawBase,
         totalFinal: rawFinal,
         totalMaterialBase: rawMaterialBase
     };
+}
+
+/**
+ * Calculates the complete Budget Totals applying Global Adjustment V2.
+ * SSOT for Editor Cards, PDF Summary, and Schedule.
+ */
+export function getAdjustedBudgetTotals(
+    items: any[],
+    settings: GlobalAdjustmentV2 | null | undefined,
+    bdiPercent: number
+): { totalBase: number; totalFinal: number; totalBDI: number } {
+    if (!items || items.length === 0) return { totalBase: 0, totalFinal: 0, totalBDI: 0 };
+
+    // 1. Calculate Raw Context from items (Source: unmodified unitPrice/quantity)
+    const context = getAdjustmentContext(items, bdiPercent);
 
     // 2. Calculate Factors
     const factors = calculateAdjustmentFactors(settings, context);
@@ -147,6 +163,12 @@ export function getAdjustedBudgetTotals(
     // 3. Sum Adjusted Totals
     let adjBase = 0;
     let adjFinal = 0;
+
+    // Re-filter leaf items for final sum (optimization: could reuse if passed, but cheap enough)
+    const leafItems = items.filter(i => {
+        const isGroup = i.type === 'group' || (i as any).kind === 'GROUP';
+        return !isGroup && (i.level === undefined || i.level >= 3);
+    });
 
     leafItems.forEach(item => {
         const qty = item.quantity || 0;

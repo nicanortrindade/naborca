@@ -7,6 +7,8 @@ import { calculateBudget, repairHierarchy, type BudgetCalculationResult } from '
 import {
     calculateAdjustmentFactors,
     getAdjustedItemValues,
+    getAdjustedBudgetTotals,
+    getAdjustmentContext,
     classifyItem,
     type AdjustmentContext
 } from '../utils/globalAdjustment';
@@ -121,44 +123,32 @@ const BudgetSchedulePage: React.FC = () => {
 
             // 2. ENGINE DE CÁLCULO PURO
             const calcResult = calculateBudget(repairedItems, budgetData.bdi || 0);
-            setCalculations(calcResult); // Persist engine result for direct access verification
+            setCalculations(calcResult); // Persist engine result
 
             // 3. HIDRATAR (Para o cronograma usar item.finalPrice AJUSTADO)
+            // SSOT GA V2: Calcular fatores e totais ajustados usando a util central
+            const settings = budgetData.settings?.global_adjustment_v2;
 
-            // GA V2 Setup
-            const ctx: AdjustmentContext = {
-                totalBase: calcResult.totalGlobalBase,
-                totalFinal: calcResult.totalGlobalFinal,
-                totalMaterialBase: 0
-            };
+            // Primeiro, obter o total geral ajustado (SSOT)
+            // Isso garante que o Cronograma "saiba" o total correto (ex: R$ 120k)
+            const globalTotals = getAdjustedBudgetTotals(
+                repairedItems,
+                settings,
+                budgetData.bdi || 0
+            );
 
-            let adjData = budgetData.settings?.global_adjustment_v2;
-            // Legacy Migration (Visual only)
-            if (!adjData && (budgetData?.metadata?.global_adjustment || budgetData?.settings?.global_adjustment)) {
-                const legacy = budgetData.settings?.global_adjustment || budgetData.metadata?.global_adjustment;
-                adjData = {
-                    mode: 'global_all',
-                    kind: legacy.type === 'percentage' ? 'percentage' : 'fixed',
-                    value: legacy.value
-                };
-            }
+            // Calcular fatores para hidratar cada item (necessário para calcular o rateio)
+            // Precisamos do contexto RAW para os fatores (agora via SSOT)
+            const ctx = getAdjustmentContext(repairedItems, budgetData.bdi || 0);
 
-            // Calc Material Base if needed
-            if (adjData?.mode === 'materials_only') {
-                ctx.totalMaterialBase = repairedItems.reduce((acc, i) => {
-                    if (classifyItem(i.description, i.type) === 'material' && i.level >= 3 && i.type !== 'group') {
-                        return acc + ((i.unitPrice || 0) * (i.quantity || 0));
-                    }
-                    return acc;
-                }, 0);
-            }
+            // Calculate factors (SSOT logic)
+            const factors = calculateAdjustmentFactors(settings, ctx);
 
-            const factors = calculateAdjustmentFactors(adjData, ctx);
-
+            // Hidratar Itens
             const hydratedItems = repairedItems.map(item => {
                 const calculated = calcResult.itemMap.get(item.id!);
 
-                // Apply Adjustment to get TRUE Final Price
+                // Apply Adjustment to get TRUE Final Price using SSOT utility
                 const adj = getAdjustedItemValues(
                     { unitPrice: item.unitPrice || 0, description: item.description, type: item.type },
                     factors,
@@ -170,7 +160,7 @@ const BudgetSchedulePage: React.FC = () => {
                 return {
                     ...item,
                     totalPrice: calculated?.baseTotal || 0,
-                    finalPrice: finalPriceTotal, // ADJ
+                    finalPrice: finalPriceTotal, // ADJ (SSOT)
                     unitPrice: item.unitPrice || 0
                 };
             });
@@ -278,6 +268,8 @@ const BudgetSchedulePage: React.FC = () => {
     // Mesmos valores exibidos no editor do orçamento
     const calculateTotalFromItems = () => {
         if (!items || items.length === 0) return 0;
+        // SSOT check: We could use getAdjustedBudgetTotals here too,
+        // but since we hydrated finalPrice correctly, summing leaves is equivalent.
         return Math.round(
             items
                 .filter(i => i.level >= 3 && i.type !== 'group') // Only real items (not groups)
@@ -286,7 +278,7 @@ const BudgetSchedulePage: React.FC = () => {
     };
 
     const totalBudgetFromItems = calculateTotalFromItems();
-    // Use calculated total
+    // Use calculated total which now respects Adjustment V2 via hydrated items
     const totalBudget = totalBudgetFromItems > 0 ? totalBudgetFromItems : (budget?.totalValue || 0);
 
 
