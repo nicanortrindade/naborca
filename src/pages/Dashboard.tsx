@@ -13,7 +13,8 @@ import {
     Database,
     Search,
     AlertOctagon,
-    Briefcase
+    Briefcase,
+    Info
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
@@ -339,6 +340,14 @@ const Dashboard = () => {
                                         >
                                             CONTINUAR
                                         </button>
+                                        {(budget.settings?.global_adjustment_v2) && (
+                                            <div className="flex justify-end mt-1 group-hover/badge:opacity-100 transition-opacity">
+                                                <div className="flex items-center gap-1 cursor-help" title="Este orçamento possui Ajuste Global V2 ativo. O valor final real pode diferir do exibido aqui. Abra para ver o total recalculado.">
+                                                    <Info size={10} className="text-amber-500" />
+                                                    <span className="text-[9px] text-amber-600 font-bold uppercase tracking-wider">Ajuste Global Ativo</span>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}
