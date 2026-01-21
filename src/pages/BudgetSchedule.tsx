@@ -4,6 +4,12 @@ import type { Budget, BudgetItem, BudgetSchedule } from '../types/domain';
 import { BudgetService } from '../lib/supabase-services/BudgetService';
 import { BudgetItemService } from '../lib/supabase-services/BudgetItemService'; // prepareItemsForDisplay removido
 import { calculateBudget, repairHierarchy, type BudgetCalculationResult } from '../utils/calculationEngine';
+import {
+    calculateAdjustmentFactors,
+    getAdjustedItemValues,
+    classifyItem,
+    type AdjustmentContext
+} from '../utils/globalAdjustment';
 import { BudgetScheduleService } from '../lib/supabase-services/BudgetScheduleService';
 import { CompanyService } from '../lib/supabase-services/CompanyService';
 import { LayoutDashboard, Save, ChevronLeft, DollarSign, Calculator, Download, Plus, Minus, Info, FileSpreadsheet, ChevronDown, ChevronRight, AlertTriangle, Check } from 'lucide-react';
@@ -117,42 +123,58 @@ const BudgetSchedulePage: React.FC = () => {
             const calcResult = calculateBudget(repairedItems, budgetData.bdi || 0);
             setCalculations(calcResult); // Persist engine result for direct access verification
 
-            // 3. HIDRATAR (Para o cronograma usar item.finalPrice)
+            // 3. HIDRATAR (Para o cronograma usar item.finalPrice AJUSTADO)
+
+            // GA V2 Setup
+            const ctx: AdjustmentContext = {
+                totalBase: calcResult.totalGlobalBase,
+                totalFinal: calcResult.totalGlobalFinal,
+                totalMaterialBase: 0
+            };
+
+            let adjData = budgetData.settings?.global_adjustment_v2;
+            // Legacy Migration (Visual only)
+            if (!adjData && (budgetData?.metadata?.global_adjustment || budgetData?.settings?.global_adjustment)) {
+                const legacy = budgetData.settings?.global_adjustment || budgetData.metadata?.global_adjustment;
+                adjData = {
+                    mode: 'global_all',
+                    kind: legacy.type === 'percentage' ? 'percentage' : 'fixed',
+                    value: legacy.value
+                };
+            }
+
+            // Calc Material Base if needed
+            if (adjData?.mode === 'materials_only') {
+                ctx.totalMaterialBase = repairedItems.reduce((acc, i) => {
+                    if (classifyItem(i.description, i.type) === 'material' && i.level >= 3 && i.type !== 'group') {
+                        return acc + ((i.unitPrice || 0) * (i.quantity || 0));
+                    }
+                    return acc;
+                }, 0);
+            }
+
+            const factors = calculateAdjustmentFactors(adjData, ctx);
+
             const hydratedItems = repairedItems.map(item => {
                 const calculated = calcResult.itemMap.get(item.id!);
 
-                // LOG DE DIAGNÓSTICO OBRIGATÓRIO
-                if (item.level === 1) {
-                    console.log(`[SCHEDULE FETCH DIAGNOSTIC] Etapa ${item.description}: EngineTotal=${calculated?.finalTotal}`);
-                }
+                // Apply Adjustment to get TRUE Final Price
+                const adj = getAdjustedItemValues(
+                    { unitPrice: item.unitPrice || 0, description: item.description, type: item.type },
+                    factors,
+                    budgetData.bdi || 0
+                );
+
+                const finalPriceTotal = adj.finalPrice * (item.quantity || 0);
 
                 return {
                     ...item,
                     totalPrice: calculated?.baseTotal || 0,
-                    finalPrice: calculated?.finalTotal || 0,
+                    finalPrice: finalPriceTotal, // ADJ
                     unitPrice: item.unitPrice || 0
                 };
             });
 
-            // LOGS REAIS SOLICITADOS (SCHEDULE)
-            console.log("========== [SCHEDULE PIPELINE START] ==========");
-            console.log("[SCHEDULE] budgetId=", budgetId);
-            console.log("[SCHEDULE] raw.items.length=", itemsData?.length);
-            console.log("[SCHEDULE] raw.sample10=", itemsData?.slice(0, 10).map(i => ({
-                id: i.id, level: i.level, desc: i.description, parentId: i.parentId
-            })));
-
-            console.log("[SCHEDULE] afterRepair.items.length=", repairedItems?.length);
-            console.log("[SCHEDULE] afterRepair.sample10=", repairedItems?.slice(0, 10).map(i => ({
-                id: i.id, level: i.level, desc: i.description, parentId: i.parentId
-            })));
-
-            console.log("[SCHEDULE] computed.totalGlobal=", calcResult.totalGlobalFinal);
-
-            console.log("[SCHEDULE] hydrated.sample10=", hydratedItems?.slice(0, 10).map(i => ({
-                id: i.id, level: i.level, desc: i.description, parentId: i.parentId, finalPrice: i.finalPrice
-            })));
-            console.log("========== [SCHEDULE PIPELINE END] ==========");
 
             // 4. Organize items strictly by hierarchy
             const organized = organizeHierarchy(hydratedItems);
@@ -720,7 +742,6 @@ const BudgetSchedulePage: React.FC = () => {
                         <tbody className="divide-y divide-slate-200">
                             {items?.map((item) => {
                                 const itemTotal = getItemCost(item);
-                                if (item.level === 1) console.log(`[SCHEDULE RENDER] id=${item.id} level=${item.level} desc=${item.description} parentId=${item.parentId} TotalRenderizado=${itemTotal} FinalPriceProp=${item.finalPrice}`);
 
                                 // Check if item should be hidden (parent is collapsed)
                                 const isHidden = (() => {
