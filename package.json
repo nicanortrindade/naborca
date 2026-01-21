@@ -9,6 +9,7 @@
     "prebuild": "node scripts/generate-build-info.js",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
+    "test": "npm run test:excel:sintetico",
     "test:excel:sintetico": "npx -y tsx scripts/test-export-sintetico-xlsx.ts"
   },
   "dependencies": {

@@ -42,7 +42,7 @@ type NormalizedResource = {
     level: number;
     peso?: number;
     unit: string;
-    price: number;
+    price: number | undefined; // Allow undefined to signal "missing price" for UI
     source: string;
     originalType?: string; // e.g. material, labor
     raw?: any; // Objeto original para debug
@@ -63,6 +63,14 @@ function normalizeResource(res: any, kind: ResourceKind): NormalizedResource {
         };
     }
 
+    // INSTRUMENTATION: Log first of each source
+    if (!(globalThis as any)._loggedSources) (globalThis as any)._loggedSources = new Set();
+    const sourceKey = `${res.fonte || res.source || 'UNKNOWN'}-${kind}`;
+    if (!(globalThis as any)._loggedSources.has(sourceKey)) {
+        console.log(`[DEBUG_PRICE] Raw ${sourceKey}:`, res);
+        (globalThis as any)._loggedSources.add(sourceKey);
+    }
+
     // Determinar tipo baseado no kind OBRIGATORIAMENTE para o Badge
     const type = kind === 'insumo' ? 'INPUT' : 'COMPOSITION';
 
@@ -76,8 +84,12 @@ function normalizeResource(res: any, kind: ResourceKind): NormalizedResource {
     const unit = res.unidade || res.unit || res.un || 'UN';
 
     // Extrair price com fallbacks (preco, price, valor, custoTotal, total_cost)
-    const priceRaw = res.preco ?? res.price ?? res.valor ?? res.custoTotal ?? res.total_cost ?? res.price_unit ?? 0;
-    const price = typeof priceRaw === 'number' ? priceRaw : parseFloat(priceRaw) || 0;
+    // Extrair price com fallbacks (preco, price, valor, custoTotal, total_cost)
+    // If explicit undefined/null, keep it to show "Sem preço"
+    const priceRaw = res.preco ?? res.price ?? res.valor ?? res.custoTotal ?? res.total_cost ?? res.price_unit;
+    const price = (priceRaw !== undefined && priceRaw !== null)
+        ? (typeof priceRaw === 'number' ? priceRaw : parseFloat(priceRaw) || 0)
+        : undefined;
 
     // Extrair source com fallback
     const source = res.fonte || res.source || (kind === 'insumo' ? 'SINAPI' : 'PROPRIO');
@@ -311,7 +323,6 @@ const BudgetEditor = () => {
             }
 
             const currentSettings = budget.settings || {};
-            const currentMetadata = budget.metadata || {};
 
             const newSettings = {
                 ...currentSettings,
@@ -324,16 +335,9 @@ const BudgetEditor = () => {
                 global_adjustment: null
             };
 
-            const newMetadata = {
-                ...currentMetadata,
-                has_pricing_divergence: !applyToAnalytic,
-                divergence_reason: applyToAnalytic ? null : 'global_adjust_v2_synthetic_only'
-            };
-
             // Single update call
             await BudgetService.update(budget.id, {
-                settings: newSettings,
-                metadata: newMetadata
+                settings: newSettings
             });
 
             await loadBudget();
@@ -350,10 +354,11 @@ const BudgetEditor = () => {
     // Removed duplicate normalizeResource function
 
 
-    const fetchResources = useCallback(async (query: string = '', typeFilter: 'INS' | 'CPU' = 'INS', bases: string[] = []) => {
+    const fetchResources = useCallback(async (query: string, typeFilter: string, bases: string[], priceContext?: any) => {
         const safeQuery = query?.trim();
 
-        if (safeQuery.length < 3) {
+        if (!safeQuery || safeQuery.length < 3) {
+            console.log('[EDITOR] tiny query → skip fetch');
             setFilteredResources([]);
             return;
         }
@@ -366,7 +371,10 @@ const BudgetEditor = () => {
                 // PARALLEL SEARCH: User Insumos + Public Bases
                 const [userResults, publicResults] = await Promise.all([
                     InsumoService.search(safeQuery),
-                    SinapiService.searchInputs(safeQuery, { sources: bases.length > 0 ? bases.filter(b => b !== 'OWN') : undefined })
+                    SinapiService.searchInputs(safeQuery, {
+                        sources: bases.length > 0 ? bases.filter(b => b !== 'OWN') : undefined,
+                        ...priceContext
+                    })
                 ]);
 
                 const normUser = (userResults || []).map(i => normalizeResource(i, 'insumo'));
@@ -377,7 +385,10 @@ const BudgetEditor = () => {
                 // PARALLEL SEARCH: User Compositions + Public Bases
                 const [userResults, publicResults] = await Promise.all([
                     CompositionService.search(safeQuery),
-                    SinapiService.searchCompositions(safeQuery, { sources: bases.length > 0 ? bases.filter(b => b !== 'OWN') : undefined })
+                    SinapiService.searchCompositions(safeQuery, {
+                        sources: bases.length > 0 ? bases.filter(b => b !== 'OWN') : undefined,
+                        ...priceContext
+                    })
                 ]);
 
                 const normUser = (userResults || []).map(i => normalizeResource(i, 'composition'));
@@ -407,7 +418,12 @@ const BudgetEditor = () => {
     useEffect(() => {
         if (isAddingItem) {
             console.log(`[MODAL] isAddingItem=true Tab=${addItemTab} Bases=${selectedBases} → trigger fetchResources`);
-            fetchResources(searchTerm ?? '', addItemTab, selectedBases);
+            const priceContext = budget ? {
+                uf: budget.sinapiUf || 'BA',
+                competence: budget.sinapiCompetence,
+                regime: budget.sinapiRegime // 'DESONERADO' | 'NAO_DESONERADO'
+            } : undefined;
+            fetchResources(searchTerm ?? '', addItemTab, selectedBases, priceContext);
         } else {
             setFilteredResources([]);
         }
@@ -418,7 +434,12 @@ const BudgetEditor = () => {
         if (!isAddingItem || !searchTerm) return;
 
         const timeout = setTimeout(() => {
-            fetchResources(searchTerm, addItemTab, selectedBases);
+            const priceContext = budget ? {
+                uf: budget.sinapiUf || 'BA',
+                competence: budget.sinapiCompetence,
+                regime: budget.sinapiRegime
+            } : undefined;
+            fetchResources(searchTerm, addItemTab, selectedBases, priceContext);
         }, 300);
 
         return () => clearTimeout(timeout);
@@ -3003,7 +3024,9 @@ const BudgetEditor = () => {
                                                     <div className="text-right shrink-0 bg-slate-50 p-2 rounded-lg">
                                                         <p className="text-[10px] text-slate-400 uppercase font-black">Preço Ref.</p>
                                                         <p className="font-black text-lg text-slate-800">
-                                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price || 0)}
+                                                            {(res.price !== undefined && res.price !== null)
+                                                                ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price)
+                                                                : <span className="text-sm text-slate-400 font-bold uppercase">Sem Preço</span>}
                                                         </p>
                                                         <p className="text-[10px] text-slate-500 lowercase font-medium text-right mt-1">
                                                             / {res.unit || 'UN'}

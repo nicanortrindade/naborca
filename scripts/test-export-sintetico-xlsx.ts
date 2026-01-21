@@ -61,7 +61,12 @@ async function main() {
         exportData = {
             budgetName: selectedBudget.name, clientName: selectedBudget.client_name, date: new Date(),
             bdi: selectedBudget.bdi, encargos: selectedBudget.encargos, items: processedMockItems,
-            companySettings: { name: 'Mock Co', responsibleName: 'Mock Eng' },
+            companySettings: {
+                name: 'Mock Co',
+                responsibleName: 'Mock Eng',
+                phone: '(11) 99999-9999',
+                email: 'mock@example.com'
+            },
             banksUsed: { sinapi: { mes: '01/2025', estado: 'SP' } }
         };
 
@@ -250,7 +255,17 @@ async function main() {
     for (let r = 1; r < headerRowNum; r++) {
         topValues += " " + ws.getRow(r).values.toString();
     }
-    const requiredStrings = ["OBRA", "BASES", "BDI", "ENCARGOS SOCIAIS"];
+    const requiredStrings = [
+        "OBRA",
+        "BASES",
+        "BDI",
+        "ENCARGOS SOCIAIS",
+        "CNPJ",
+        "RESPONSÁVEL TÉCNICO",
+        "CREA/CAU",
+        "CPF",
+        "CONTATO"
+    ];
     const missingStrings = requiredStrings.filter(s => !topValues.toUpperCase().includes(s));
 
     if (missingStrings.length > 0) {

@@ -336,10 +336,19 @@ function addExcelHeader(
     columnEnd: string = 'H',
     data?: ExportData
 ) {
-    const compName = (companySettings?.name || companySettings?.company_name || 'EMPRESA N\u00c3O CONFIGURADA').toUpperCase();
-    const colEndNum = columnEnd.charCodeAt(0) - 64; // A=1, B=2, etc.
+    const compName = (companySettings?.company_name || companySettings?.name || 'EMPRESA N\u00c3O CONFIGURADA').toUpperCase();
+    const cnpj = companySettings?.cnpj || '00.000.000/0000-00';
+    const address = `${companySettings?.address || ''} ${companySettings?.city || ''}/${companySettings?.state || ''}`.trim() || 'Endere\u00e7o n\u00e3o cadastrado';
+    const email = companySettings?.email || '';
+    const phone = companySettings?.phone || '';
+    const contactInfo = [email, phone].filter(Boolean).join(' | ');
 
-    // Row 1: Logo placeholder + Company Name
+    const respName = companySettings?.responsible_name || companySettings?.responsibleName || 'Respons\u00e1vel n\u00e3o cadastrado';
+    const respCrea = companySettings?.responsible_crea || companySettings?.responsibleCrea || '000.000-0';
+    const respCpf = companySettings?.responsible_cpf || companySettings?.responsibleCpf || '000.000.000-00';
+    const technicalInfo = `Respons\u00e1vel T\u00e9cnico: ${respName} | CREA/CAU: ${respCrea} | CPF: ${respCpf}`;
+
+    // Row 1: Company Name
     worksheet.mergeCells(`A1:${columnEnd}1`);
     worksheet.getRow(1).height = 30;
     const c1 = worksheet.getCell('A1');
@@ -350,23 +359,23 @@ function addExcelHeader(
     // Row 2: CNPJ
     worksheet.mergeCells(`A2:${columnEnd}2`);
     const c2 = worksheet.getCell('A2');
-    c2.value = `CNPJ: ${companySettings?.cnpj || '00.000.000/0000-00'}`;
+    c2.value = `CNPJ: ${cnpj}`;
     c2.alignment = { horizontal: 'center', vertical: 'middle' };
     c2.font = { size: 10 };
 
     // Row 3: Address
     worksheet.mergeCells(`A3:${columnEnd}3`);
     const c3 = worksheet.getCell('A3');
-    let address = companySettings?.address || '';
-    if (companySettings?.city || companySettings?.state) {
-        address += ` | ${companySettings?.city || ''}/${companySettings?.state || ''}`;
-    }
     c3.value = address;
     c3.alignment = { horizontal: 'center', vertical: 'middle' };
     c3.font = { size: 9, color: { argb: 'FF666666' } };
 
-    // Row 4: Empty separator
-    worksheet.addRow([]);
+    // Row 4: Technical & Contact Info
+    worksheet.mergeCells(`A4:${columnEnd}4`);
+    const c4 = worksheet.getCell('A4');
+    c4.value = `${technicalInfo}${contactInfo ? ` | Contato: ${contactInfo}` : ''}`;
+    c4.alignment = { horizontal: 'center', vertical: 'middle' };
+    c4.font = { size: 9, italic: true, color: { argb: 'FF666666' } };
 
     // Row 5: Document Title
     worksheet.mergeCells(`A5:${columnEnd}5`);
@@ -379,27 +388,31 @@ function addExcelHeader(
 
     // Row 6: Project Info
     worksheet.addRow([]);
-    const row6 = worksheet.addRow([`OBRA: ${budgetName?.toUpperCase() || ''}`]);
-    worksheet.mergeCells(`A7:${columnEnd}7`);
-    worksheet.getCell('A7').font = { bold: true, size: 11 };
-    worksheet.getCell('A7').alignment = { horizontal: 'left', vertical: 'middle' };
+    const row6Num = worksheet.rowCount + 1;
+    worksheet.mergeCells(`A${row6Num}:${columnEnd}${row6Num}`);
+    const r6 = worksheet.getCell(`A${row6Num}`);
+    r6.value = `OBRA: ${budgetName?.toUpperCase() || ''}`;
+    r6.font = { bold: true, size: 11 };
+    r6.alignment = { horizontal: 'left', vertical: 'middle' };
 
     // Row 7: Client
-    const row7 = worksheet.addRow([`CLIENTE: ${clientName?.toUpperCase() || ''}`]);
-    worksheet.mergeCells(`A8:${columnEnd}8`);
-    worksheet.getCell('A8').font = { bold: true, size: 11 };
-    worksheet.getCell('A8').alignment = { horizontal: 'left', vertical: 'middle' };
+    const row7Num = worksheet.rowCount + 1;
+    worksheet.mergeCells(`A${row7Num}:${columnEnd}${row7Num}`);
+    const r7 = worksheet.getCell(`A${row7Num}`);
+    r7.value = `CLIENTE: ${clientName?.toUpperCase() || ''}`;
+    r7.font = { bold: true, size: 11 };
+    r7.alignment = { horizontal: 'left', vertical: 'middle' };
 
     // Row 8: Date
-    const row8 = worksheet.addRow([`DATA: ${new Date().toLocaleDateString('pt-BR')}`]);
-    worksheet.mergeCells(`A9:${columnEnd}9`);
-    worksheet.getCell('A9').font = { size: 10, color: { argb: 'FF666666' } };
+    const row8Num = worksheet.rowCount + 1;
+    worksheet.mergeCells(`A${row8Num}:${columnEnd}${row8Num}`);
+    const r8 = worksheet.getCell(`A${row8Num}`);
+    r8.value = `DATA: ${new Date().toLocaleDateString('pt-BR')}`;
+    r8.font = { size: 10, color: { argb: 'FF666666' } };
 
-    // Row 9: Empty separator
-    worksheet.addRow([]);
-
-    // Row 10-14: Reference Info Block (if data provided)
+    // Row 9-14: Reference Info Block (if data provided)
     if (data) {
+        worksheet.addRow([]);
         // Banks Used
         let refInfo = 'BASES DE REFER\u00caNCIA: ';
         if (data.banksUsed?.sinapi) refInfo += `SINAPI (${data.banksUsed.sinapi.mes}/${data.banksUsed.sinapi.estado}) `;
@@ -409,30 +422,34 @@ function addExcelHeader(
         if (data.banksUsed?.cpos) refInfo += `| CPOS/CDHU (${data.banksUsed.cpos.mes}/SP) `;
         if (refInfo === 'BASES DE REFER\u00caNCIA: ') refInfo += 'SINAPI/ORSE';
 
-        const rowRef = worksheet.addRow([refInfo]);
-        worksheet.mergeCells(`A11:${columnEnd}11`);
-        worksheet.getCell('A11').font = { size: 9, color: { argb: 'FF666666' } };
-        worksheet.getCell('A11').alignment = { horizontal: 'left', wrapText: true };
+        const rowRefNum = worksheet.rowCount + 1;
+        worksheet.mergeCells(`A${rowRefNum}:${columnEnd}${rowRefNum}`);
+        const rRef = worksheet.getCell(`A${rowRefNum}`);
+        rRef.value = refInfo;
+        rRef.font = { size: 9, color: { argb: 'FF666666' } };
+        rRef.alignment = { horizontal: 'left', wrapText: true };
 
         // BDI Info
         const bdiType = data.isDesonerado ? 'DESONERADO' : 'N\u00c3O DESONERADO';
         const bdiInfo = `BDI: ${bdiType} - ${(data.bdi || 0).toFixed(2)}%`;
-        const rowBdi = worksheet.addRow([bdiInfo]);
-        worksheet.mergeCells(`A12:${columnEnd}12`);
-        worksheet.getCell('A12').font = { size: 9, bold: true, color: { argb: 'FF1E3A8A' } };
+        const rowBdiNum = worksheet.rowCount + 1;
+        worksheet.mergeCells(`A${rowBdiNum}:${columnEnd}${rowBdiNum}`);
+        const rBdi = worksheet.getCell(`A${rowBdiNum}`);
+        rBdi.value = bdiInfo;
+        rBdi.font = { size: 9, bold: true, color: { argb: 'FF1E3A8A' } };
 
         // Encargos Info
         const encH = data.encargosHorista || data.encargos || 0;
         const encM = data.encargosMensalista || data.encargos || 0;
         const encInfo = `ENCARGOS SOCIAIS: Horista ${encH.toFixed(2)}% | Mensalista ${encM.toFixed(2)}%`;
-        const rowEnc = worksheet.addRow([encInfo]);
-        worksheet.mergeCells(`A13:${columnEnd}13`);
-        worksheet.getCell('A13').font = { size: 9, color: { argb: 'FF666666' } };
-
-        // Empty separator before table
-        worksheet.addRow([]);
+        const rowEncNum = worksheet.rowCount + 1;
+        worksheet.mergeCells(`A${rowEncNum}:${columnEnd}${rowEncNum}`);
+        const rEnc = worksheet.getCell(`A${rowEncNum}`);
+        rEnc.value = encInfo;
+        rEnc.font = { size: 9, color: { argb: 'FF666666' } };
     }
 
+    worksheet.addRow([]);
     worksheet.addRow([]);
 }
 
@@ -449,11 +466,11 @@ function addExcelFooter(worksheet: ExcelJS.Worksheet, companySettings?: CompanyS
     const rowNum = worksheet.rowCount + 1;
 
     // Line separator
-    const sepRow = worksheet.addRow(['']);
+    worksheet.addRow(['']);
     worksheet.mergeCells(`A${rowNum}:${columnEnd}${rowNum}`);
 
     // Responsible Name
-    const nameRow = worksheet.addRow([respName]);
+    worksheet.addRow([respName]);
     const nameRowNum = worksheet.rowCount;
     worksheet.mergeCells(`A${nameRowNum}:${columnEnd}${nameRowNum}`);
     worksheet.getCell(`A${nameRowNum}`).font = { bold: true, size: 10 };
@@ -465,71 +482,24 @@ function addExcelFooter(worksheet: ExcelJS.Worksheet, companySettings?: CompanyS
     if (respCpf) credInfo += (credInfo ? ' | ' : '') + `CPF: ${respCpf}`;
     if (!credInfo) credInfo = 'CREA/CAU / CPF N\u00c3O INFORMADO';
 
-    const credRow = worksheet.addRow([credInfo]);
+    worksheet.addRow([credInfo]);
     const credRowNum = worksheet.rowCount;
     worksheet.mergeCells(`A${credRowNum}:${columnEnd}${credRowNum}`);
     worksheet.getCell(`A${credRowNum}`).font = { size: 9, color: { argb: 'FF666666' } };
     worksheet.getCell(`A${credRowNum}`).alignment = { horizontal: 'center' };
 
     // Date of emission
-    const dateRow = worksheet.addRow([`Emitido em: ${new Date().toLocaleDateString('pt-BR')} \u00e0s ${new Date().toLocaleTimeString('pt-BR')}`]);
+    worksheet.addRow([`Emitido em: ${new Date().toLocaleDateString('pt-BR')} \u00e0s ${new Date().toLocaleTimeString('pt-BR')}`]);
     const dateRowNum = worksheet.rowCount;
     worksheet.mergeCells(`A${dateRowNum}:${columnEnd}${dateRowNum}`);
     worksheet.getCell(`A${dateRowNum}`).font = { size: 8, italic: true, color: { argb: 'FF999999' } };
     worksheet.getCell(`A${dateRowNum}`).alignment = { horizontal: 'center' };
 }
 
-function applyExcelTableFormatting(worksheet: ExcelJS.Worksheet, headerRowNum: number, dataStartRow: number, columnCount: number) {
-    // Style header row
-    const headerRow = worksheet.getRow(headerRowNum);
-    headerRow.height = 22;
-    headerRow.eachCell((cell, colNumber) => {
-        if (colNumber <= columnCount) {
-            cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
-            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-            cell.border = {
-                top: { style: 'thin' },
-                left: { style: 'thin' },
-                bottom: { style: 'thin' },
-                right: { style: 'thin' }
-            };
-        }
-    });
 
-    // Style data rows with zebra striping
-    for (let i = dataStartRow; i <= worksheet.rowCount; i++) {
-        const row = worksheet.getRow(i);
-        const isEven = (i - dataStartRow) % 2 === 0;
-
-        row.eachCell((cell, colNumber) => {
-            if (colNumber <= columnCount) {
-                // Alignment - center all cells
-                cell.alignment = {
-                    horizontal: 'center',
-                    vertical: 'middle',
-                    wrapText: true
-                };
-
-                // Zebra striping
-                if (isEven) {
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
-                }
-
-                // Borders
-                cell.border = {
-                    top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-                    left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-                    bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-                    right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
-                };
-            }
-        });
-    }
-}
 
 function autoFitExcelColumns(worksheet: ExcelJS.Worksheet) {
-    worksheet.columns.forEach((column, index) => {
+    worksheet.columns.forEach((column) => {
         let maxLength = 10; // Minimum width
 
         column.eachCell?.({ includeEmpty: true }, (cell) => {
@@ -787,7 +757,6 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
     addExcelHeader(worksheet, 'ORÇAMENTO SINTÉTICO', data.budgetName, data.clientName, data.companySettings, 'J', data);
 
     // 3. TABLE HEADERS (Dynamic row position)
-    const headerRowNum = worksheet.rowCount + 1;
     const headerRow = worksheet.addRow([
         'Item', 'Código', 'Banco', 'Descrição', 'Und', 'Quant.', 'Valor Unit', 'Valor Unit com BDI', 'Total', 'Peso (%)'
     ]);
@@ -806,27 +775,25 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
         const isGroup = item.type === 'group';
         const level = getHierarchyLevel(item.itemNumber);
 
-        let rowTotalBase = 0;
         let rowTotalWithBDI = 0;
-        let unitPriceRaw = item.unitPrice || 0;
-        let unitPriceBdi = item.unitPriceWithBDI || (item.finalPrice && item.quantity > 0 ? item.finalPrice / item.quantity : item.unitPrice * (1 + (data.bdi || 0) / 100));
+        let unitPriceRaw: any = item.unitPrice || 0;
+        let unitPriceWithBDI = item.unitPriceWithBDI || (item.finalPrice && item.quantity > 0 ? item.finalPrice / item.quantity : item.unitPrice * (1 + (data.bdi || 0) / 100));
 
         if (isGroup) {
             // Sum of all descendant leaves
             const descendants = leaves.filter(l => l.itemNumber.startsWith(item.itemNumber + '.'));
-            rowTotalBase = descendants.reduce((acc, l) => acc + ((l.quantity || 0) * (l.unitPrice || 0)), 0);
             rowTotalWithBDI = descendants.reduce((acc, l) => {
                 const val = l.finalPrice || ((l.quantity || 0) * (l.unitPriceWithBDI || (l.unitPrice * (1 + (data.bdi || 0) / 100))));
                 return acc + val;
             }, 0);
 
-            // Para grupos: H e I = subtotal do grupo. Quant = 1.
-            unitPriceRaw = null as any;
-            unitPriceBdi = rowTotalWithBDI; // Col H
-            rowTotalBase = rowTotalBase;     // Col I
+            // Regra Grupos: Quant=1, G vazio, H=subtotal, I=H
+            unitPriceRaw = '';
+            unitPriceWithBDI = rowTotalWithBDI;
+            rowTotalWithBDI = unitPriceWithBDI;
         } else {
-            rowTotalBase = (item.quantity || 0) * (item.unitPrice || 0);
-            rowTotalWithBDI = item.finalPrice || ((item.quantity || 0) * (unitPriceBdi));
+            // Regra Folhas: G=unitPriceBase, H=unitPriceWithBDI, I=Quant*H
+            rowTotalWithBDI = (item.quantity || 0) * unitPriceWithBDI;
         }
 
         const weight = total_com_bdi > 0 ? (rowTotalWithBDI / total_com_bdi) : 0;
@@ -847,13 +814,13 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
             (isGroup ? '' : item.unit),
             (isGroup ? 1 : item.quantity),
             unitPriceRaw,         // Col G: Valor Unit (Base)
-            unitPriceBdi,         // Col H: Valor Unit c/ BDI
-            rowTotalBase,         // Col I: Total (Base)
+            unitPriceWithBDI,     // Col H: Valor Unit c/ BDI
+            rowTotalWithBDI,      // Col I: Total (Sempre com BDI)
             weight                // Col J: Peso
         ]);
 
         // ALIGNMENT & BORDER
-        row.eachCell((cell, colNum) => {
+        row.eachCell((cell) => {
             cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
             cell.border = {
                 top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
@@ -880,7 +847,6 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
                 row.font = { bold: true };
             }
         } else {
-            // Zebra striping for leaves
             if (index % 2 === 0) {
                 row.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } });
             }
@@ -890,7 +856,7 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
         row.getCell(6).numFmt = '#,##0.00';      // Quant
         row.getCell(7).numFmt = '"R$ "#,##0.00';  // Unit Base
         row.getCell(8).numFmt = '"R$ "#,##0.00';  // Unit BDI
-        row.getCell(9).numFmt = '"R$ "#,##0.00';  // Total Base
+        row.getCell(9).numFmt = '"R$ "#,##0.00';  // Total
         row.getCell(10).numFmt = '0.00%';         // Peso
     });
 

@@ -145,7 +145,6 @@ export const BudgetService = {
         if (budget.sinapiCompetence !== undefined) payload.sinapi_competence = budget.sinapiCompetence;
         if (budget.sinapiRegime !== undefined) payload.sinapi_regime = budget.sinapiRegime;
         if (budget.sinapiContractType !== undefined) payload.sinapi_contract_type = budget.sinapiContractType;
-        if (budget.metadata !== undefined) payload.metadata = budget.metadata;
         if (budget.settings !== undefined) payload.settings = budget.settings;
 
         const { data, error } = await (supabase

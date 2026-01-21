@@ -236,9 +236,37 @@ export const SinapiService = {
             queryBuilder = queryBuilder.in('fonte', filters.sources);
         }
 
-        const { data, error } = await queryBuilder.limit(100);
+        const { data: inputs, error } = await queryBuilder.limit(100);
         if (error) throw error;
-        return data || [];
+
+        let finalInputs = inputs || [];
+
+        // ENRICHMENT: Fetch prices if context is available
+        if (filters?.uf && filters?.competence && filters?.regime && finalInputs.length > 0) {
+            try {
+                const priceTable = await this.getPriceTable(filters.uf, filters.competence, filters.regime);
+                if (priceTable) {
+                    const codes = finalInputs.map((i: any) => i.code);
+                    // Create safe chunks for WHERE IN queries
+                    const { data: prices } = await (supabase.from('sinapi_input_prices') as any)
+                        .select('input_code, price')
+                        .eq('price_table_id', priceTable.id)
+                        .in('input_code', codes);
+
+                    if (prices && prices.length > 0) {
+                        const priceMap = new Map(prices.map((p: any) => [p.input_code, p.price]));
+                        finalInputs = finalInputs.map((i: any) => ({
+                            ...i,
+                            price: priceMap.get(i.code) // Auto undefined if missing
+                        }));
+                    }
+                }
+            } catch (e) {
+                console.warn('[SinapiService] Failed to enrich items with prices:', e);
+            }
+        }
+
+        return finalInputs;
     },
 
     async getInputByCode(code: string): Promise<SinapiInput | null> {
@@ -354,9 +382,37 @@ export const SinapiService = {
             queryBuilder = queryBuilder.in('fonte', filters.sources);
         }
 
-        const { data, error } = await queryBuilder.limit(100);
+        const { data: compositions, error } = await queryBuilder.limit(100);
         if (error) throw error;
-        return data || [];
+
+        let finalCompositions = compositions || [];
+
+        // ENRICHMENT: Fetch prices if context is available
+        if (filters?.uf && filters?.competence && filters?.regime && finalCompositions.length > 0) {
+            try {
+                const priceTable = await this.getPriceTable(filters.uf, filters.competence, filters.regime);
+                if (priceTable) {
+                    const codes = finalCompositions.map((i: any) => i.code);
+                    // Create safe chunks for WHERE IN queries
+                    const { data: prices } = await (supabase.from('sinapi_composition_prices') as any)
+                        .select('composition_code, price')
+                        .eq('price_table_id', priceTable.id)
+                        .in('composition_code', codes);
+
+                    if (prices && prices.length > 0) {
+                        const priceMap = new Map(prices.map((p: any) => [p.composition_code, p.price]));
+                        finalCompositions = finalCompositions.map((i: any) => ({
+                            ...i,
+                            price: priceMap.get(i.code) // Auto undefined if missing
+                        }));
+                    }
+                }
+            } catch (e) {
+                console.warn('[SinapiService] Failed to enrich compositions with prices:', e);
+            }
+        }
+
+        return finalCompositions;
     },
 
     async getCompositionByCode(code: string): Promise<SinapiComposition | null> {
