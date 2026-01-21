@@ -2861,7 +2861,7 @@ const BudgetEditor = () => {
                                             <div className="flex justify-between items-center text-slate-500 font-bold uppercase tracking-widest text-[11px]">
                                                 <span>Custo Total:</span>
                                                 <span className="font-mono text-sm text-slate-700">
-                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(calcResult?.totalGlobalBase || 0)}
+                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBase)}
                                                 </span>
                                             </div>
 
@@ -2869,7 +2869,7 @@ const BudgetEditor = () => {
                                             <div className="flex justify-between items-center text-indigo-600 font-bold uppercase tracking-widest text-[11px] py-2 border-y border-indigo-100/50">
                                                 <span>BDI ({budget.bdi || 0}%):</span>
                                                 <span className="font-mono text-sm text-indigo-700">
-                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((calcResult?.totalGlobalFinal || 0) - (calcResult?.totalGlobalBase || 0))}
+                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal - totalBase)}
                                                 </span>
                                             </div>
 
@@ -2877,7 +2877,7 @@ const BudgetEditor = () => {
                                             <div className="flex justify-between items-center bg-blue-600 text-white p-4 rounded-xl shadow-lg border-2 border-blue-500 mt-2">
                                                 <span className="font-black tracking-[0.1em] text-xs uppercase">TOTAL GLOBAL:</span>
                                                 <span className="font-mono text-2xl font-black whitespace-nowrap">
-                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(calcResult?.totalGlobalFinal || 0)}
+                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal)}
                                                 </span>
                                             </div>
                                         </div>
