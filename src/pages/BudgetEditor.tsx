@@ -1533,2218 +1533,2216 @@ const BudgetEditor = () => {
 
     // Totais Globais atualizados para Header (Baseados no visibleRows)
     const { totalBase, totalFinal } = useMemo(() => {
-        // Totais Globais atualizados para Header (Baseados no visibleRows)
-        const { totalBase, totalFinal } = useMemo(() => {
-            // Use SSOT Utility
-            const result = getAdjustedBudgetTotals(
-                items, // Pass all items (utility filters leaves)
-                budget?.settings?.global_adjustment_v2,
-                budget?.bdi || 0
+        // Use SSOT Utility
+        const result = getAdjustedBudgetTotals(
+            items, // Pass all items (utility filters leaves)
+            budget?.settings?.global_adjustment_v2,
+            budget?.bdi || 0
+        );
+        return { totalBase: result.totalBase, totalFinal: result.totalFinal };
+    }, [items, budget]);
+
+
+    // Alias para compatibilidade
+    const totalBudget = totalBase;
+
+
+    const validateAnalytics = async (): Promise<boolean> => {
+        // Bloqueio por Divergência de Preços (Anti-Desclassificação)
+        if (budget?.metadata?.has_pricing_divergence) {
+            alert("⚠️ BLOQUEIO DE SEGURANÇA (LICITAÇÃO)\n\nO orçamento possui divergências entre valores sintéticos e analíticos (provavelmente devido a um ajuste global parcial).\n\nPara corrigir:\n1. Reutilize o Ajuste Global com a opção 'Aplicar também na analítica'.\n2. Ou ajuste os itens manualmente.\n\nEssa medida evita a desclassificação da proposta.");
+            return false;
+        }
+
+        if (!items) return true;
+        setLoading(true);
+        try {
+            const missing: any[] = [];
+            const divergent: any[] = [];
+
+            // Check visible items that should have composition
+            // FIX: Usar APENAS compositionId como sinal de CPU (Definitivo)
+            const candidates = visibleRows.filter(r =>
+                r.kind === 'ITEM' && r.compositionId && r.compositionId.length > 0
             );
-            return { totalBase: result.totalBase, totalFinal: result.totalFinal };
-        }, [items, budget]);
 
+            await Promise.all(candidates.map(async (item) => {
+                const children = await BudgetItemCompositionService.getByBudgetItemId(item.id!);
 
-        // Alias para compatibilidade
-        const totalBudget = totalBase;
+                // 1. Check Missing
+                if (!children || children.length === 0) {
+                    missing.push(item);
+                } else {
+                    // 2. Check Divergence (Deep Check)
+                    const synthUnit = item.unitPrice || 0; // Já ajustado em visibleRows (Base Unit)
 
+                    // Recalcular soma analítica ajustada
+                    const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
 
-        const validateAnalytics = async (): Promise<boolean> => {
-            // Bloqueio por Divergência de Preços (Anti-Desclassificação)
-            if (budget?.metadata?.has_pricing_divergence) {
-                alert("⚠️ BLOQUEIO DE SEGURANÇA (LICITAÇÃO)\n\nO orçamento possui divergências entre valores sintéticos e analíticos (provavelmente devido a um ajuste global parcial).\n\nPara corrigir:\n1. Reutilize o Ajuste Global com a opção 'Aplicar também na analítica'.\n2. Ou ajuste os itens manualmente.\n\nEssa medida evita a desclassificação da proposta.");
-                return false;
-            }
+                    const analyticSum = children.reduce((acc, c) => {
+                        const adj = getAdjustedItemValues(
+                            { unitPrice: c.unitPrice, description: c.description, type: c.type },
+                            { materialFactor, laborFactor, bdiFactor },
+                            budget.bdi || 0
+                        );
+                        // Soma dos unitários base * quantidade
+                        return acc + (adj.unitPrice * c.quantity);
+                    }, 0);
 
-            if (!items) return true;
-            setLoading(true);
-            try {
-                const missing: any[] = [];
-                const divergent: any[] = [];
-
-                // Check visible items that should have composition
-                // FIX: Usar APENAS compositionId como sinal de CPU (Definitivo)
-                const candidates = visibleRows.filter(r =>
-                    r.kind === 'ITEM' && r.compositionId && r.compositionId.length > 0
-                );
-
-                await Promise.all(candidates.map(async (item) => {
-                    const children = await BudgetItemCompositionService.getByBudgetItemId(item.id!);
-
-                    // 1. Check Missing
-                    if (!children || children.length === 0) {
-                        missing.push(item);
-                    } else {
-                        // 2. Check Divergence (Deep Check)
-                        const synthUnit = item.unitPrice || 0; // Já ajustado em visibleRows (Base Unit)
-
-                        // Recalcular soma analítica ajustada
-                        const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
-
-                        const analyticSum = children.reduce((acc, c) => {
-                            const adj = getAdjustedItemValues(
-                                { unitPrice: c.unitPrice, description: c.description, type: c.type },
-                                { materialFactor, laborFactor, bdiFactor },
-                                budget.bdi || 0
-                            );
-                            // Soma dos unitários base * quantidade
-                            return acc + (adj.unitPrice * c.quantity);
-                        }, 0);
-
-                        if (Math.abs(synthUnit - analyticSum) > 0.01) {
-                            // Divergência detectada
-                            // analyticSum aqui é BASE. expected também é BASE.
-                            divergent.push({ ...item, analyticSum, expected: synthUnit });
-                        }
+                    if (Math.abs(synthUnit - analyticSum) > 0.01) {
+                        // Divergência detectada
+                        // analyticSum aqui é BASE. expected também é BASE.
+                        divergent.push({ ...item, analyticSum, expected: synthUnit });
                     }
-                }));
-
-                setPendingAnalytics(missing);
-                setDivergentItems(divergent);
-
-                if (missing.length > 0) {
-                    setShowAnalyticModal(true);
-                    return false;
                 }
+            }));
 
-                if (divergent.length > 0) {
-                    alert(`IMPOSSÍVEL EXPORTAR (Proteção de Licitação):\n\nIdentificamos ${divergent.length} composições com divergência de preço.\nTotal Sintético não bate com a soma Analítica.\n\nUse o botão "CORRIGIR AGORA" no alerta vermelho para resolver.`);
-                    return false;
-                }
+            setPendingAnalytics(missing);
+            setDivergentItems(divergent);
 
-                return true;
-            } catch (err) {
-                console.error("Analytic validation failed", err);
+            if (missing.length > 0) {
+                setShowAnalyticModal(true);
                 return false;
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        const handleExportPDF = async (type: 'synthetic' | 'analytic') => {
-            if (type === 'analytic') {
-                const isValid = await validateAnalytics();
-                if (!isValid) return;
             }
 
-            try {
-                if (!budget || !items) return;
-
-                // Importar funções de exportação
-                const { exportPDFSynthetic, exportPDFAnalytic } = await import('../utils/budgetExport');
-
-                // Flatten rows for export using visibleRows (SSOT)
-                // Como visibleRows já é flat, apenas carregamos composição se necessário
-                const exportItems = await Promise.all(visibleRows.map(async (row) => {
-                    // Fetch composition RAW
-                    const compositionRaw = type === 'analytic'
-                        ? await BudgetItemCompositionService.getByBudgetItemId(row.id!)
-                        : [];
-
-                    // Apply Adjustment to Composition
-                    const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
-                    const composition = compositionRaw.map(c => {
-                        const adj = getAdjustedItemValues(
-                            { unitPrice: c.unitPrice, description: c.description, type: c.type },
-                            { materialFactor, laborFactor, bdiFactor },
-                            budget.bdi || 0
-                        );
-                        return {
-                            ...c,
-                            unitPrice: adj.unitPrice, // Export base unit
-                            finalPrice: adj.finalPrice,
-                            totalPrice: adj.unitPrice * c.quantity // Total Base
-                        };
-                    });
-
-                    return {
-                        ...row,
-                        composition
-                    };
-                }));
-
-                const exportData = {
-                    budgetName: budget.name,
-                    clientName: budget.client,
-                    date: budget.date,
-                    bdi: budget.bdi || 0,
-                    encargos: budget.encargosSociais || 0,
-                    items: exportItems,
-                    companySettings: settings,
-                    totalGlobalBase: calcResult?.totalGlobalBase,
-                    totalGlobalFinal: calcResult?.totalGlobalFinal,
-                    adjustmentSettings: budget.settings?.global_adjustment_v2
-                };
-
-                // Logs removidos para produção
-
-
-                if (type === 'synthetic') {
-                    await exportPDFSynthetic(exportData);
-                } else {
-                    await exportPDFAnalytic(exportData);
-                }
-            } catch (err) {
-                console.error("Erro ao gerar PDF:", err);
-                alert("Erro ao gerar o arquivo PDF. Verifique o console para mais detalhes.");
-            }
-        };
-
-        const handleExportExcel = async (type: 'synthetic' | 'analytic' = 'synthetic') => {
-            if (type === 'analytic') {
-                const isValid = await validateAnalytics();
-                if (!isValid) return;
+            if (divergent.length > 0) {
+                alert(`IMPOSSÍVEL EXPORTAR (Proteção de Licitação):\n\nIdentificamos ${divergent.length} composições com divergência de preço.\nTotal Sintético não bate com a soma Analítica.\n\nUse o botão "CORRIGIR AGORA" no alerta vermelho para resolver.`);
+                return false;
             }
 
-            try {
-                if (!budget || !items) return;
+            return true;
+        } catch (err) {
+            console.error("Analytic validation failed", err);
+            return false;
+        } finally {
+            setLoading(false);
+        }
+    };
 
-                const { exportExcelSynthetic, exportExcelAnalytic } = await import('../utils/budgetExport');
-
-                // Flatten rows for export using visibleRows (SSOT)
-                // Reusing logic from handleExportPDF to ensure consistency
-                const exportItems = await Promise.all(visibleRows.map(async (row) => {
-                    // Fetch composition RAW for analytic
-                    const compositionRaw = type === 'analytic'
-                        ? await BudgetItemCompositionService.getByBudgetItemId(row.id!)
-                        : [];
-
-                    // Apply Adjustment to Composition
-                    const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
-                    const composition = compositionRaw.map(c => {
-                        const adj = getAdjustedItemValues(
-                            { unitPrice: c.unitPrice, description: c.description, type: c.type },
-                            { materialFactor, laborFactor, bdiFactor },
-                            budget.bdi || 0
-                        );
-                        return {
-                            ...c,
-                            unitPrice: adj.unitPrice,
-                            finalPrice: adj.finalPrice,
-                            totalPrice: adj.unitPrice * c.quantity
-                        };
-                    });
-
-                    return {
-                        ...row,
-                        composition
-                    };
-                }));
-
-                // Logs removidos para produção
-
-                const exportData = {
-                    budgetName: budget.name,
-                    clientName: budget.client,
-                    date: budget.date,
-                    bdi: budget.bdi || 0,
-                    encargos: budget.encargosSociais || 0,
-                    items: exportItems,
-                    companySettings: settings,
-                    totalGlobalBase: calcResult?.totalGlobalBase,
-                    totalGlobalFinal: calcResult?.totalGlobalFinal,
-                    adjustmentSettings: budget.settings?.global_adjustment_v2
-                };
-
-                if (type === 'synthetic') {
-                    await exportExcelSynthetic(exportData);
-                } else {
-                    await exportExcelAnalytic(exportData);
-                }
-
-            } catch (err) {
-                console.error("Erro ao gerar Excel:", err);
-                alert("Erro ao exportar para Excel. Verifique o console.");
-            }
-        };
-
-        const handleImportItems = async (importedItems: any[]) => {
-            if (!budget) return;
-            setLoading(true);
-            try {
-                // Batch insertion
-                // Note: Simplistic sequential insert. For large files, use RPC or Batch Insert service if available.
-                for (const item of importedItems) {
-                    await BudgetItemService.create({
-                        budgetId: budget.id,
-                        type: item.type,
-                        code: item.code,
-                        description: item.description,
-                        unit: item.unit,
-                        quantity: item.quantity,
-                        unitPrice: item.unitPrice,
-                        level: item.level || 1, // Ensure level
-                        source: item.source,
-                        // Linkage
-                        insumoId: item.resourceType === 'INPUT' ? item.budgetItemId : null,
-                        compositionId: item.resourceType === 'COMPOSITION' ? item.budgetItemId : null,
-                    });
-                }
-
-                await loadBudget();
-                alert("Importação concluída com sucesso!");
-            } catch (error) {
-                console.error("Import error:", error);
-                alert("Erro ao salvar itens importados.");
-            } finally {
-                setLoading(false);
-            }
-        };
-
-
-
-        const handleExportCompleteZip = async () => {
+    const handleExportPDF = async (type: 'synthetic' | 'analytic') => {
+        if (type === 'analytic') {
             const isValid = await validateAnalytics();
             if (!isValid) return;
+        }
 
-            setIsExportingZip(true);
-            setExportProgress({ current: 0, total: 6, message: 'Iniciando...' });
+        try {
+            if (!budget || !items) return;
 
-            try {
-                if (!budget || !items) {
-                    alert('Não há dados para exportar');
-                    return;
-                }
+            // Importar funções de exportação
+            const { exportPDFSynthetic, exportPDFAnalytic } = await import('../utils/budgetExport');
 
-                const { exportCompleteProject } = await import('../utils/budgetExport');
+            // Flatten rows for export using visibleRows (SSOT)
+            // Como visibleRows já é flat, apenas carregamos composição se necessário
+            const exportItems = await Promise.all(visibleRows.map(async (row) => {
+                // Fetch composition RAW
+                const compositionRaw = type === 'analytic'
+                    ? await BudgetItemCompositionService.getByBudgetItemId(row.id!)
+                    : [];
 
-                // Preparar itens com numeração e composições (Items RAW -> Adjusted)
+                // Apply Adjustment to Composition
                 const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
-
-                const itemsWithNumbers = await Promise.all(items.map(async (item, idx) => {
-                    const compositionRaw = item.type !== 'group'
-                        ? await BudgetItemCompositionService.getByBudgetItemId(item.id!).catch(() => [])
-                        : [];
-
-                    const composition = compositionRaw.map(c => {
-                        const adj = getAdjustedItemValues(
-                            { unitPrice: c.unitPrice, description: c.description, type: c.type },
-                            { materialFactor, laborFactor, bdiFactor },
-                            budget.bdi || 0
-                        );
-                        return {
-                            ...c,
-                            unitPrice: adj.unitPrice,
-                            finalPrice: adj.finalPrice,
-                            totalPrice: adj.unitPrice * c.quantity
-                        };
-                    });
-
-                    // Apply adjustment to item itself (since 'items' is RAW)
-                    const itemAdj = getAdjustedItemValues(
-                        { unitPrice: item.unitPrice || 0, description: item.description, type: item.type },
+                const composition = compositionRaw.map(c => {
+                    const adj = getAdjustedItemValues(
+                        { unitPrice: c.unitPrice, description: c.description, type: c.type },
                         { materialFactor, laborFactor, bdiFactor },
                         budget.bdi || 0
                     );
-
-                    const unitPriceAdj = itemAdj.unitPrice;
-                    const totalPriceAdj = (item.quantity || 0) * unitPriceAdj;
-                    const finalPriceAdj = itemAdj.finalPrice * (item.quantity || 0);
-
                     return {
-                        ...item,
-                        unitPrice: unitPriceAdj,
-                        totalPrice: totalPriceAdj,
-                        finalPrice: finalPriceAdj,
-                        itemNumber: getItemNumber(idx),
-                        composition
+                        ...c,
+                        unitPrice: adj.unitPrice, // Export base unit
+                        finalPrice: adj.finalPrice,
+                        totalPrice: adj.unitPrice * c.quantity // Total Base
                     };
-                }));
-
-
-
-                await exportCompleteProject({
-                    budgetName: budget.name,
-                    clientName: budget.client,
-                    date: budget.date,
-                    bdi: budget.bdi || 0,
-                    encargos: budget.encargosSociais || 0,
-                    items: itemsWithNumbers,
-                    companySettings: settings,
-                    totalGlobalBase: calcResult?.totalGlobalBase,
-                    totalGlobalFinal: calcResult?.totalGlobalFinal
-                }, (current, total, message) => {
-                    setExportProgress({ current, total, message });
                 });
 
-            } catch (error) {
-                console.error("Erro ao gerar ZIP completo:", error);
-                alert("Erro ao exportar projeto completo. Verifique o console.");
-            } finally {
-                setIsExportingZip(false);
-                setExportProgress({ current: 0, total: 0, message: '' });
+                return {
+                    ...row,
+                    composition
+                };
+            }));
+
+            const exportData = {
+                budgetName: budget.name,
+                clientName: budget.client,
+                date: budget.date,
+                bdi: budget.bdi || 0,
+                encargos: budget.encargosSociais || 0,
+                items: exportItems,
+                companySettings: settings,
+                totalGlobalBase: calcResult?.totalGlobalBase,
+                totalGlobalFinal: calcResult?.totalGlobalFinal,
+                adjustmentSettings: budget.settings?.global_adjustment_v2
+            };
+
+            // Logs removidos para produção
+
+
+            if (type === 'synthetic') {
+                await exportPDFSynthetic(exportData);
+            } else {
+                await exportPDFAnalytic(exportData);
             }
-        };
+        } catch (err) {
+            console.error("Erro ao gerar PDF:", err);
+            alert("Erro ao gerar o arquivo PDF. Verifique o console para mais detalhes.");
+        }
+    };
 
-        if (loading) {
-            return (
-                <div className="flex flex-col items-center justify-center h-screen bg-slate-50 gap-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-                    <p className="text-slate-500 font-medium animate-pulse">Carregando orçamento...</p>
-                </div>
-            );
+    const handleExportExcel = async (type: 'synthetic' | 'analytic' = 'synthetic') => {
+        if (type === 'analytic') {
+            const isValid = await validateAnalytics();
+            if (!isValid) return;
         }
 
-        if (!budget) {
-            return (
-                <div className="flex flex-col items-center justify-center h-screen bg-slate-50 gap-4">
-                    <AlertTriangle size={48} className="text-red-400" />
-                    <h2 className="text-xl font-bold text-slate-700">Orçamento não encontrado</h2>
-                    <p className="text-slate-500 max-w-md text-center">
-                        Não foi possível carregar os dados deste orçamento. Verifique se o link está correto ou se você tem permissão para acessá-lo.
-                    </p>
-                    <div className="flex gap-4 mt-4">
-                        <button
-                            onClick={() => navigate('/budgets')}
-                            className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 transition-colors font-medium"
-                        >
-                            Voltar para Lista
-                        </button>
-                        <button
-                            onClick={() => window.location.reload()}
-                            className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
-                        >
-                            Tentar Novamente
-                        </button>
-                    </div>
-                </div>
-            );
+        try {
+            if (!budget || !items) return;
+
+            const { exportExcelSynthetic, exportExcelAnalytic } = await import('../utils/budgetExport');
+
+            // Flatten rows for export using visibleRows (SSOT)
+            // Reusing logic from handleExportPDF to ensure consistency
+            const exportItems = await Promise.all(visibleRows.map(async (row) => {
+                // Fetch composition RAW for analytic
+                const compositionRaw = type === 'analytic'
+                    ? await BudgetItemCompositionService.getByBudgetItemId(row.id!)
+                    : [];
+
+                // Apply Adjustment to Composition
+                const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
+                const composition = compositionRaw.map(c => {
+                    const adj = getAdjustedItemValues(
+                        { unitPrice: c.unitPrice, description: c.description, type: c.type },
+                        { materialFactor, laborFactor, bdiFactor },
+                        budget.bdi || 0
+                    );
+                    return {
+                        ...c,
+                        unitPrice: adj.unitPrice,
+                        finalPrice: adj.finalPrice,
+                        totalPrice: adj.unitPrice * c.quantity
+                    };
+                });
+
+                return {
+                    ...row,
+                    composition
+                };
+            }));
+
+            // Logs removidos para produção
+
+            const exportData = {
+                budgetName: budget.name,
+                clientName: budget.client,
+                date: budget.date,
+                bdi: budget.bdi || 0,
+                encargos: budget.encargosSociais || 0,
+                items: exportItems,
+                companySettings: settings,
+                totalGlobalBase: calcResult?.totalGlobalBase,
+                totalGlobalFinal: calcResult?.totalGlobalFinal,
+                adjustmentSettings: budget.settings?.global_adjustment_v2
+            };
+
+            if (type === 'synthetic') {
+                await exportExcelSynthetic(exportData);
+            } else {
+                await exportExcelAnalytic(exportData);
+            }
+
+        } catch (err) {
+            console.error("Erro ao gerar Excel:", err);
+            alert("Erro ao exportar para Excel. Verifique o console.");
         }
+    };
+
+    const handleImportItems = async (importedItems: any[]) => {
+        if (!budget) return;
+        setLoading(true);
+        try {
+            // Batch insertion
+            // Note: Simplistic sequential insert. For large files, use RPC or Batch Insert service if available.
+            for (const item of importedItems) {
+                await BudgetItemService.create({
+                    budgetId: budget.id,
+                    type: item.type,
+                    code: item.code,
+                    description: item.description,
+                    unit: item.unit,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    level: item.level || 1, // Ensure level
+                    source: item.source,
+                    // Linkage
+                    insumoId: item.resourceType === 'INPUT' ? item.budgetItemId : null,
+                    compositionId: item.resourceType === 'COMPOSITION' ? item.budgetItemId : null,
+                });
+            }
+
+            await loadBudget();
+            alert("Importação concluída com sucesso!");
+        } catch (error) {
+            console.error("Import error:", error);
+            alert("Erro ao salvar itens importados.");
+        } finally {
+            setLoading(false);
+        }
+    };
 
 
 
-        // CÁLCULO DE TOTAIS VISUAIS - REGRA 4 e 5
-        // totalBase: Soma de totalPrice (que já é Base de Custo Direto)
+    const handleExportCompleteZip = async () => {
+        const isValid = await validateAnalytics();
+        if (!isValid) return;
 
-        // Totais calculados anteriormente (acima)
+        setIsExportingZip(true);
+        setExportProgress({ current: 0, total: 6, message: 'Iniciando...' });
 
+        try {
+            if (!budget || !items) {
+                alert('Não há dados para exportar');
+                return;
+            }
+
+            const { exportCompleteProject } = await import('../utils/budgetExport');
+
+            // Preparar itens com numeração e composições (Items RAW -> Adjusted)
+            const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
+
+            const itemsWithNumbers = await Promise.all(items.map(async (item, idx) => {
+                const compositionRaw = item.type !== 'group'
+                    ? await BudgetItemCompositionService.getByBudgetItemId(item.id!).catch(() => [])
+                    : [];
+
+                const composition = compositionRaw.map(c => {
+                    const adj = getAdjustedItemValues(
+                        { unitPrice: c.unitPrice, description: c.description, type: c.type },
+                        { materialFactor, laborFactor, bdiFactor },
+                        budget.bdi || 0
+                    );
+                    return {
+                        ...c,
+                        unitPrice: adj.unitPrice,
+                        finalPrice: adj.finalPrice,
+                        totalPrice: adj.unitPrice * c.quantity
+                    };
+                });
+
+                // Apply adjustment to item itself (since 'items' is RAW)
+                const itemAdj = getAdjustedItemValues(
+                    { unitPrice: item.unitPrice || 0, description: item.description, type: item.type },
+                    { materialFactor, laborFactor, bdiFactor },
+                    budget.bdi || 0
+                );
+
+                const unitPriceAdj = itemAdj.unitPrice;
+                const totalPriceAdj = (item.quantity || 0) * unitPriceAdj;
+                const finalPriceAdj = itemAdj.finalPrice * (item.quantity || 0);
+
+                return {
+                    ...item,
+                    unitPrice: unitPriceAdj,
+                    totalPrice: totalPriceAdj,
+                    finalPrice: finalPriceAdj,
+                    itemNumber: getItemNumber(idx),
+                    composition
+                };
+            }));
+
+
+
+            await exportCompleteProject({
+                budgetName: budget.name,
+                clientName: budget.client,
+                date: budget.date,
+                bdi: budget.bdi || 0,
+                encargos: budget.encargosSociais || 0,
+                items: itemsWithNumbers,
+                companySettings: settings,
+                totalGlobalBase: calcResult?.totalGlobalBase,
+                totalGlobalFinal: calcResult?.totalGlobalFinal
+            }, (current, total, message) => {
+                setExportProgress({ current, total, message });
+            });
+
+        } catch (error) {
+            console.error("Erro ao gerar ZIP completo:", error);
+            alert("Erro ao exportar projeto completo. Verifique o console.");
+        } finally {
+            setIsExportingZip(false);
+            setExportProgress({ current: 0, total: 0, message: '' });
+        }
+    };
+
+    if (loading) {
         return (
-            <div className="flex flex-col h-full overflow-hidden bg-background">
-                {/* Aviso Mobile - Modo Visualização */}
-                {isMobile && (
-                    <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 shrink-0">
-                        <Eye size={14} className="text-amber-600" />
-                        <p className="text-xs text-amber-700">
-                            <span className="font-semibold">Modo visualização.</span> Para edição completa, utilize um dispositivo maior.
-                        </p>
-                    </div>
-                )}
+            <div className="flex flex-col items-center justify-center h-screen bg-slate-50 gap-4">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                <p className="text-slate-500 font-medium animate-pulse">Carregando orçamento...</p>
+            </div>
+        );
+    }
 
-                {/* Warning de Divergência */}
-                {(budget?.metadata?.has_pricing_divergence || divergentItems.length > 0) && (
-                    <div className="bg-red-50 border-b border-red-200 px-4 py-3 flex items-center justify-between gap-4 shrink-0 animate-in slide-in-from-top-2">
+    if (!budget) {
+        return (
+            <div className="flex flex-col items-center justify-center h-screen bg-slate-50 gap-4">
+                <AlertTriangle size={48} className="text-red-400" />
+                <h2 className="text-xl font-bold text-slate-700">Orçamento não encontrado</h2>
+                <p className="text-slate-500 max-w-md text-center">
+                    Não foi possível carregar os dados deste orçamento. Verifique se o link está correto ou se você tem permissão para acessá-lo.
+                </p>
+                <div className="flex gap-4 mt-4">
+                    <button
+                        onClick={() => navigate('/budgets')}
+                        className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 transition-colors font-medium"
+                    >
+                        Voltar para Lista
+                    </button>
+                    <button
+                        onClick={() => window.location.reload()}
+                        className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium"
+                    >
+                        Tentar Novamente
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+
+
+    // CÁLCULO DE TOTAIS VISUAIS - REGRA 4 e 5
+    // totalBase: Soma de totalPrice (que já é Base de Custo Direto)
+
+    // Totais calculados anteriormente (acima)
+
+    return (
+        <div className="flex flex-col h-full overflow-hidden bg-background">
+            {/* Aviso Mobile - Modo Visualização */}
+            {isMobile && (
+                <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 shrink-0">
+                    <Eye size={14} className="text-amber-600" />
+                    <p className="text-xs text-amber-700">
+                        <span className="font-semibold">Modo visualização.</span> Para edição completa, utilize um dispositivo maior.
+                    </p>
+                </div>
+            )}
+
+            {/* Warning de Divergência */}
+            {(budget?.metadata?.has_pricing_divergence || divergentItems.length > 0) && (
+                <div className="bg-red-50 border-b border-red-200 px-4 py-3 flex items-center justify-between gap-4 shrink-0 animate-in slide-in-from-top-2">
+                    <div className="flex items-center gap-3">
+                        <AlertOctagon size={20} className="text-red-600" />
+                        <div>
+                            <p className="text-sm font-black text-red-700 uppercase tracking-wide">
+                                {divergentItems.length > 0 ? `${divergentItems.length} COMPOSIÇÕES DIVERGENTES` : "DIVERGÊNCIA CRÍTICA DETECTADA"}
+                            </p>
+                            <p className="text-xs text-red-600">
+                                {divergentItems.length > 0
+                                    ? "A soma analítica dos itens não bate com o valor sintético. Risco de desclassificação."
+                                    : "Valores analíticos desatualizados. Execute a validação para ver detalhes."}
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => setShowAdjustmentModal(true)}
+                        className="px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-bold rounded-lg transition-colors border border-red-200"
+                    >
+                        CORRIGIR AGORA
+                    </button>
+                </div>
+            )}
+
+            {/* Header Responsivo */}
+            {/* Header Responsivo */}
+            <header className={clsx(
+                "bg-white border-b border-border shrink-0 z-20 shadow-sm/50",
+                isMobile ? "px-4 py-3" : "px-6 py-4"
+            )}>
+                {/* Mobile Header */}
+                {isMobile ? (
+                    <div className="space-y-3">
+                        {/* Linha 1: Voltar + Nome + Status */}
                         <div className="flex items-center gap-3">
-                            <AlertOctagon size={20} className="text-red-600" />
-                            <div>
-                                <p className="text-sm font-black text-red-700 uppercase tracking-wide">
-                                    {divergentItems.length > 0 ? `${divergentItems.length} COMPOSIÇÕES DIVERGENTES` : "DIVERGÊNCIA CRÍTICA DETECTADA"}
-                                </p>
-                                <p className="text-xs text-red-600">
-                                    {divergentItems.length > 0
-                                        ? "A soma analítica dos itens não bate com o valor sintético. Risco de desclassificação."
-                                        : "Valores analíticos desatualizados. Execute a validação para ver detalhes."}
-                                </p>
+                            <button
+                                onClick={() => navigate('/budgets')}
+                                className="w-10 h-10 flex items-center justify-center rounded-lg bg-slate-100 text-slate-500"
+                            >
+                                <ArrowLeft size={20} />
+                            </button>
+                            <div className="flex-1 min-w-0 flex items-center justify-between gap-3">
+                                <div className="flex-1 min-w-0">
+                                    <input
+                                        type="text"
+                                        defaultValue={budget.name}
+                                        onBlur={(e) => handleUpdateName(e.target.value)}
+                                        className="w-full font-black text-slate-800 bg-transparent border-none p-0 focus:ring-0 text-base"
+                                    />
+                                    <input
+                                        type="text"
+                                        defaultValue={budget.client || ''}
+                                        placeholder="Nome do cliente..."
+                                        onBlur={(e) => handleUpdateClient(e.target.value)}
+                                        className="w-full text-[10px] text-slate-400 font-bold uppercase tracking-wider bg-transparent border-none p-0 focus:ring-0"
+                                    />
+                                </div>
+                                <span className={clsx(
+                                    "text-[10px] font-bold px-2 py-1 rounded uppercase shrink-0",
+                                    budget.status === 'draft' ? "bg-slate-100 text-slate-500" :
+                                        budget.status === 'pending' ? "bg-blue-50 text-blue-600" :
+                                            "bg-green-50 text-green-600"
+                                )}>
+                                    {budget.status === 'draft' ? 'Rascunho' : budget.status === 'pending' ? 'Pendente' : 'Aprovado'}
+                                </span>
                             </div>
                         </div>
-                        <button
-                            onClick={() => setShowAdjustmentModal(true)}
-                            className="px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-bold rounded-lg transition-colors border border-red-200"
-                        >
-                            CORRIGIR AGORA
-                        </button>
-                    </div>
-                )}
 
-                {/* Header Responsivo */}
-                {/* Header Responsivo */}
-                <header className={clsx(
-                    "bg-white border-b border-border shrink-0 z-20 shadow-sm/50",
-                    isMobile ? "px-4 py-3" : "px-6 py-4"
-                )}>
-                    {/* Mobile Header */}
-                    {isMobile ? (
-                        <div className="space-y-3">
-                            {/* Linha 1: Voltar + Nome + Status */}
-                            <div className="flex items-center gap-3">
+                        {/* Linha 2: Total + Ações Prioritárias (Download) */}
+                        <div className="flex items-center justify-between bg-slate-50 rounded-lg p-3">
+                            <div className="flex flex-col">
+                                <p className="text-[10px] text-slate-400 font-semibold uppercase">Total Global (C/ BDI)</p>
+                                <div className="flex items-baseline gap-2">
+                                    <p className="text-xl font-bold text-primary">
+                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBudget * (1 + (budget.bdi || 0) / 100))}
+                                    </p>
+                                    <span className="text-[10px] font-bold text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded">
+                                        + {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBudget * ((budget.bdi || 0) / 100))} (BDI)
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => handleExportPDF('synthetic')}
+                                    className="w-10 h-10 flex items-center justify-center bg-blue-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform"
+                                    title="PDF Sintético"
+                                >
+                                    <FileText size={18} />
+                                </button>
+                                <button
+                                    onClick={() => handleExportExcel('synthetic')}
+                                    className="w-10 h-10 flex items-center justify-center bg-green-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform"
+                                    title="Excel Sintético"
+                                >
+                                    <FileSpreadsheet size={18} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Linha 3: Indicadores BDI/Encargos (Compactos) */}
+                        <div className="flex gap-4 text-center">
+                            <div className="flex-1 bg-slate-50 rounded-lg p-2">
+                                <p className="text-[10px] text-slate-400 font-semibold uppercase">BDI</p>
+                                <p className="text-sm font-bold text-accent">{budget.bdi?.toFixed(2)}%</p>
+                            </div>
+                            <div className="flex-1 bg-slate-50 rounded-lg p-2">
+                                <p className="text-[10px] text-slate-400 font-semibold uppercase">Encargos</p>
+                                <p className="text-sm font-bold text-slate-600">{budget.encargosSociais?.toFixed(2)}%</p>
+                            </div>
+                            <div className="flex-1 bg-slate-50 rounded-lg p-2">
+                                <p className="text-[10px] text-slate-400 font-semibold uppercase">Itens</p>
+                                <p className="text-sm font-bold text-slate-600">{items?.filter(i => i.type !== 'group').length || 0}</p>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    /* Desktop Header - Reorganizado */
+                    /* Desktop Header - Reorganizado */
+                    <div className="flex items-center justify-between gap-0">
+                        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide flex-1 min-w-0 pr-2">
+                            {/* Seção Esquerda: Voltar + Info do Orçamento */}
+                            <div className="flex items-center gap-2 shrink-0">
                                 <button
                                     onClick={() => navigate('/budgets')}
-                                    className="w-10 h-10 flex items-center justify-center rounded-lg bg-slate-100 text-slate-500"
+                                    className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"
+                                    title="Voltar"
                                 >
-                                    <ArrowLeft size={20} />
+                                    <ArrowLeft size={18} />
                                 </button>
-                                <div className="flex-1 min-w-0 flex items-center justify-between gap-3">
-                                    <div className="flex-1 min-w-0">
+                                <div className="min-w-0">
+                                    <input
+                                        type="text"
+                                        defaultValue={budget.name}
+                                        onBlur={(e) => handleUpdateName(e.target.value)}
+                                        className="text-lg font-black text-primary leading-tight truncate max-w-[200px] xl:max-w-[300px] bg-transparent border-b border-transparent hover:border-slate-300 focus:border-accent outline-none transition-all"
+                                        title="Clique para editar o nome"
+                                    />
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                        <select
+                                            value={budget.status}
+                                            onChange={(e) => handleUpdateStatus(e.target.value)}
+                                            className={clsx(
+                                                "text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider border outline-none cursor-pointer",
+                                                budget.status === 'draft' ? "bg-slate-100 text-slate-500 border-slate-200" :
+                                                    budget.status === 'pending' ? "bg-blue-50 text-blue-600 border-blue-100" :
+                                                        "bg-green-50 text-green-600 border-green-100"
+                                            )}
+                                        >
+                                            <option value="draft">Rascunho</option>
+                                            <option value="pending">Pendente</option>
+                                            <option value="approved">Aprovado</option>
+                                        </select>
                                         <input
                                             type="text"
-                                            defaultValue={budget.name}
-                                            onBlur={(e) => handleUpdateName(e.target.value)}
-                                            className="w-full font-black text-slate-800 bg-transparent border-none p-0 focus:ring-0 text-base"
-                                        />
-                                        <input
-                                            type="text"
-                                            defaultValue={budget.client || ''}
-                                            placeholder="Nome do cliente..."
+                                            defaultValue={budget.client}
                                             onBlur={(e) => handleUpdateClient(e.target.value)}
-                                            className="w-full text-[10px] text-slate-400 font-bold uppercase tracking-wider bg-transparent border-none p-0 focus:ring-0"
+                                            placeholder="Cliente..."
+                                            className="text-xs text-slate-500 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-accent px-1 py-0.5 transition-all outline-none max-w-[120px]"
                                         />
                                     </div>
-                                    <span className={clsx(
-                                        "text-[10px] font-bold px-2 py-1 rounded uppercase shrink-0",
-                                        budget.status === 'draft' ? "bg-slate-100 text-slate-500" :
-                                            budget.status === 'pending' ? "bg-blue-50 text-blue-600" :
-                                                "bg-green-50 text-green-600"
-                                    )}>
-                                        {budget.status === 'draft' ? 'Rascunho' : budget.status === 'pending' ? 'Pendente' : 'Aprovado'}
+                                </div>
+                            </div>
+
+                            {/* Seção Central: BDI + Encargos */}
+                            <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 shrink-0 min-w-[140px]">
+                                <div className="text-center px-2 border-r border-slate-200">
+                                    <label className="text-[9px] text-slate-400 font-bold uppercase block">BDI</label>
+                                    <div className="flex items-center justify-center gap-0.5 whitespace-nowrap">
+                                        <input
+                                            type="number"
+                                            value={budget.bdi || 0}
+                                            onChange={(e) => handleUpdateBDI(Number(e.target.value))}
+                                            className="w-14 text-center text-sm font-bold text-slate-700 bg-transparent outline-none focus:ring-1 focus:ring-blue-400 rounded transition-all"
+                                        />
+                                        <span className="text-xs text-slate-400 font-bold">%</span>
+                                        <button
+                                            onClick={() => setShowBDICalculator(true)}
+                                            className="ml-1 p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                            title="Calculadora de BDI"
+                                        >
+                                            <Calculator size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="text-center px-1">
+                                    <label className="text-[9px] text-slate-400 font-bold uppercase block">Encargos</label>
+                                    <button
+                                        onClick={() => setShowEncargosModal(true)}
+                                        className="text-sm font-bold text-slate-700 hover:text-orange-600 transition-colors whitespace-nowrap px-1"
+                                    >
+                                        {budget.encargosSociais?.toFixed(2)}%
+                                    </button>
+                                </div>
+                            </div>
+
+
+                            {/* Seção Direita: Totais Corrigidos (Em Esquadro) */}
+                            <div className="grid grid-cols-3 gap-0 bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-lg border border-slate-200 shrink-0 overflow-hidden">
+                                <div className="text-right border-r border-slate-200 p-2 min-w-[90px]">
+                                    <span className="text-[9px] text-slate-400 uppercase block font-black leading-none mb-1">Custo Total</span>
+                                    <span className="text-xs font-bold text-slate-600 block">
+                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBase)}
+                                    </span>
+                                </div>
+                                <div className="text-right border-r border-slate-200 p-2 min-w-[90px]">
+                                    <span className="text-[9px] text-slate-400 uppercase block font-black leading-none mb-1">BDI ({budget.bdi || 0}%)</span>
+                                    <span className="text-xs font-bold text-indigo-500 block">
+                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal - totalBase)}
+                                    </span>
+                                </div>
+                                <div className="text-right p-2 min-w-[110px] bg-blue-100/30">
+                                    <span className="text-[9px] text-accent uppercase block font-black leading-none mb-1">Total Geral</span>
+                                    <span className="text-sm font-black text-primary block">
+                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal)}
                                     </span>
                                 </div>
                             </div>
 
-                            {/* Linha 2: Total + Ações Prioritárias (Download) */}
-                            <div className="flex items-center justify-between bg-slate-50 rounded-lg p-3">
-                                <div className="flex flex-col">
-                                    <p className="text-[10px] text-slate-400 font-semibold uppercase">Total Global (C/ BDI)</p>
-                                    <div className="flex items-baseline gap-2">
-                                        <p className="text-xl font-bold text-primary">
-                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBudget * (1 + (budget.bdi || 0) / 100))}
-                                        </p>
-                                        <span className="text-[10px] font-bold text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded">
-                                            + {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBudget * ((budget.bdi || 0) / 100))} (BDI)
-                                        </span>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={() => handleExportPDF('synthetic')}
-                                        className="w-10 h-10 flex items-center justify-center bg-blue-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform"
-                                        title="PDF Sintético"
-                                    >
-                                        <FileText size={18} />
-                                    </button>
-                                    <button
-                                        onClick={() => handleExportExcel('synthetic')}
-                                        className="w-10 h-10 flex items-center justify-center bg-green-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform"
-                                        title="Excel Sintético"
-                                    >
-                                        <FileSpreadsheet size={18} />
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Linha 3: Indicadores BDI/Encargos (Compactos) */}
-                            <div className="flex gap-4 text-center">
-                                <div className="flex-1 bg-slate-50 rounded-lg p-2">
-                                    <p className="text-[10px] text-slate-400 font-semibold uppercase">BDI</p>
-                                    <p className="text-sm font-bold text-accent">{budget.bdi?.toFixed(2)}%</p>
-                                </div>
-                                <div className="flex-1 bg-slate-50 rounded-lg p-2">
-                                    <p className="text-[10px] text-slate-400 font-semibold uppercase">Encargos</p>
-                                    <p className="text-sm font-bold text-slate-600">{budget.encargosSociais?.toFixed(2)}%</p>
-                                </div>
-                                <div className="flex-1 bg-slate-50 rounded-lg p-2">
-                                    <p className="text-[10px] text-slate-400 font-semibold uppercase">Itens</p>
-                                    <p className="text-sm font-bold text-slate-600">{items?.filter(i => i.type !== 'group').length || 0}</p>
-                                </div>
-                            </div>
                         </div>
-                    ) : (
-                        /* Desktop Header - Reorganizado */
-                        /* Desktop Header - Reorganizado */
-                        <div className="flex items-center justify-between gap-0">
-                            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide flex-1 min-w-0 pr-2">
-                                {/* Seção Esquerda: Voltar + Info do Orçamento */}
-                                <div className="flex items-center gap-2 shrink-0">
-                                    <button
-                                        onClick={() => navigate('/budgets')}
-                                        className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"
-                                        title="Voltar"
-                                    >
-                                        <ArrowLeft size={18} />
-                                    </button>
-                                    <div className="min-w-0">
-                                        <input
-                                            type="text"
-                                            defaultValue={budget.name}
-                                            onBlur={(e) => handleUpdateName(e.target.value)}
-                                            className="text-lg font-black text-primary leading-tight truncate max-w-[200px] xl:max-w-[300px] bg-transparent border-b border-transparent hover:border-slate-300 focus:border-accent outline-none transition-all"
-                                            title="Clique para editar o nome"
-                                        />
-                                        <div className="flex items-center gap-2 mt-0.5">
-                                            <select
-                                                value={budget.status}
-                                                onChange={(e) => handleUpdateStatus(e.target.value)}
-                                                className={clsx(
-                                                    "text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider border outline-none cursor-pointer",
-                                                    budget.status === 'draft' ? "bg-slate-100 text-slate-500 border-slate-200" :
-                                                        budget.status === 'pending' ? "bg-blue-50 text-blue-600 border-blue-100" :
-                                                            "bg-green-50 text-green-600 border-green-100"
-                                                )}
-                                            >
-                                                <option value="draft">Rascunho</option>
-                                                <option value="pending">Pendente</option>
-                                                <option value="approved">Aprovado</option>
-                                            </select>
-                                            <input
-                                                type="text"
-                                                defaultValue={budget.client}
-                                                onBlur={(e) => handleUpdateClient(e.target.value)}
-                                                placeholder="Cliente..."
-                                                className="text-xs text-slate-500 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-accent px-1 py-0.5 transition-all outline-none max-w-[120px]"
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
+                        <div className="flex items-center gap-1 shrink-0 pl-1 relative z-50">
+                            <button onClick={handleReorderItems} className="p-2 text-slate-400 hover:text-green-600 hover:bg-slate-100 rounded-lg transition-colors" title="Recalcular Numeração e Ordem">
+                                <ListOrdered size={18} />
+                            </button>
+                            <button onClick={() => setShowAdjustmentModal(true)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors" title="Ajuste Global">
+                                <Calculator size={18} />
+                            </button>
+                            <div className="relative group">
+                                <button className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition-colors">
+                                    <Download size={14} />
+                                    Exportar
+                                    <ChevronDown size={12} />
+                                </button>
+                                {/* Dropdown com pt-1 invisível para criar "ponte" de hover */}
+                                <div className="absolute right-0 top-full pt-1 hidden group-hover:block z-50">
+                                    <div className="bg-white border border-slate-200 rounded-lg shadow-xl w-48 py-1 animate-in fade-in slide-in-from-top-2">
+                                        <button onClick={() => handleExportPDF('synthetic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-blue-600 flex items-center gap-2">
 
-                                {/* Seção Central: BDI + Encargos */}
-                                <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 shrink-0 min-w-[140px]">
-                                    <div className="text-center px-2 border-r border-slate-200">
-                                        <label className="text-[9px] text-slate-400 font-bold uppercase block">BDI</label>
-                                        <div className="flex items-center justify-center gap-0.5 whitespace-nowrap">
-                                            <input
-                                                type="number"
-                                                value={budget.bdi || 0}
-                                                onChange={(e) => handleUpdateBDI(Number(e.target.value))}
-                                                className="w-14 text-center text-sm font-bold text-slate-700 bg-transparent outline-none focus:ring-1 focus:ring-blue-400 rounded transition-all"
-                                            />
-                                            <span className="text-xs text-slate-400 font-bold">%</span>
-                                            <button
-                                                onClick={() => setShowBDICalculator(true)}
-                                                className="ml-1 p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                                title="Calculadora de BDI"
-                                            >
-                                                <Calculator size={14} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div className="text-center px-1">
-                                        <label className="text-[9px] text-slate-400 font-bold uppercase block">Encargos</label>
+                                            <FileText size={14} /> PDF Sintético
+                                        </button>
+                                        <button onClick={() => handleExportPDF('analytic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-blue-600 flex items-center gap-2">
+                                            <FileText size={14} /> PDF Analítico (CPU)
+                                        </button>
+                                        <div className="h-px bg-slate-100 my-1"></div>
+                                        <button onClick={() => handleExportExcel('synthetic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center gap-2">
+                                            <FileSpreadsheet size={14} /> Excel Sintético
+                                        </button>
+                                        <button onClick={() => handleExportExcel('analytic')} disabled={isExportingAnalytic} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center justify-between gap-2">
+                                            <div className="flex items-center gap-2">
+                                                <FileSpreadsheet size={14} /> Excel Analítico
+                                            </div>
+                                            {isExportingAnalytic && <Loader size={12} className="animate-spin text-green-600" />}
+                                        </button>
+                                        <div className="h-px bg-slate-100 my-1"></div>
+                                        <button onClick={() => setShowABC(true)} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-orange-600 flex items-center gap-2">
+                                            <BarChart size={14} /> Curva ABC
+                                        </button>
+                                        <div className="h-px bg-slate-100 my-1"></div>
                                         <button
-                                            onClick={() => setShowEncargosModal(true)}
-                                            className="text-sm font-bold text-slate-700 hover:text-orange-600 transition-colors whitespace-nowrap px-1"
+                                            onClick={handleExportCompleteZip}
+                                            disabled={isExportingZip}
+                                            className={clsx(
+                                                "w-full text-left px-4 py-3 text-xs flex flex-col gap-2 transition-all",
+                                                isExportingZip ? "bg-purple-50" : "hover:bg-purple-50 hover:text-purple-700 text-purple-600 font-bold"
+                                            )}
                                         >
-                                            {budget.encargosSociais?.toFixed(2)}%
+                                            <div className="flex items-center gap-2">
+                                                {isExportingZip ? <Loader size={12} className="animate-spin text-purple-600" /> : <Package size={14} />}
+                                                <span>PROJETO COMPLETO (.ZIP)</span>
+                                            </div>
+                                            {isExportingZip && (
+                                                <div className="mt-1 space-y-1">
+                                                    <div className="w-full bg-slate-200 rounded-full h-1 overflow-hidden">
+                                                        <div
+                                                            className="bg-purple-600 h-full transition-all duration-300"
+                                                            style={{ width: `${(exportProgress.current / exportProgress.total) * 100}% ` }}
+                                                        />
+                                                    </div>
+                                                    <p className="text-[9px] text-purple-500 font-medium truncate">
+                                                        {exportProgress.message}
+                                                    </p>
+                                                </div>
+                                            )}
                                         </button>
                                     </div>
                                 </div>
-
-
-                                {/* Seção Direita: Totais Corrigidos (Em Esquadro) */}
-                                <div className="grid grid-cols-3 gap-0 bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-lg border border-slate-200 shrink-0 overflow-hidden">
-                                    <div className="text-right border-r border-slate-200 p-2 min-w-[90px]">
-                                        <span className="text-[9px] text-slate-400 uppercase block font-black leading-none mb-1">Custo Total</span>
-                                        <span className="text-xs font-bold text-slate-600 block">
-                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBase)}
-                                        </span>
-                                    </div>
-                                    <div className="text-right border-r border-slate-200 p-2 min-w-[90px]">
-                                        <span className="text-[9px] text-slate-400 uppercase block font-black leading-none mb-1">BDI ({budget.bdi || 0}%)</span>
-                                        <span className="text-xs font-bold text-indigo-500 block">
-                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal - totalBase)}
-                                        </span>
-                                    </div>
-                                    <div className="text-right p-2 min-w-[110px] bg-blue-100/30">
-                                        <span className="text-[9px] text-accent uppercase block font-black leading-none mb-1">Total Geral</span>
-                                        <span className="text-sm font-black text-primary block">
-                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal)}
-                                        </span>
-                                    </div>
-                                </div>
-
                             </div>
-                            <div className="flex items-center gap-1 shrink-0 pl-1 relative z-50">
-                                <button onClick={handleReorderItems} className="p-2 text-slate-400 hover:text-green-600 hover:bg-slate-100 rounded-lg transition-colors" title="Recalcular Numeração e Ordem">
-                                    <ListOrdered size={18} />
-                                </button>
-                                <button onClick={() => setShowAdjustmentModal(true)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors" title="Ajuste Global">
-                                    <Calculator size={18} />
-                                </button>
-                                <div className="relative group">
-                                    <button className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition-colors">
-                                        <Download size={14} />
-                                        Exportar
-                                        <ChevronDown size={12} />
-                                    </button>
-                                    {/* Dropdown com pt-1 invisível para criar "ponte" de hover */}
-                                    <div className="absolute right-0 top-full pt-1 hidden group-hover:block z-50">
-                                        <div className="bg-white border border-slate-200 rounded-lg shadow-xl w-48 py-1 animate-in fade-in slide-in-from-top-2">
-                                            <button onClick={() => handleExportPDF('synthetic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-blue-600 flex items-center gap-2">
+                            <div className="w-px h-6 bg-slate-200 mx-1"></div>
+                            <button onClick={() => navigate(`/budgets/${budgetId}/schedule`)} className="p-2 text-slate-400 hover:text-indigo-500 hover:bg-slate-100 rounded-lg transition-colors" title="Cronograma" >
+                                <Calendar size={18} />
+                            </button >
+                            <button onClick={() => navigate(`/budgets/${budgetId}/review`)} className="p-2 text-slate-400 hover:text-purple-600 hover:bg-slate-100 rounded-lg transition-colors" title="Revisão Final">
+                                <AlertTriangle size={18} />
+                            </button>
+                            <button onClick={() => navigate(`/budgets/${budgetId}/scenarios`)} className="p-2 text-slate-400 hover:text-cyan-600 hover:bg-slate-100 rounded-lg transition-colors" title="Cenários">
+                                <TrendingUp size={18} />
+                            </button>
+                        </div >
+                    </div >
+                )}
+            </header >
 
-                                                <FileText size={14} /> PDF Sintético
-                                            </button>
-                                            <button onClick={() => handleExportPDF('analytic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-blue-600 flex items-center gap-2">
-                                                <FileText size={14} /> PDF Analítico (CPU)
-                                            </button>
-                                            <div className="h-px bg-slate-100 my-1"></div>
-                                            <button onClick={() => handleExportExcel('synthetic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center gap-2">
-                                                <FileSpreadsheet size={14} /> Excel Sintético
-                                            </button>
-                                            <button onClick={() => handleExportExcel('analytic')} disabled={isExportingAnalytic} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center justify-between gap-2">
-                                                <div className="flex items-center gap-2">
-                                                    <FileSpreadsheet size={14} /> Excel Analítico
-                                                </div>
-                                                {isExportingAnalytic && <Loader size={12} className="animate-spin text-green-600" />}
-                                            </button>
-                                            <div className="h-px bg-slate-100 my-1"></div>
-                                            <button onClick={() => setShowABC(true)} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-orange-600 flex items-center gap-2">
-                                                <BarChart size={14} /> Curva ABC
-                                            </button>
-                                            <div className="h-px bg-slate-100 my-1"></div>
-                                            <button
-                                                onClick={handleExportCompleteZip}
-                                                disabled={isExportingZip}
-                                                className={clsx(
-                                                    "w-full text-left px-4 py-3 text-xs flex flex-col gap-2 transition-all",
-                                                    isExportingZip ? "bg-purple-50" : "hover:bg-purple-50 hover:text-purple-700 text-purple-600 font-bold"
-                                                )}
-                                            >
-                                                <div className="flex items-center gap-2">
-                                                    {isExportingZip ? <Loader size={12} className="animate-spin text-purple-600" /> : <Package size={14} />}
-                                                    <span>PROJETO COMPLETO (.ZIP)</span>
-                                                </div>
-                                                {isExportingZip && (
-                                                    <div className="mt-1 space-y-1">
-                                                        <div className="w-full bg-slate-200 rounded-full h-1 overflow-hidden">
-                                                            <div
-                                                                className="bg-purple-600 h-full transition-all duration-300"
-                                                                style={{ width: `${(exportProgress.current / exportProgress.total) * 100}% ` }}
-                                                            />
-                                                        </div>
-                                                        <p className="text-[9px] text-purple-500 font-medium truncate">
-                                                            {exportProgress.message}
-                                                        </p>
-                                                    </div>
-                                                )}
-                                            </button>
+            {/* Sub-header Contextual */}
+            {
+                items && items.length > 0 && !isMobile && (
+                    <div className="bg-slate-50 border-b border-slate-200 px-6 py-2 shrink-0 flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2 border-r border-slate-200 pr-4">
+                                <input
+                                    type="checkbox"
+                                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                    checked={selectedItemIds.size === items.filter(i => i.type !== 'group').length && items.filter(i => i.type !== 'group').length > 0}
+                                    onChange={(e) => {
+                                        if (e.target.checked) {
+                                            setSelectedItemIds(new Set(items.filter(i => i.type !== 'group').map(i => i.id!)));
+                                        } else {
+                                            setSelectedItemIds(new Set());
+                                        }
+                                    }}
+                                />
+                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                                    {selectedItemIds.size > 0 ? `${selectedItemIds.size} Selecionados` : 'Todos'}
+                                </span>
+                            </div>
+
+                            {selectedItemIds.size > 0 && (
+                                <div className="flex items-center gap-3 animate-in fade-in slide-in-from-left-2">
+                                    <div className="flex items-center gap-2">
+                                        <RefreshCcw size={14} className="text-indigo-600" />
+                                        <select
+                                            className="text-[10px] font-bold uppercase bg-white border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-indigo-500 outline-none"
+                                            onChange={(e) => {
+                                                if (e.target.value) {
+                                                    handleBulkSwitchBase(e.target.value);
+                                                    e.target.value = "";
+                                                }
+                                            }}
+                                        >
+                                            <option value="">Trocar Base (Lote)...</option>
+                                            <option value="SINAPI">SINAPI</option>
+                                            <option value="ORSE">ORSE</option>
+                                            <option value="SBC">SBC</option>
+                                            <option value="SEINFRA">SEINFRA</option>
+                                            <option value="EMBASA">EMBASA</option>
+                                        </select>
+                                    </div>
+                                    <button
+                                        onClick={async () => {
+                                            if (window.confirm(`Remover ${selectedItemIds.size} itens selecionados?`)) {
+                                                setLoading(true);
+                                                try {
+                                                    const ids = Array.from(selectedItemIds);
+                                                    // Delete items
+                                                    await BudgetItemService.batchDelete(ids);
+                                                    // Delete related compositions (best effort, ideally DB cascade)
+                                                    for (const itId of ids) {
+                                                        await BudgetItemCompositionService.deleteByBudgetItemId(itId);
+                                                    }
+                                                    // Reload data
+                                                    await loadBudget();
+                                                    setSelectedItemIds(new Set());
+                                                } catch (e) {
+                                                    console.error(e);
+                                                    alert("Erro ao excluir itens");
+                                                } finally {
+                                                    setLoading(false);
+                                                }
+                                            }
+                                        }}
+                                        className="text-[10px] font-bold text-red-600 hover:bg-red-50 px-2 py-1 rounded transition-colors uppercase flex items-center gap-1"
+                                    >
+                                        <Trash2 size={12} /> Excluir Lote
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setIsAddingItem(true)}
+                                className="bg-accent hover:bg-accent/90 text-white text-xs font-semibold px-3 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5"
+                            >
+                                <Plus size={14} /> NOVO ITEM
+                            </button>
+                            <div className="w-px h-4 bg-slate-300 mx-2"></div>
+                            <button onClick={() => handleAddTitle()} className="text-secondary hover:text-primary hover:bg-white px-3 py-1.5 rounded text-xs font-medium transition-colors border border-transparent hover:border-border">
+                                + Etapa (N1)
+                            </button>
+                            <button onClick={() => handleAddSubTitle(1)} className="text-secondary hover:text-primary hover:bg-white px-3 py-1.5 rounded text-xs font-medium transition-colors border border-transparent hover:border-border">
+                                + Sub-etapa (N2)
+                            </button>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Toolbar - Desktop Only */}
+            {
+                !isMobile && (
+                    <div className="px-6 py-2 bg-slate-50/50 border-b border-border flex items-center justify-between shrink-0">
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setIsAddingItem(true)}
+                                className="bg-accent hover:bg-accent/90 text-white text-xs font-semibold px-3 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5"
+                            >
+                                <Plus size={14} /> NOVO ITEM
+                            </button>
+                            <div className="w-px h-4 bg-slate-300 mx-2"></div>
+                            <button onClick={() => handleAddTitle()} className="text-secondary hover:text-primary hover:bg-white px-3 py-1.5 rounded text-xs font-medium transition-colors border border-transparent hover:border-border">
+                                + Etapa (N1)
+                            </button>
+                            <button onClick={() => handleAddSubTitle(1)} className="text-secondary hover:text-primary hover:bg-white px-3 py-1.5 rounded text-xs font-medium transition-colors border border-transparent hover:border-border">
+                                + Sub-etapa (N2)
+                            </button>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => {
+                                    const summary = getExecutiveSummary();
+                                    const text = summary.map(s => `${s.name}: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(s.value)}`).join('\n');
+                                    alert("Resumo Executivo (por Centro de Custo):\n\n" + text);
+                                }}
+                                className="text-xs text-slate-500 hover:text-green-600 font-medium px-2 py-1 flex items-center gap-1 transition-colors"
+                                title="Resumo Executivo"
+                            >
+                                <FileText size={12} /> Resumo
+                            </button>
+                            <button
+                                onClick={handleReorderItems}
+                                disabled={loading}
+                                className="text-xs text-slate-500 hover:text-accent font-medium px-2 py-1 flex items-center gap-1 transition-colors"
+                                title="Renumerar itens"
+                            >
+                                <Activity size={12} className={clsx(loading && "animate-spin")} /> Renumerar
+                            </button>
+                            <button
+                                onClick={() => setShowImpact(!showImpact)}
+                                className={clsx(
+                                    "text-xs font-medium px-2 py-1 flex items-center gap-1 transition-colors rounded",
+                                    showImpact ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:text-slate-800"
+                                )}
+                            >
+                                <TrendingUp size={12} /> Impacto
+                            </button>
+                        </div>
+                    </div>
+                )
+            }
+
+            {
+                showImpact && (
+                    <div className="bg-indigo-50 border-b border-indigo-100 px-6 py-3 shrink-0 flex items-center justify-between animate-in slide-in-from-top-2">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-indigo-100 p-1.5 rounded-full text-indigo-600">
+                                <TrendingUp size={16} />
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest leading-none">Impacto Financeiro</p>
+                                <p className="text-xs text-indigo-800 font-medium">Original vs Atual</p>
+                            </div>
+                        </div>
+                        <div className="flex gap-6">
+                            <div className="text-right">
+                                <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest leading-none mb-0.5">Diferença</p>
+                                <p className={clsx("text-lg font-black leading-none", getImpact().value >= 0 ? "text-red-500" : "text-green-600")}>
+                                    {getImpact().value >= 0 ? "+" : ""}{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(getImpact().value)}
+                                </p>
+                            </div>
+                            <div className="text-right border-l border-indigo-200 pl-6">
+                                <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest leading-none mb-0.5">Variação</p>
+                                <p className={clsx("text-lg font-black leading-none", getImpact().percent >= 0 ? "text-red-500" : "text-green-600")}>
+                                    {getImpact().percent >= 0 ? "+" : ""}{getImpact().percent.toFixed(2)}%
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Grid/Table - Desktop ou Cards - Mobile */}
+            <div className="flex-1 overflow-auto bg-white relative custom-scrollbar">
+                {isMobile ? (
+                    /* Mobile: Cards View */
+                    <div className="p-4 space-y-3">
+                        {items?.map((item, index) => {
+                            const isGroup = item.type === 'group';
+                            const hierarchicalNumber = getItemNumber(index);
+                            const isExpanded = expandedCards.has(item.id!);
+
+                            if (isGroup) {
+                                return (
+                                    <div
+                                        key={item.id}
+                                        className={clsx(
+                                            "rounded-lg p-3 border-l-4",
+                                            item.level === 0
+                                                ? "bg-slate-100 border-slate-400 text-slate-800"
+                                                : "bg-blue-50 border-blue-300 text-blue-800"
+                                        )}
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs font-mono text-slate-400">{hierarchicalNumber}</span>
+                                                <span className="font-bold uppercase text-sm">{item.description}</span>
+                                            </div>
+                                            <span className="text-sm font-bold">
+                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalPrice * (1 + (budget.bdi || 0) / 100))}
+                                            </span>
                                         </div>
                                     </div>
-                                </div>
-                                <div className="w-px h-6 bg-slate-200 mx-1"></div>
-                                <button onClick={() => navigate(`/budgets/${budgetId}/schedule`)} className="p-2 text-slate-400 hover:text-indigo-500 hover:bg-slate-100 rounded-lg transition-colors" title="Cronograma" >
-                                    <Calendar size={18} />
-                                </button >
-                                <button onClick={() => navigate(`/budgets/${budgetId}/review`)} className="p-2 text-slate-400 hover:text-purple-600 hover:bg-slate-100 rounded-lg transition-colors" title="Revisão Final">
-                                    <AlertTriangle size={18} />
-                                </button>
-                                <button onClick={() => navigate(`/budgets/${budgetId}/scenarios`)} className="p-2 text-slate-400 hover:text-cyan-600 hover:bg-slate-100 rounded-lg transition-colors" title="Cenários">
-                                    <TrendingUp size={18} />
-                                </button>
-                            </div >
-                        </div >
-                    )}
-                </header >
+                                );
+                            }
 
-                {/* Sub-header Contextual */}
-                {
-                    items && items.length > 0 && !isMobile && (
-                        <div className="bg-slate-50 border-b border-slate-200 px-6 py-2 shrink-0 flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <div className="flex items-center gap-2 border-r border-slate-200 pr-4">
+                            return (
+                                <div
+                                    key={item.id}
+                                    id={`item-${item.id}`}
+                                    className={clsx(
+                                        "bg-white border rounded-lg shadow-sm overflow-hidden transition-all",
+                                        highlightedItemId === item.id ? "border-yellow-400 ring-2 ring-yellow-100 shadow-md" : "border-slate-200"
+                                    )}
+                                >
+                                    {/* Card Header - Always Visible */}
+                                    <button
+                                        onClick={() => {
+                                            const newSet = new Set(expandedCards);
+                                            if (isExpanded) newSet.delete(item.id!);
+                                            else newSet.add(item.id!);
+                                            setExpandedCards(newSet);
+                                        }}
+                                        className="w-full p-3 text-left flex items-start justify-between gap-3"
+                                    >
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-[10px] font-mono text-slate-400">{hierarchicalNumber}</span>
+                                                {item.source && (
+                                                    <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1 rounded">
+                                                        {item.source}
+                                                    </span>
+                                                )}
+                                                {validatePriceRange(item) !== 'normal' && (
+                                                    <AlertTriangle size={12} className={validatePriceRange(item) === 'high' ? "text-red-400" : "text-yellow-400"} />
+                                                )}
+                                                {item.isLocked && <Lock size={12} className="text-orange-400" />}
+                                            </div>
+                                            <p className="text-sm text-slate-700 leading-snug">{item.description}</p>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <p className="text-lg font-bold text-primary">
+                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalPrice * (1 + (budget.bdi || 0) / 100))}
+                                            </p>
+                                            {isExpanded ? <ChevronUp size={16} className="text-slate-400 mt-1 ml-auto" /> : <ChevronDown size={16} className="text-slate-400 mt-1 ml-auto" />}
+                                        </div>
+                                    </button>
+
+                                    {/* Card Details - Expandable */}
+                                    {isExpanded && (
+                                        <div className="px-3 pb-3 pt-0 border-t border-slate-100 bg-slate-50/50 animate-in slide-in-from-top-2">
+                                            <div className="grid grid-cols-3 gap-3 text-xs py-2">
+                                                <div
+                                                    className={clsx("transition-transform active:scale-95", !item.isLocked && "cursor-pointer")}
+                                                    onClick={() => !item.isLocked && handleStartEdit(item)}
+                                                >
+                                                    <p className="text-[10px] text-slate-400 uppercase">Qtd</p>
+                                                    <p className={clsx("font-bold font-mono", !item.isLocked && "text-blue-600")}>{item.quantity} {item.unit}</p>
+                                                </div>
+                                                <div
+                                                    className={clsx("transition-transform active:scale-95", !item.isLocked && "cursor-pointer")}
+                                                    onClick={() => !item.isLocked && handleStartEdit(item)}
+                                                >
+                                                    <p className="text-[10px] text-slate-400 uppercase">Unit.</p>
+                                                    <p className={clsx("font-bold font-mono", !item.isLocked && "text-blue-600")}>
+                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.unitPrice)}
+                                                    </p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-[10px] text-slate-400 uppercase">Total</p>
+                                                    <p className="font-bold font-mono">
+                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalPrice)}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            {item.code && (
+                                                <p className="text-[10px] text-slate-400 font-mono">Código: {item.code}</p>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+
+                        {items?.length === 0 && (
+                            <div className="py-16 text-center">
+                                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <Search size={24} className="text-slate-300" />
+                                </div>
+                                <p className="font-medium text-slate-600">Orçamento Vazio</p>
+                                <p className="text-xs text-slate-400 mt-1">Adicione itens no desktop para começar</p>
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    /* Desktop: Table View */
+                    /* Desktop: Table Engineering View */
+                    <table className="w-full text-left border-collapse table-fixed border border-slate-400">
+                        <thead className="sticky top-0 z-10 bg-slate-100 border-b-2 border-slate-400 shadow-sm">
+                            <tr className="text-[10px] uppercase tracking-wider font-bold text-slate-700">
+                                <th className="p-1 w-[30px] text-center border-r border-slate-300 bg-slate-200">
                                     <input
                                         type="checkbox"
-                                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                        checked={selectedItemIds.size === items.filter(i => i.type !== 'group').length && items.filter(i => i.type !== 'group').length > 0}
+                                        className="rounded border-slate-400 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                        disabled={!items || items.length === 0}
+                                        checked={!!items && items.length > 0 && selectedItemIds.size === items.filter(i => i.type !== 'group').length}
                                         onChange={(e) => {
-                                            if (e.target.checked) {
+                                            if (items && e.target.checked) {
                                                 setSelectedItemIds(new Set(items.filter(i => i.type !== 'group').map(i => i.id!)));
                                             } else {
                                                 setSelectedItemIds(new Set());
                                             }
                                         }}
                                     />
-                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                                        {selectedItemIds.size > 0 ? `${selectedItemIds.size} Selecionados` : 'Todos'}
-                                    </span>
-                                </div>
+                                </th>
+                                <th className="p-1 w-[20px] text-center border-r border-slate-300 bg-slate-200">#</th>
+                                <th className="p-1 w-[65px] text-center border-r border-slate-300">Item</th>
+                                <th className="p-1 w-[60px] text-center border-r border-slate-300">Banco</th>
+                                <th className="p-1 w-[70px] text-center border-r border-slate-300">Código</th>
+                                <th className="p-1 text-center border-r border-slate-300">Descrição</th>
+                                <th className="p-1 w-[35px] text-center border-r border-slate-300">Und</th>
+                                <th className="p-1 w-[55px] text-center border-r border-slate-300">Quant.</th>
+                                <th className="p-1 w-[80px] text-center border-r border-slate-300">V. Unit</th>
+                                <th className="p-1 w-[80px] text-center border-r border-slate-300 bg-slate-50 font-bold">V. Unit (BDI)</th>
+                                <th className="p-1 w-[120px] text-center border-r border-slate-300 font-black">Total</th>
+                                <th className="p-1 w-[50px] text-center border-r border-slate-300">Peso</th>
+                                <th className="p-1 w-[65px] text-center bg-slate-200">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody className="text-[11px] leading-tight">
+                            {visibleRows?.map((row, index) => {
+                                const item = row;
+                                // Dados flat na raiz (SSOT)
 
-                                {selectedItemIds.size > 0 && (
-                                    <div className="flex items-center gap-3 animate-in fade-in slide-in-from-left-2">
-                                        <div className="flex items-center gap-2">
-                                            <RefreshCcw size={14} className="text-indigo-600" />
-                                            <select
-                                                className="text-[10px] font-bold uppercase bg-white border border-slate-200 rounded px-2 py-1 focus:ring-1 focus:ring-indigo-500 outline-none"
-                                                onChange={(e) => {
-                                                    if (e.target.value) {
-                                                        handleBulkSwitchBase(e.target.value);
-                                                        e.target.value = "";
-                                                    }
-                                                }}
-                                            >
-                                                <option value="">Trocar Base (Lote)...</option>
-                                                <option value="SINAPI">SINAPI</option>
-                                                <option value="ORSE">ORSE</option>
-                                                <option value="SBC">SBC</option>
-                                                <option value="SEINFRA">SEINFRA</option>
-                                                <option value="EMBASA">EMBASA</option>
-                                            </select>
-                                        </div>
-                                        <button
-                                            onClick={async () => {
-                                                if (window.confirm(`Remover ${selectedItemIds.size} itens selecionados?`)) {
-                                                    setLoading(true);
-                                                    try {
-                                                        const ids = Array.from(selectedItemIds);
-                                                        // Delete items
-                                                        await BudgetItemService.batchDelete(ids);
-                                                        // Delete related compositions (best effort, ideally DB cascade)
-                                                        for (const itId of ids) {
-                                                            await BudgetItemCompositionService.deleteByBudgetItemId(itId);
-                                                        }
-                                                        // Reload data
-                                                        await loadBudget();
-                                                        setSelectedItemIds(new Set());
-                                                    } catch (e) {
-                                                        console.error(e);
-                                                        alert("Erro ao excluir itens");
-                                                    } finally {
-                                                        setLoading(false);
-                                                    }
-                                                }
-                                            }}
-                                            className="text-[10px] font-bold text-red-600 hover:bg-red-50 px-2 py-1 rounded transition-colors uppercase flex items-center gap-1"
-                                        >
-                                            <Trash2 size={12} /> Excluir Lote
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
+                                if (item.level === 1) console.log(`[EDITOR RENDER] Etapa ${item.description}: Total=${item.total}`);
+                                const isGroup = item.kind === 'GROUP'; // ou item.type === 'group'
 
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={() => setIsAddingItem(true)}
-                                    className="bg-accent hover:bg-accent/90 text-white text-xs font-semibold px-3 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5"
-                                >
-                                    <Plus size={14} /> NOVO ITEM
-                                </button>
-                                <div className="w-px h-4 bg-slate-300 mx-2"></div>
-                                <button onClick={() => handleAddTitle()} className="text-secondary hover:text-primary hover:bg-white px-3 py-1.5 rounded text-xs font-medium transition-colors border border-transparent hover:border-border">
-                                    + Etapa (N1)
-                                </button>
-                                <button onClick={() => handleAddSubTitle(1)} className="text-secondary hover:text-primary hover:bg-white px-3 py-1.5 rounded text-xs font-medium transition-colors border border-transparent hover:border-border">
-                                    + Sub-etapa (N2)
-                                </button>
-                            </div>
-                        </div>
-                    )
-                }
+                                // Leitura via campos canônicos
+                                const displayTotal = item.total || 0;
+                                const peso = (item.pesoRaw || 0) * 100; // Converte para % visual da UI
 
-                {/* Toolbar - Desktop Only */}
-                {
-                    !isMobile && (
-                        <div className="px-6 py-2 bg-slate-50/50 border-b border-border flex items-center justify-between shrink-0">
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={() => setIsAddingItem(true)}
-                                    className="bg-accent hover:bg-accent/90 text-white text-xs font-semibold px-3 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5"
-                                >
-                                    <Plus size={14} /> NOVO ITEM
-                                </button>
-                                <div className="w-px h-4 bg-slate-300 mx-2"></div>
-                                <button onClick={() => handleAddTitle()} className="text-secondary hover:text-primary hover:bg-white px-3 py-1.5 rounded text-xs font-medium transition-colors border border-transparent hover:border-border">
-                                    + Etapa (N1)
-                                </button>
-                                <button onClick={() => handleAddSubTitle(1)} className="text-secondary hover:text-primary hover:bg-white px-3 py-1.5 rounded text-xs font-medium transition-colors border border-transparent hover:border-border">
-                                    + Sub-etapa (N2)
-                                </button>
-                            </div>
+                                // Para exibição apenas do unitário com BDI (informativo)
+                                const rawUnitPrice = item.unitPrice || 0;
+                                const unitPriceWithBDI = item.unitPriceWithBDI || 0;
 
-                            <div className="flex items-center gap-2">
-                                <button
-                                    onClick={() => {
-                                        const summary = getExecutiveSummary();
-                                        const text = summary.map(s => `${s.name}: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(s.value)}`).join('\n');
-                                        alert("Resumo Executivo (por Centro de Custo):\n\n" + text);
-                                    }}
-                                    className="text-xs text-slate-500 hover:text-green-600 font-medium px-2 py-1 flex items-center gap-1 transition-colors"
-                                    title="Resumo Executivo"
-                                >
-                                    <FileText size={12} /> Resumo
-                                </button>
-                                <button
-                                    onClick={handleReorderItems}
-                                    disabled={loading}
-                                    className="text-xs text-slate-500 hover:text-accent font-medium px-2 py-1 flex items-center gap-1 transition-colors"
-                                    title="Renumerar itens"
-                                >
-                                    <Activity size={12} className={clsx(loading && "animate-spin")} /> Renumerar
-                                </button>
-                                <button
-                                    onClick={() => setShowImpact(!showImpact)}
-                                    className={clsx(
-                                        "text-xs font-medium px-2 py-1 flex items-center gap-1 transition-colors rounded",
-                                        showImpact ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:text-slate-800"
-                                    )}
-                                >
-                                    <TrendingUp size={12} /> Impacto
-                                </button>
-                            </div>
-                        </div>
-                    )
-                }
+                                const hierarchicalNumber = item.itemNumber;
 
-                {
-                    showImpact && (
-                        <div className="bg-indigo-50 border-b border-indigo-100 px-6 py-3 shrink-0 flex items-center justify-between animate-in slide-in-from-top-2">
-                            <div className="flex items-center gap-3">
-                                <div className="bg-indigo-100 p-1.5 rounded-full text-indigo-600">
-                                    <TrendingUp size={16} />
-                                </div>
-                                <div>
-                                    <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest leading-none">Impacto Financeiro</p>
-                                    <p className="text-xs text-indigo-800 font-medium">Original vs Atual</p>
-                                </div>
-                            </div>
-                            <div className="flex gap-6">
-                                <div className="text-right">
-                                    <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest leading-none mb-0.5">Diferença</p>
-                                    <p className={clsx("text-lg font-black leading-none", getImpact().value >= 0 ? "text-red-500" : "text-green-600")}>
-                                        {getImpact().value >= 0 ? "+" : ""}{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(getImpact().value)}
-                                    </p>
-                                </div>
-                                <div className="text-right border-l border-indigo-200 pl-6">
-                                    <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest leading-none mb-0.5">Variação</p>
-                                    <p className={clsx("text-lg font-black leading-none", getImpact().percent >= 0 ? "text-red-500" : "text-green-600")}>
-                                        {getImpact().percent >= 0 ? "+" : ""}{getImpact().percent.toFixed(2)}%
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                    )
-                }
+                                // ===================================================================
+                                // HIERARQUIA VISUAL BASEADA NO ITEM.ROWTYPE (View)
+                                // ===================================================================
+                                // Etapa: Azul Escuro, Branco
+                                // Subetapa: Azul Claro, Texto Escuro
+                                // Item: Branco, Texto Padrão
 
-                {/* Grid/Table - Desktop ou Cards - Mobile */}
-                <div className="flex-1 overflow-auto bg-white relative custom-scrollbar">
-                    {isMobile ? (
-                        /* Mobile: Cards View */
-                        <div className="p-4 space-y-3">
-                            {items?.map((item, index) => {
-                                const isGroup = item.type === 'group';
-                                const hierarchicalNumber = getItemNumber(index);
-                                const isExpanded = expandedCards.has(item.id!);
+                                const isNivel1 = item.rowType === 'etapa' || item.level === 1; // Fallback to level if rowType missing
+                                const isNivel2 = item.rowType === 'subetapa' || item.level === 2;
+                                const isItem = item.rowType === 'item' || (item.level !== 1 && item.level !== 2);
 
-                                if (isGroup) {
-                                    return (
-                                        <div
-                                            key={item.id}
-                                            className={clsx(
-                                                "rounded-lg p-3 border-l-4",
-                                                item.level === 0
-                                                    ? "bg-slate-100 border-slate-400 text-slate-800"
-                                                    : "bg-blue-50 border-blue-300 text-blue-800"
-                                            )}
-                                        >
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-xs font-mono text-slate-400">{hierarchicalNumber}</span>
-                                                    <span className="font-bold uppercase text-sm">{item.description}</span>
-                                                </div>
-                                                <span className="text-sm font-bold">
-                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalPrice * (1 + (budget.bdi || 0) / 100))}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    );
-                                }
+                                // Aplicar cores de fundo
+                                const rowBg = isNivel1
+                                    ? "bg-[#1e3a8a] text-white" // Azul Escuro (Etapa)
+                                    : isNivel2
+                                        ? "bg-[#dbeafe] text-blue-900" // Azul Claro (Subetapa)
+                                        : "bg-white hover:bg-slate-50"; // Branco (Item)
+
+                                // Estilo do texto da descrição
+                                const textStyle = isNivel1
+                                    ? "font-black uppercase tracking-wide text-[12px]" // Mais destaque nível 1
+                                    : isNivel2
+                                        ? "font-bold uppercase text-[11px]" // Destaque nível 2
+                                        : "font-normal text-slate-700"; // Normal nível 3
 
                                 return (
-                                    <div
+                                    <tr
                                         key={item.id}
                                         id={`item-${item.id}`}
+                                        draggable={!isMobile}
+                                        onDragStart={(e) => handleDragStart(e, index)}
+                                        onDragOver={(e) => handleDragOver(e, index)}
+                                        onDrop={(e) => handleDrop(e, index)}
+                                        onDragEnd={() => setDragOverIndex(null)}
                                         className={clsx(
-                                            "bg-white border rounded-lg shadow-sm overflow-hidden transition-all",
-                                            highlightedItemId === item.id ? "border-yellow-400 ring-2 ring-yellow-100 shadow-md" : "border-slate-200"
+                                            "border-b border-slate-300 transition-colors group",
+                                            rowBg,
+                                            dragOverIndex === index && "border-t-2 border-t-blue-500",
+                                            highlightedItemId === item.id && "bg-yellow-100 ring-2 ring-inset ring-yellow-400 z-10",
+                                            selectedItemIds.has(item.id!) && !isGroup && "bg-indigo-50" // Realce de seleção
                                         )}
+                                        onClick={(e) => {
+                                            // Seleção com CTRL/Click na linha
+                                            if ((e.ctrlKey || e.metaKey) && !isGroup) {
+                                                const newSelected = new Set(selectedItemIds);
+                                                if (newSelected.has(item.id!)) newSelected.delete(item.id!);
+                                                else newSelected.add(item.id!);
+                                                setSelectedItemIds(newSelected);
+                                            }
+                                        }}
                                     >
-                                        {/* Card Header - Always Visible */}
-                                        <button
-                                            onClick={() => {
-                                                const newSet = new Set(expandedCards);
-                                                if (isExpanded) newSet.delete(item.id!);
-                                                else newSet.add(item.id!);
-                                                setExpandedCards(newSet);
-                                            }}
-                                            className="w-full p-3 text-left flex items-start justify-between gap-3"
-                                        >
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <span className="text-[10px] font-mono text-slate-400">{hierarchicalNumber}</span>
-                                                    {item.source && (
-                                                        <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1 rounded">
-                                                            {item.source}
-                                                        </span>
-                                                    )}
-                                                    {validatePriceRange(item) !== 'normal' && (
-                                                        <AlertTriangle size={12} className={validatePriceRange(item) === 'high' ? "text-red-400" : "text-yellow-400"} />
-                                                    )}
-                                                    {item.isLocked && <Lock size={12} className="text-orange-400" />}
-                                                </div>
-                                                <p className="text-sm text-slate-700 leading-snug">{item.description}</p>
-                                            </div>
-                                            <div className="text-right shrink-0">
-                                                <p className="text-lg font-bold text-primary">
-                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalPrice * (1 + (budget.bdi || 0) / 100))}
-                                                </p>
-                                                {isExpanded ? <ChevronUp size={16} className="text-slate-400 mt-1 ml-auto" /> : <ChevronDown size={16} className="text-slate-400 mt-1 ml-auto" />}
-                                            </div>
-                                        </button>
-
-                                        {/* Card Details - Expandable */}
-                                        {isExpanded && (
-                                            <div className="px-3 pb-3 pt-0 border-t border-slate-100 bg-slate-50/50 animate-in slide-in-from-top-2">
-                                                <div className="grid grid-cols-3 gap-3 text-xs py-2">
-                                                    <div
-                                                        className={clsx("transition-transform active:scale-95", !item.isLocked && "cursor-pointer")}
-                                                        onClick={() => !item.isLocked && handleStartEdit(item)}
-                                                    >
-                                                        <p className="text-[10px] text-slate-400 uppercase">Qtd</p>
-                                                        <p className={clsx("font-bold font-mono", !item.isLocked && "text-blue-600")}>{item.quantity} {item.unit}</p>
-                                                    </div>
-                                                    <div
-                                                        className={clsx("transition-transform active:scale-95", !item.isLocked && "cursor-pointer")}
-                                                        onClick={() => !item.isLocked && handleStartEdit(item)}
-                                                    >
-                                                        <p className="text-[10px] text-slate-400 uppercase">Unit.</p>
-                                                        <p className={clsx("font-bold font-mono", !item.isLocked && "text-blue-600")}>
-                                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.unitPrice)}
-                                                        </p>
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-[10px] text-slate-400 uppercase">Total</p>
-                                                        <p className="font-bold font-mono">
-                                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalPrice)}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                                {item.code && (
-                                                    <p className="text-[10px] text-slate-400 font-mono">Código: {item.code}</p>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-
-                            {items?.length === 0 && (
-                                <div className="py-16 text-center">
-                                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                                        <Search size={24} className="text-slate-300" />
-                                    </div>
-                                    <p className="font-medium text-slate-600">Orçamento Vazio</p>
-                                    <p className="text-xs text-slate-400 mt-1">Adicione itens no desktop para começar</p>
-                                </div>
-                            )}
-                        </div>
-                    ) : (
-                        /* Desktop: Table View */
-                        /* Desktop: Table Engineering View */
-                        <table className="w-full text-left border-collapse table-fixed border border-slate-400">
-                            <thead className="sticky top-0 z-10 bg-slate-100 border-b-2 border-slate-400 shadow-sm">
-                                <tr className="text-[10px] uppercase tracking-wider font-bold text-slate-700">
-                                    <th className="p-1 w-[30px] text-center border-r border-slate-300 bg-slate-200">
-                                        <input
-                                            type="checkbox"
-                                            className="rounded border-slate-400 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                            disabled={!items || items.length === 0}
-                                            checked={!!items && items.length > 0 && selectedItemIds.size === items.filter(i => i.type !== 'group').length}
-                                            onChange={(e) => {
-                                                if (items && e.target.checked) {
-                                                    setSelectedItemIds(new Set(items.filter(i => i.type !== 'group').map(i => i.id!)));
-                                                } else {
-                                                    setSelectedItemIds(new Set());
-                                                }
-                                            }}
-                                        />
-                                    </th>
-                                    <th className="p-1 w-[20px] text-center border-r border-slate-300 bg-slate-200">#</th>
-                                    <th className="p-1 w-[65px] text-center border-r border-slate-300">Item</th>
-                                    <th className="p-1 w-[60px] text-center border-r border-slate-300">Banco</th>
-                                    <th className="p-1 w-[70px] text-center border-r border-slate-300">Código</th>
-                                    <th className="p-1 text-center border-r border-slate-300">Descrição</th>
-                                    <th className="p-1 w-[35px] text-center border-r border-slate-300">Und</th>
-                                    <th className="p-1 w-[55px] text-center border-r border-slate-300">Quant.</th>
-                                    <th className="p-1 w-[80px] text-center border-r border-slate-300">V. Unit</th>
-                                    <th className="p-1 w-[80px] text-center border-r border-slate-300 bg-slate-50 font-bold">V. Unit (BDI)</th>
-                                    <th className="p-1 w-[120px] text-center border-r border-slate-300 font-black">Total</th>
-                                    <th className="p-1 w-[50px] text-center border-r border-slate-300">Peso</th>
-                                    <th className="p-1 w-[65px] text-center bg-slate-200">Ações</th>
-                                </tr>
-                            </thead>
-                            <tbody className="text-[11px] leading-tight">
-                                {visibleRows?.map((row, index) => {
-                                    const item = row;
-                                    // Dados flat na raiz (SSOT)
-
-                                    if (item.level === 1) console.log(`[EDITOR RENDER] Etapa ${item.description}: Total=${item.total}`);
-                                    const isGroup = item.kind === 'GROUP'; // ou item.type === 'group'
-
-                                    // Leitura via campos canônicos
-                                    const displayTotal = item.total || 0;
-                                    const peso = (item.pesoRaw || 0) * 100; // Converte para % visual da UI
-
-                                    // Para exibição apenas do unitário com BDI (informativo)
-                                    const rawUnitPrice = item.unitPrice || 0;
-                                    const unitPriceWithBDI = item.unitPriceWithBDI || 0;
-
-                                    const hierarchicalNumber = item.itemNumber;
-
-                                    // ===================================================================
-                                    // HIERARQUIA VISUAL BASEADA NO ITEM.ROWTYPE (View)
-                                    // ===================================================================
-                                    // Etapa: Azul Escuro, Branco
-                                    // Subetapa: Azul Claro, Texto Escuro
-                                    // Item: Branco, Texto Padrão
-
-                                    const isNivel1 = item.rowType === 'etapa' || item.level === 1; // Fallback to level if rowType missing
-                                    const isNivel2 = item.rowType === 'subetapa' || item.level === 2;
-                                    const isItem = item.rowType === 'item' || (item.level !== 1 && item.level !== 2);
-
-                                    // Aplicar cores de fundo
-                                    const rowBg = isNivel1
-                                        ? "bg-[#1e3a8a] text-white" // Azul Escuro (Etapa)
-                                        : isNivel2
-                                            ? "bg-[#dbeafe] text-blue-900" // Azul Claro (Subetapa)
-                                            : "bg-white hover:bg-slate-50"; // Branco (Item)
-
-                                    // Estilo do texto da descrição
-                                    const textStyle = isNivel1
-                                        ? "font-black uppercase tracking-wide text-[12px]" // Mais destaque nível 1
-                                        : isNivel2
-                                            ? "font-bold uppercase text-[11px]" // Destaque nível 2
-                                            : "font-normal text-slate-700"; // Normal nível 3
-
-                                    return (
-                                        <tr
-                                            key={item.id}
-                                            id={`item-${item.id}`}
-                                            draggable={!isMobile}
-                                            onDragStart={(e) => handleDragStart(e, index)}
-                                            onDragOver={(e) => handleDragOver(e, index)}
-                                            onDrop={(e) => handleDrop(e, index)}
-                                            onDragEnd={() => setDragOverIndex(null)}
-                                            className={clsx(
-                                                "border-b border-slate-300 transition-colors group",
-                                                rowBg,
-                                                dragOverIndex === index && "border-t-2 border-t-blue-500",
-                                                highlightedItemId === item.id && "bg-yellow-100 ring-2 ring-inset ring-yellow-400 z-10",
-                                                selectedItemIds.has(item.id!) && !isGroup && "bg-indigo-50" // Realce de seleção
+                                        {/* Checkbox Column */}
+                                        <td className={clsx(
+                                            "p-1 text-center border-r border-slate-300",
+                                            isNivel1 ? "border-r-blue-700" : ""
+                                        )}>
+                                            {!isGroup && (
+                                                <input
+                                                    type="checkbox"
+                                                    className="rounded border-slate-400 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                    checked={selectedItemIds.has(item.id!)}
+                                                    onChange={(e) => {
+                                                        const newSelected = new Set(selectedItemIds);
+                                                        if (e.target.checked) newSelected.add(item.id!);
+                                                        else newSelected.delete(item.id!);
+                                                        setSelectedItemIds(newSelected);
+                                                    }}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
                                             )}
-                                            onClick={(e) => {
-                                                // Seleção com CTRL/Click na linha
-                                                if ((e.ctrlKey || e.metaKey) && !isGroup) {
-                                                    const newSelected = new Set(selectedItemIds);
-                                                    if (newSelected.has(item.id!)) newSelected.delete(item.id!);
-                                                    else newSelected.add(item.id!);
-                                                    setSelectedItemIds(newSelected);
-                                                }
-                                            }}
-                                        >
-                                            {/* Checkbox Column */}
-                                            <td className={clsx(
-                                                "p-1 text-center border-r border-slate-300",
-                                                isNivel1 ? "border-r-blue-700" : ""
-                                            )}>
-                                                {!isGroup && (
-                                                    <input
-                                                        type="checkbox"
-                                                        className="rounded border-slate-400 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                                        checked={selectedItemIds.has(item.id!)}
-                                                        onChange={(e) => {
-                                                            const newSelected = new Set(selectedItemIds);
-                                                            if (e.target.checked) newSelected.add(item.id!);
-                                                            else newSelected.delete(item.id!);
-                                                            setSelectedItemIds(newSelected);
-                                                        }}
-                                                        onClick={(e) => e.stopPropagation()}
-                                                    />
-                                                )}
-                                            </td>
+                                        </td>
 
-                                            {/* Drag Handle (Restaurado para alinhar com coluna #) */}
-                                            <td className="p-0 text-center border-r border-slate-300 cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600">
-                                                <div className="flex items-center justify-center h-full w-full">
-                                                    <ListOrdered size={12} />
-                                                </div>
-                                            </td>
+                                        {/* Drag Handle (Restaurado para alinhar com coluna #) */}
+                                        <td className="p-0 text-center border-r border-slate-300 cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600">
+                                            <div className="flex items-center justify-center h-full w-full">
+                                                <ListOrdered size={12} />
+                                            </div>
+                                        </td>
 
-                                            {/* Item Number */}
-                                            <td className={clsx(
-                                                "p-1 px-2 text-center border-r border-slate-300 font-mono font-bold whitespace-nowrap cursor-grab active:cursor-grabbing",
-                                                isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-blue-900" : "text-slate-700"
-                                            )}>
-                                                {hierarchicalNumber}
-                                            </td>
+                                        {/* Item Number */}
+                                        <td className={clsx(
+                                            "p-1 px-2 text-center border-r border-slate-300 font-mono font-bold whitespace-nowrap cursor-grab active:cursor-grabbing",
+                                            isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-blue-900" : "text-slate-700"
+                                        )}>
+                                            {hierarchicalNumber}
+                                        </td>
 
-                                            {/* Banco (Fonte) */}
-                                            <td className="p-1 px-1 text-center border-r border-slate-300">
-                                                {item.level >= 3 && (
+                                        {/* Banco (Fonte) */}
+                                        <td className="p-1 px-1 text-center border-r border-slate-300">
+                                            {item.level >= 3 && (
+                                                <span className={clsx(
+                                                    "text-[9px] px-1 py-0.5 rounded font-bold uppercase",
+                                                    item.source === 'SINAPI' ? "bg-blue-100 text-blue-700" :
+                                                        item.source === 'SICRO' ? "bg-orange-100 text-orange-700" :
+                                                            item.source === 'ORSE' ? "bg-green-100 text-green-700" :
+                                                                item.source === 'SEINFRA' ? "bg-purple-100 text-purple-700" :
+                                                                    item.source === 'SETOP' ? "bg-cyan-100 text-cyan-700" :
+                                                                        item.source === 'EMBASA' ? "bg-teal-100 text-teal-700" :
+                                                                            item.source === 'SBC' ? "bg-amber-100 text-amber-700" :
+                                                                                item.source ? "bg-slate-100 text-slate-600" : "bg-gray-50 text-gray-400"
+                                                )}>
+                                                    {item.source || 'IMPORT'}
+                                                </span>
+                                            )}
+                                        </td>
+
+                                        {/* Código */}
+                                        <td className={clsx(
+                                            "p-1 px-1 text-center border-r border-slate-300 font-mono text-[10px]",
+                                            isNivel1 ? "text-white/80 border-r-blue-700" : "text-slate-500"
+                                        )} title={item.code || ''}>
+                                            {item.level >= 3 && (item.code || '-')}
+                                        </td>
+
+                                        {/* Descrição */}
+                                        <td className="p-1 border-r border-slate-300 relative group/desc">
+                                            <div className="flex items-center w-full min-h-[1.5rem]">
+                                                {!isGroup && !item.isLocked ? (
+                                                    <span
+                                                        className={clsx(
+                                                            "cursor-pointer hover:underline truncate block w-full",
+                                                            textStyle,
+                                                            isNivel2 && "pl-6", // Indent Level 2
+                                                            isItem && "pl-10"   // Indent Level 3
+                                                        )}
+                                                        onClick={() => handleStartEdit(item)}
+                                                    >
+                                                        {item.description}
+                                                    </span>
+                                                ) : (
                                                     <span className={clsx(
-                                                        "text-[9px] px-1 py-0.5 rounded font-bold uppercase",
-                                                        item.source === 'SINAPI' ? "bg-blue-100 text-blue-700" :
-                                                            item.source === 'SICRO' ? "bg-orange-100 text-orange-700" :
-                                                                item.source === 'ORSE' ? "bg-green-100 text-green-700" :
-                                                                    item.source === 'SEINFRA' ? "bg-purple-100 text-purple-700" :
-                                                                        item.source === 'SETOP' ? "bg-cyan-100 text-cyan-700" :
-                                                                            item.source === 'EMBASA' ? "bg-teal-100 text-teal-700" :
-                                                                                item.source === 'SBC' ? "bg-amber-100 text-amber-700" :
-                                                                                    item.source ? "bg-slate-100 text-slate-600" : "bg-gray-50 text-gray-400"
+                                                        "truncate block w-full",
+                                                        textStyle,
+                                                        isNivel2 && "pl-6",
+                                                        isItem && "pl-10"
                                                     )}>
-                                                        {item.source || 'IMPORT'}
+                                                        {item.description}
                                                     </span>
                                                 )}
-                                            </td>
 
-                                            {/* Código */}
-                                            <td className={clsx(
-                                                "p-1 px-1 text-center border-r border-slate-300 font-mono text-[10px]",
-                                                isNivel1 ? "text-white/80 border-r-blue-700" : "text-slate-500"
-                                            )} title={item.code || ''}>
-                                                {item.level >= 3 && (item.code || '-')}
-                                            </td>
+                                                {/* Tooltip Rico na Descrição */}
+                                                <div className="hidden group-hover/desc:block absolute top-0 left-full ml-1 w-64 bg-slate-800 text-white text-xs p-3 rounded-lg shadow-xl z-50 pointer-events-none">
+                                                    <p className="font-bold mb-1">{item.description}</p>
+                                                    {item.notes && <p className="text-slate-300 italic text-[10px]">Nota: {item.notes}</p>}
+                                                </div>
+                                            </div>
 
-                                            {/* Descrição */}
-                                            <td className="p-1 border-r border-slate-300 relative group/desc">
-                                                <div className="flex items-center w-full min-h-[1.5rem]">
-                                                    {!isGroup && !item.isLocked ? (
-                                                        <span
-                                                            className={clsx(
-                                                                "cursor-pointer hover:underline truncate block w-full",
-                                                                textStyle,
-                                                                isNivel2 && "pl-6", // Indent Level 2
-                                                                isItem && "pl-10"   // Indent Level 3
-                                                            )}
-                                                            onClick={() => handleStartEdit(item)}
-                                                        >
-                                                            {item.description}
-                                                        </span>
-                                                    ) : (
-                                                        <span className={clsx(
-                                                            "truncate block w-full",
-                                                            textStyle,
-                                                            isNivel2 && "pl-6",
-                                                            isItem && "pl-10"
-                                                        )}>
-                                                            {item.description}
-                                                        </span>
-                                                    )}
+                                            {validatePriceRange(item) !== 'normal' && !isGroup && (
+                                                <div className="absolute right-1 top-1 text-orange-500">
+                                                    <AlertOctagon size={10} />
+                                                </div>
+                                            )}
+                                        </td>
 
-                                                    {/* Tooltip Rico na Descrição */}
-                                                    <div className="hidden group-hover/desc:block absolute top-0 left-full ml-1 w-64 bg-slate-800 text-white text-xs p-3 rounded-lg shadow-xl z-50 pointer-events-none">
-                                                        <p className="font-bold mb-1">{item.description}</p>
-                                                        {item.notes && <p className="text-slate-300 italic text-[10px]">Nota: {item.notes}</p>}
+                                        {/* Unidade */}
+                                        <td className={clsx(
+                                            "p-1 text-center border-r border-slate-300",
+                                            isNivel1 ? "text-white/70" : "text-slate-500"
+                                        )}>
+                                            {!isGroup && item.unit}
+                                        </td>
+
+                                        {/* Quantidade */}
+                                        <td className={clsx(
+                                            "p-1 text-right border-r border-slate-300 font-mono px-2",
+                                            isNivel1 ? "text-white" : "text-slate-700"
+                                        )}>
+                                            {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(item.quantity) : ''}
+                                        </td>
+
+                                        {/* Valor Unitário (Sem BDI) */}
+                                        <td className={clsx(
+                                            "p-1 text-right border-r border-slate-300 font-mono px-2",
+                                            isNivel1 ? "text-white" : "text-slate-600"
+                                        )}>
+                                            {!isGroup ? (
+                                                item.type === 'service' || item.type === 'composition' ? (
+                                                    <div className="flex items-center justify-end gap-1 group/calc cursor-help">
+                                                        <span>{new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)}</span>
+                                                        <Calculator size={8} className={isNivel1 ? "text-white/50" : "text-slate-300 opacity-0 group-hover/calc:opacity-100"} />
                                                     </div>
-                                                </div>
+                                                ) : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)
+                                            ) : ''}
+                                        </td>
 
-                                                {validatePriceRange(item) !== 'normal' && !isGroup && (
-                                                    <div className="absolute right-1 top-1 text-orange-500">
-                                                        <AlertOctagon size={10} />
-                                                    </div>
+                                        {/* Valor Unitário (Com BDI) - REQUISITADO */}
+                                        <td className={clsx(
+                                            "p-1 text-right border-r border-slate-300 font-mono font-bold px-2",
+                                            isNivel1 ? "text-white bg-white/10" : "text-indigo-600 bg-indigo-50/30"
+                                        )}>
+                                            {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(unitPriceWithBDI) : ''}
+                                        </td>
+
+                                        {/* Total - Usa finalPrice que já inclui BDI */}
+                                        {/* Total */}
+                                        <td className={clsx(
+                                            "p-1 text-right border-r border-slate-300 font-mono font-bold px-2 whitespace-nowrap min-w-[110px]",
+                                            isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-[#1e3a8a] border-r-blue-200" : "text-slate-800"
+                                        )}>
+                                            {/* Use finalPrice direto - já calculado pelo frontend */}
+                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                                                displayTotal
+                                            )}
+                                        </td>
+
+                                        {/* Peso */}
+                                        <td className={clsx(
+                                            "p-1 text-center border-r border-slate-300 text-[9px]",
+                                            isNivel1 ? "text-white/70 border-r-blue-700" : "text-slate-400"
+                                        )}>
+                                            {peso.toFixed(2)}%
+                                        </td>
+
+                                        {/* Ações */}
+                                        <td className="p-1 text-center">
+                                            <div className="grid grid-cols-2 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity w-fit mx-auto">
+                                                {!isGroup && !item.isLocked && (
+                                                    <button
+                                                        onClick={() => handleStartEdit(item)}
+                                                        className="p-1 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded"
+                                                        title="Editar item"
+                                                    >
+                                                        <Edit2 size={12} />
+                                                    </button>
                                                 )}
-                                            </td>
-
-                                            {/* Unidade */}
-                                            <td className={clsx(
-                                                "p-1 text-center border-r border-slate-300",
-                                                isNivel1 ? "text-white/70" : "text-slate-500"
-                                            )}>
-                                                {!isGroup && item.unit}
-                                            </td>
-
-                                            {/* Quantidade */}
-                                            <td className={clsx(
-                                                "p-1 text-right border-r border-slate-300 font-mono px-2",
-                                                isNivel1 ? "text-white" : "text-slate-700"
-                                            )}>
-                                                {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(item.quantity) : ''}
-                                            </td>
-
-                                            {/* Valor Unitário (Sem BDI) */}
-                                            <td className={clsx(
-                                                "p-1 text-right border-r border-slate-300 font-mono px-2",
-                                                isNivel1 ? "text-white" : "text-slate-600"
-                                            )}>
-                                                {!isGroup ? (
-                                                    item.type === 'service' || item.type === 'composition' ? (
-                                                        <div className="flex items-center justify-end gap-1 group/calc cursor-help">
-                                                            <span>{new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)}</span>
-                                                            <Calculator size={8} className={isNivel1 ? "text-white/50" : "text-slate-300 opacity-0 group-hover/calc:opacity-100"} />
-                                                        </div>
-                                                    ) : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)
-                                                ) : ''}
-                                            </td>
-
-                                            {/* Valor Unitário (Com BDI) - REQUISITADO */}
-                                            <td className={clsx(
-                                                "p-1 text-right border-r border-slate-300 font-mono font-bold px-2",
-                                                isNivel1 ? "text-white bg-white/10" : "text-indigo-600 bg-indigo-50/30"
-                                            )}>
-                                                {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(unitPriceWithBDI) : ''}
-                                            </td>
-
-                                            {/* Total - Usa finalPrice que já inclui BDI */}
-                                            {/* Total */}
-                                            <td className={clsx(
-                                                "p-1 text-right border-r border-slate-300 font-mono font-bold px-2 whitespace-nowrap min-w-[110px]",
-                                                isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-[#1e3a8a] border-r-blue-200" : "text-slate-800"
-                                            )}>
-                                                {/* Use finalPrice direto - já calculado pelo frontend */}
-                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
-                                                    displayTotal
-                                                )}
-                                            </td>
-
-                                            {/* Peso */}
-                                            <td className={clsx(
-                                                "p-1 text-center border-r border-slate-300 text-[9px]",
-                                                isNivel1 ? "text-white/70 border-r-blue-700" : "text-slate-400"
-                                            )}>
-                                                {peso.toFixed(2)}%
-                                            </td>
-
-                                            {/* Ações */}
-                                            <td className="p-1 text-center">
-                                                <div className="grid grid-cols-2 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity w-fit mx-auto">
-                                                    {!isGroup && !item.isLocked && (
-                                                        <button
-                                                            onClick={() => handleStartEdit(item)}
-                                                            className="p-1 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded"
-                                                            title="Editar item"
-                                                        >
-                                                            <Edit2 size={12} />
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        onClick={() => handleToggleLock(item)}
-                                                        className={clsx("p-1 rounded hover:bg-slate-200", item.isLocked ? "text-amber-500" : "text-slate-400")}
-                                                        title={item.isLocked ? "Desbloquear" : "Bloquear edição"}
-                                                    >
-                                                        {item.isLocked ? <Lock size={12} /> : <Unlock size={12} />}
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDuplicateItem(item)}
-                                                        className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-                                                        title="Duplicar"
-                                                    >
-                                                        <Copy size={12} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteItem(item.id!)}
-                                                        className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
-                                                        title="Excluir"
-                                                    >
-                                                        <Trash2 size={12} />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                                {items?.length === 0 && (
-                                    <tr>
-                                        <td colSpan={13} className="py-20 text-center text-slate-400 bg-slate-50/30">
-                                            <div className="flex flex-col items-center gap-3">
-                                                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center">
-                                                    <Search size={24} className="text-slate-300" />
-                                                </div>
-                                                <div>
-                                                    <p className="font-medium text-slate-600">Planilha Vazia</p>
-                                                    <p className="text-xs text-slate-400 mt-1">Adicione o primeiro capítulo para começar</p>
-                                                </div>
+                                                <button
+                                                    onClick={() => handleToggleLock(item)}
+                                                    className={clsx("p-1 rounded hover:bg-slate-200", item.isLocked ? "text-amber-500" : "text-slate-400")}
+                                                    title={item.isLocked ? "Desbloquear" : "Bloquear edição"}
+                                                >
+                                                    {item.isLocked ? <Lock size={12} /> : <Unlock size={12} />}
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDuplicateItem(item)}
+                                                    className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                                                    title="Duplicar"
+                                                >
+                                                    <Copy size={12} />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteItem(item.id!)}
+                                                    className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                                    title="Excluir"
+                                                >
+                                                    <Trash2 size={12} />
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
-                                )}
-                            </tbody>
-                            {/* Footer com Totais (Em Esquadro e Alinhado) */}
-                            <tfoot className="bg-slate-50 border-t-2 border-slate-400 font-bold text-[11px]">
-                                <tr className="bg-slate-50 border-t border-slate-300">
-                                    <td colSpan={13} className="p-0">
-                                        <div className="flex justify-end p-6 bg-slate-50">
-                                            <div className="w-full max-w-[420px] space-y-3">
-                                                {/* Custo Total */}
-                                                <div className="flex justify-between items-center text-slate-500 font-bold uppercase tracking-widest text-[11px]">
-                                                    <span>Custo Total:</span>
-                                                    <span className="font-mono text-sm text-slate-700">
-                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(calcResult?.totalGlobalBase || 0)}
-                                                    </span>
-                                                </div>
-
-                                                {/* Valor BDI */}
-                                                <div className="flex justify-between items-center text-indigo-600 font-bold uppercase tracking-widest text-[11px] py-2 border-y border-indigo-100/50">
-                                                    <span>BDI ({budget.bdi || 0}%):</span>
-                                                    <span className="font-mono text-sm text-indigo-700">
-                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((calcResult?.totalGlobalFinal || 0) - (calcResult?.totalGlobalBase || 0))}
-                                                    </span>
-                                                </div>
-
-                                                {/* TOTAL GLOBAL */}
-                                                <div className="flex justify-between items-center bg-blue-600 text-white p-4 rounded-xl shadow-lg border-2 border-blue-500 mt-2">
-                                                    <span className="font-black tracking-[0.1em] text-xs uppercase">TOTAL GLOBAL:</span>
-                                                    <span className="font-mono text-2xl font-black whitespace-nowrap">
-                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(calcResult?.totalGlobalFinal || 0)}
-                                                    </span>
-                                                </div>
+                                );
+                            })}
+                            {items?.length === 0 && (
+                                <tr>
+                                    <td colSpan={13} className="py-20 text-center text-slate-400 bg-slate-50/30">
+                                        <div className="flex flex-col items-center gap-3">
+                                            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center">
+                                                <Search size={24} className="text-slate-300" />
+                                            </div>
+                                            <div>
+                                                <p className="font-medium text-slate-600">Planilha Vazia</p>
+                                                <p className="text-xs text-slate-400 mt-1">Adicione o primeiro capítulo para começar</p>
                                             </div>
                                         </div>
                                     </td>
                                 </tr>
-                            </tfoot>
-                        </table>
-                    )}
-                </div >
-
-                {/* Modal de Busca (Resources) */}
-                {
-                    isAddingItem && (
-                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in zoom-in">
-                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]">
-                                <div className="p-6 border-b flex justify-between items-center bg-slate-50">
-                                    <div>
-                                        <h3 className="text-xl font-bold text-slate-800">Localizar Insumo</h3>
-                                        <p className="text-slate-500 text-sm">Pesquise no seu banco de dados (SINAPI, ORSE, etc)</p>
-                                    </div>
-                                    <button onClick={() => setIsAddingItem(false)} className="text-slate-400 hover:text-slate-600"><ArrowLeft size={24} /></button>
-                                </div>
-
-                                <div className="flex-1 min-h-0 flex flex-col">
-                                    {/* TABS Toggle */}
-                                    <div className="px-6 pt-4 pb-2 flex items-center justify-center gap-4">
-                                        <button
-                                            onClick={() => { setAddItemTab('INS'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
-                                            className={clsx(
-                                                "px-4 py-2 text-xs font-bold rounded-lg border transition-all",
-                                                addItemTab === 'INS'
-                                                    ? "bg-blue-600 text-white border-blue-600 shadow-md"
-                                                    : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                                            )}
-                                        >
-                                            [INS] Insumos
-                                        </button>
-                                        <button
-                                            onClick={() => { setAddItemTab('CPU'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
-                                            className={clsx(
-                                                "px-4 py-2 text-xs font-bold rounded-lg border transition-all",
-                                                addItemTab === 'CPU'
-                                                    ? "bg-amber-600 text-white border-amber-600 shadow-md"
-                                                    : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                                            )}
-                                        >
-                                            [CPU] Composições
-                                        </button>
-                                    </div>
-
-                                    {/* BASE Filters Chips */}
-                                    <div className="px-6 py-2 flex flex-wrap gap-2 justify-center border-b border-slate-50 bg-slate-50/50">
-                                        {AVAILABLE_BASES.map(base => {
-                                            const isActive = selectedBases.includes(base);
-                                            return (
-                                                <button
-                                                    key={base}
-                                                    onClick={() => {
-                                                        const newBases = isActive
-                                                            ? selectedBases.filter(b => b !== base)
-                                                            : [...selectedBases, base];
-                                                        setSelectedBases(newBases);
-                                                    }}
-                                                    className={clsx(
-                                                        "px-3 py-1 text-[10px] font-bold rounded-full border transition-all flex items-center gap-1.5",
-                                                        isActive
-                                                            ? "bg-slate-800 text-white border-slate-800 shadow-sm"
-                                                            : "bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600"
-                                                    )}
-                                                >
-                                                    <div className={clsx("w-1.5 h-1.5 rounded-full", isActive ? "bg-green-400" : "bg-slate-300")} />
-                                                    {base}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-
-                                    <div className="relative px-6 py-4 border-b border-slate-100 shrink-0">
-                                        <Search className="absolute left-10 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                                        <input
-                                            autoFocus
-                                            className={clsx(
-                                                "w-full pl-12 pr-6 py-4 border-2 rounded-xl outline-none transition-all text-lg shadow-sm font-bold",
-                                                addItemTab === 'CPU'
-                                                    ? "border-amber-100 focus:border-amber-500 bg-amber-50/30"
-                                                    : "border-slate-100 focus:border-blue-500"
-                                            )}
-                                            placeholder={addItemTab === 'CPU' ? "Buscar Composição (CPU)..." : "Buscar Insumo (INS)..."}
-                                            value={searchTerm}
-                                            onChange={(e) => setSearchTerm(e.target.value)}
-                                        />
-                                    </div>
-                                    <div className="flex-1 overflow-y-auto p-6 space-y-2">
-                                        {filteredResources.length === 0 && (
-                                            <div className="text-center text-slate-400 py-10">
-                                                <p className="text-sm">
-                                                    {searchTerm.length < 3
-                                                        ? "Digite pelo menos 3 caracteres..."
-                                                        : `Nenhum resultado em ${selectedBases.join(', ')}`}
-                                                </p>
+                            )}
+                        </tbody>
+                        {/* Footer com Totais (Em Esquadro e Alinhado) */}
+                        <tfoot className="bg-slate-50 border-t-2 border-slate-400 font-bold text-[11px]">
+                            <tr className="bg-slate-50 border-t border-slate-300">
+                                <td colSpan={13} className="p-0">
+                                    <div className="flex justify-end p-6 bg-slate-50">
+                                        <div className="w-full max-w-[420px] space-y-3">
+                                            {/* Custo Total */}
+                                            <div className="flex justify-between items-center text-slate-500 font-bold uppercase tracking-widest text-[11px]">
+                                                <span>Custo Total:</span>
+                                                <span className="font-mono text-sm text-slate-700">
+                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(calcResult?.totalGlobalBase || 0)}
+                                                </span>
                                             </div>
-                                        )}
 
-                                        {filteredResources && filteredResources.length > 0 && filteredResources.map(res => {
-                                            if (!res) return null;
-                                            return (
-                                                <div
-                                                    key={`${res.source}-${res.code}-${res.id || Math.random()}`}
-                                                    onClick={() => setSelectedResource(res)}
-                                                    className={clsx(
-                                                        "p-4 border rounded-xl cursor-pointer transition-all hover:scale-[1.005] active:scale-[0.995]",
-                                                        selectedResource?.code === res.code && selectedResource?.source === res.source
-                                                            ? (addItemTab === 'CPU' ? "border-amber-500 bg-amber-50 ring-2 ring-amber-200" : "border-blue-500 bg-blue-50 ring-2 ring-blue-200")
-                                                            : "border-slate-100 hover:border-blue-300 hover:bg-white hover:shadow-md bg-white"
-                                                    )}
-                                                >
-                                                    <div className="flex justify-between items-start gap-4">
-                                                        <div className="flex-1 min-w-0">
-                                                            <div className="flex items-center flex-wrap gap-2 mb-1.5">
-                                                                <span className={clsx(
-                                                                    "text-[9px] font-black px-1.5 py-0.5 rounded tracking-tighter",
-                                                                    addItemTab === 'CPU' ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
-                                                                )}>
-                                                                    {addItemTab === 'CPU' ? 'CPU' : 'INS'}
-                                                                </span>
-                                                                <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                                                                    {res.code}
-                                                                </span>
-                                                                <span className={clsx(
-                                                                    "text-[9px] uppercase font-black px-1.5 py-0.5 rounded",
-                                                                    res.source === 'SINAPI' ? "bg-blue-600 text-white" :
-                                                                        res.source === 'ORSE' ? "bg-green-600 text-white" :
-                                                                            res.source === 'EMBASA' ? "bg-teal-600 text-white" :
-                                                                                "bg-slate-400 text-white"
-                                                                )}>
-                                                                    {res.source}
-                                                                </span>
-                                                                {res.originalType && (
-                                                                    <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest bg-slate-50 px-1 border border-slate-100 rounded">
-                                                                        {res.originalType}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <p className="font-bold text-slate-700 leading-snug line-clamp-2" title={res.description}>{res.description || 'Sem descrição'}</p>
-                                                        </div>
-                                                        <div className="text-right shrink-0 bg-slate-50 p-2 rounded-lg">
-                                                            <p className="text-[10px] text-slate-400 uppercase font-black">Preço Ref.</p>
-                                                            <p className="font-black text-lg text-slate-800">
-                                                                {(res.price !== undefined && res.price !== null)
-                                                                    ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price)
-                                                                    : <span className="text-sm text-slate-400 font-bold uppercase">Sem Preço</span>}
-                                                            </p>
-                                                            <p className="text-[10px] text-slate-500 lowercase font-medium text-right mt-1">
-                                                                / {res.unit || 'UN'}
-                                                            </p>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
+                                            {/* Valor BDI */}
+                                            <div className="flex justify-between items-center text-indigo-600 font-bold uppercase tracking-widest text-[11px] py-2 border-y border-indigo-100/50">
+                                                <span>BDI ({budget.bdi || 0}%):</span>
+                                                <span className="font-mono text-sm text-indigo-700">
+                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((calcResult?.totalGlobalFinal || 0) - (calcResult?.totalGlobalBase || 0))}
+                                                </span>
+                                            </div>
+
+                                            {/* TOTAL GLOBAL */}
+                                            <div className="flex justify-between items-center bg-blue-600 text-white p-4 rounded-xl shadow-lg border-2 border-blue-500 mt-2">
+                                                <span className="font-black tracking-[0.1em] text-xs uppercase">TOTAL GLOBAL:</span>
+                                                <span className="font-mono text-2xl font-black whitespace-nowrap">
+                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(calcResult?.totalGlobalFinal || 0)}
+                                                </span>
+                                            </div>
+                                        </div>
                                     </div>
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                )}
+            </div >
+
+            {/* Modal de Busca (Resources) */}
+            {
+                isAddingItem && (
+                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in zoom-in">
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]">
+                            <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                                <div>
+                                    <h3 className="text-xl font-bold text-slate-800">Localizar Insumo</h3>
+                                    <p className="text-slate-500 text-sm">Pesquise no seu banco de dados (SINAPI, ORSE, etc)</p>
                                 </div>
-                                {selectedResource && (
-                                    <div className="p-4 md:p-6 bg-slate-50 border-t flex flex-col md:flex-row items-center gap-4 md:gap-6">
-                                        <div className="flex-1 min-w-0 w-full">
-                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Item Selecionado</p>
-                                            <p className="text-sm font-bold text-slate-700 truncate" title={selectedResource.description || ''}>
-                                                {selectedResource.description || 'Sem descrição'}
+                                <button onClick={() => setIsAddingItem(false)} className="text-slate-400 hover:text-slate-600"><ArrowLeft size={24} /></button>
+                            </div>
+
+                            <div className="flex-1 min-h-0 flex flex-col">
+                                {/* TABS Toggle */}
+                                <div className="px-6 pt-4 pb-2 flex items-center justify-center gap-4">
+                                    <button
+                                        onClick={() => { setAddItemTab('INS'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
+                                        className={clsx(
+                                            "px-4 py-2 text-xs font-bold rounded-lg border transition-all",
+                                            addItemTab === 'INS'
+                                                ? "bg-blue-600 text-white border-blue-600 shadow-md"
+                                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                        )}
+                                    >
+                                        [INS] Insumos
+                                    </button>
+                                    <button
+                                        onClick={() => { setAddItemTab('CPU'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
+                                        className={clsx(
+                                            "px-4 py-2 text-xs font-bold rounded-lg border transition-all",
+                                            addItemTab === 'CPU'
+                                                ? "bg-amber-600 text-white border-amber-600 shadow-md"
+                                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                        )}
+                                    >
+                                        [CPU] Composições
+                                    </button>
+                                </div>
+
+                                {/* BASE Filters Chips */}
+                                <div className="px-6 py-2 flex flex-wrap gap-2 justify-center border-b border-slate-50 bg-slate-50/50">
+                                    {AVAILABLE_BASES.map(base => {
+                                        const isActive = selectedBases.includes(base);
+                                        return (
+                                            <button
+                                                key={base}
+                                                onClick={() => {
+                                                    const newBases = isActive
+                                                        ? selectedBases.filter(b => b !== base)
+                                                        : [...selectedBases, base];
+                                                    setSelectedBases(newBases);
+                                                }}
+                                                className={clsx(
+                                                    "px-3 py-1 text-[10px] font-bold rounded-full border transition-all flex items-center gap-1.5",
+                                                    isActive
+                                                        ? "bg-slate-800 text-white border-slate-800 shadow-sm"
+                                                        : "bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600"
+                                                )}
+                                            >
+                                                <div className={clsx("w-1.5 h-1.5 rounded-full", isActive ? "bg-green-400" : "bg-slate-300")} />
+                                                {base}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="relative px-6 py-4 border-b border-slate-100 shrink-0">
+                                    <Search className="absolute left-10 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                                    <input
+                                        autoFocus
+                                        className={clsx(
+                                            "w-full pl-12 pr-6 py-4 border-2 rounded-xl outline-none transition-all text-lg shadow-sm font-bold",
+                                            addItemTab === 'CPU'
+                                                ? "border-amber-100 focus:border-amber-500 bg-amber-50/30"
+                                                : "border-slate-100 focus:border-blue-500"
+                                        )}
+                                        placeholder={addItemTab === 'CPU' ? "Buscar Composição (CPU)..." : "Buscar Insumo (INS)..."}
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                    />
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-6 space-y-2">
+                                    {filteredResources.length === 0 && (
+                                        <div className="text-center text-slate-400 py-10">
+                                            <p className="text-sm">
+                                                {searchTerm.length < 3
+                                                    ? "Digite pelo menos 3 caracteres..."
+                                                    : `Nenhum resultado em ${selectedBases.join(', ')}`}
                                             </p>
                                         </div>
-                                        <div className="flex items-center gap-4 w-full md:w-auto">
-                                            <div className="w-24 md:w-32">
-                                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-center md:text-left">Quantidade</label>
-                                                <input
-                                                    type="number"
-                                                    value={quantity}
-                                                    onChange={(e) => setQuantity(Number(e.target.value))}
-                                                    className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-center focus:border-accent transition-all bg-white"
-                                                    min="0.001"
-                                                    step="0.001"
-                                                />
-                                            </div>
-                                            <button
-                                                onClick={handleAddItem}
-                                                className="flex-1 md:flex-initial bg-green-600 text-white px-8 py-3.5 rounded-xl font-black hover:bg-green-700 shadow-lg shadow-green-200 active:scale-95 transition-all text-sm uppercase whitespace-nowrap"
+                                    )}
+
+                                    {filteredResources && filteredResources.length > 0 && filteredResources.map(res => {
+                                        if (!res) return null;
+                                        return (
+                                            <div
+                                                key={`${res.source}-${res.code}-${res.id || Math.random()}`}
+                                                onClick={() => setSelectedResource(res)}
+                                                className={clsx(
+                                                    "p-4 border rounded-xl cursor-pointer transition-all hover:scale-[1.005] active:scale-[0.995]",
+                                                    selectedResource?.code === res.code && selectedResource?.source === res.source
+                                                        ? (addItemTab === 'CPU' ? "border-amber-500 bg-amber-50 ring-2 ring-amber-200" : "border-blue-500 bg-blue-50 ring-2 ring-blue-200")
+                                                        : "border-slate-100 hover:border-blue-300 hover:bg-white hover:shadow-md bg-white"
+                                                )}
                                             >
-                                                Adicionar
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
+                                                <div className="flex justify-between items-start gap-4">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center flex-wrap gap-2 mb-1.5">
+                                                            <span className={clsx(
+                                                                "text-[9px] font-black px-1.5 py-0.5 rounded tracking-tighter",
+                                                                addItemTab === 'CPU' ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
+                                                            )}>
+                                                                {addItemTab === 'CPU' ? 'CPU' : 'INS'}
+                                                            </span>
+                                                            <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                                                                {res.code}
+                                                            </span>
+                                                            <span className={clsx(
+                                                                "text-[9px] uppercase font-black px-1.5 py-0.5 rounded",
+                                                                res.source === 'SINAPI' ? "bg-blue-600 text-white" :
+                                                                    res.source === 'ORSE' ? "bg-green-600 text-white" :
+                                                                        res.source === 'EMBASA' ? "bg-teal-600 text-white" :
+                                                                            "bg-slate-400 text-white"
+                                                            )}>
+                                                                {res.source}
+                                                            </span>
+                                                            {res.originalType && (
+                                                                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest bg-slate-50 px-1 border border-slate-100 rounded">
+                                                                    {res.originalType}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className="font-bold text-slate-700 leading-snug line-clamp-2" title={res.description}>{res.description || 'Sem descrição'}</p>
+                                                    </div>
+                                                    <div className="text-right shrink-0 bg-slate-50 p-2 rounded-lg">
+                                                        <p className="text-[10px] text-slate-400 uppercase font-black">Preço Ref.</p>
+                                                        <p className="font-black text-lg text-slate-800">
+                                                            {(res.price !== undefined && res.price !== null)
+                                                                ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price)
+                                                                : <span className="text-sm text-slate-400 font-bold uppercase">Sem Preço</span>}
+                                                        </p>
+                                                        <p className="text-[10px] text-slate-500 lowercase font-medium text-right mt-1">
+                                                            / {res.unit || 'UN'}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                        </div>
-                    )
-                }
-
-                {/* Modal de Edição de Item */}
-                {
-                    editingItem && (
-                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                            <div className={`bg-white rounded-2xl shadow-2xl w-full relative ${itemComposition.length > 0 ? 'max-w-4xl' : 'max-w-2xl'} overflow-hidden flex flex-col max-h-[90vh]`}>
-                                <div className="p-6 border-b flex justify-between items-center bg-slate-50">
-                                    <div>
-                                        <h3 className="text-xl font-bold text-slate-800">Editar Item</h3>
-                                        <p className="text-[10px] text-slate-500 font-mono tracking-widest uppercase mt-1">{editingItem.code}</p>
+                            {selectedResource && (
+                                <div className="p-4 md:p-6 bg-slate-50 border-t flex flex-col md:flex-row items-center gap-4 md:gap-6">
+                                    <div className="flex-1 min-w-0 w-full">
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Item Selecionado</p>
+                                        <p className="text-sm font-bold text-slate-700 truncate" title={selectedResource.description || ''}>
+                                            {selectedResource.description || 'Sem descrição'}
+                                        </p>
                                     </div>
-                                    <button onClick={() => { setEditingItem(null); setItemComposition([]); }} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
-                                </div>
-
-                                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                                    <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-4">
-                                        {validateItemUnit(editingItem, itemComposition) && (
-                                            <div className="bg-orange-100 text-orange-700 p-3 rounded-lg flex items-center gap-2 text-xs font-bold border border-orange-200">
-                                                <AlertTriangle size={16} />
-                                                Unidade incompatível com a composição vinculada!
-                                            </div>
-                                        )}
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            <div>
-                                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Descrição</label>
-                                                <textarea
-                                                    className="w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm h-20 font-medium resize-none"
-                                                    value={editingItem.description}
-                                                    onChange={e => setEditingItem({ ...editingItem, description: e.target.value })}
-                                                />
-                                            </div>
-                                            <div className="grid grid-cols-3 gap-4">
-                                                <div>
-                                                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Unidade</label>
-                                                    <input
-                                                        className="w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium"
-                                                        value={editingItem.unit}
-                                                        onChange={e => setEditingItem({ ...editingItem, unit: e.target.value })}
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Quantidade {editingItem.calculationMemory && <span className="text-blue-600 ml-1">(= {evaluateCalculation(editingItem.calculationMemory)})</span>}</label>
-                                                    <input
-                                                        type="number"
-                                                        step="0.001"
-                                                        className={`w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium ${editingItem.calculationMemory ? 'bg-slate-50 text-slate-400' : ''}`}
-                                                        value={editingItem.calculationMemory ? evaluateCalculation(editingItem.calculationMemory) : editingItem.quantity}
-                                                        onChange={e => setEditingItem({ ...editingItem, quantity: Number(e.target.value) })}
-                                                        readOnly={!!editingItem.calculationMemory}
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Preço Unitário</label>
-                                                    <input
-                                                        type="number"
-                                                        step="0.01"
-                                                        className={`w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium ${itemComposition.length > 0 ? 'bg-slate-50 text-slate-400' : 'text-blue-600'}`}
-                                                        value={itemComposition.length > 0 ? itemComposition.reduce((acc, c) => acc + c.totalPrice, 0) : editingItem.unitPrice}
-                                                        readOnly={itemComposition.length > 0}
-                                                        onChange={e => setEditingItem({ ...editingItem, unitPrice: Number(e.target.value) })}
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <form id="edit-form" onSubmit={handleUpdateItem} className="space-y-4">
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                <div>
-                                                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
-                                                        <Calculator size={14} className="text-blue-500" /> Memória de Cálculo
-                                                    </label>
-                                                    <input
-                                                        type="text"
-                                                        placeholder="Ex: (2.5*4)+1.2"
-                                                        className="w-full border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-mono"
-                                                        value={editingItem.calculationMemory || ''}
-                                                        onChange={e => setEditingItem({ ...editingItem, calculationMemory: e.target.value })}
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
-                                                        <Percent size={14} className="text-orange-500" /> BDI Diferenciado (%)
-                                                    </label>
-                                                    <input
-                                                        type="number"
-                                                        className="w-full border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-bold"
-                                                        value={editingItem.customBDI || ''}
-                                                        onChange={e => setEditingItem({ ...editingItem, customBDI: Number(e.target.value) })}
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                <div>
-                                                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
-                                                        <RefreshCcw size={14} /> Trocar Base (Origem)
-                                                    </label>
-                                                    <select
-                                                        className="w-full border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-bold"
-                                                        value={editingItem.source}
-                                                        onChange={(e) => handleSwitchBase(editingItem, e.target.value)}
-                                                    >
-                                                        <option value="SINAPI">SINAPI</option>
-                                                        <option value="ORSE">ORSE</option>
-                                                        <option value="SBC">SBC</option>
-                                                        <option value="COMPOSIÇÃO">PRÓPRIA (CPU)</option>
-                                                        <option value="PROPRIO">PRÓPRIO (INSUMO)</option>
-                                                    </select>
-                                                </div>
-                                                <div>
-                                                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Centro de Custo</label>
-                                                    <input
-                                                        className="w-full border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-bold"
-                                                        value={editingItem.costCenter || ''}
-                                                        onChange={e => setEditingItem({ ...editingItem, costCenter: e.target.value })}
-                                                        placeholder="Ex: 01.01.01"
-                                                    />
-                                                </div>
-                                            </div>
-                                        </form>
-
-                                        {/* Composition Section */}
-                                        <div className="pt-6 border-t font-bold">
-                                            <div className="flex justify-between items-center mb-4">
-                                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                                                    Análise da Composição (CPU)
-                                                    {itemComposition.length > 0 && <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full">{itemComposition.length} itens</span>}
-                                                </h4>
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            // TODO: Migrar para CompositionService do Supabase
-                                                            alert("Funcionalidade em migração para o novo banco de dados!");
-                                                        }}
-                                                        className="text-[10px] bg-green-50 hover:bg-green-100 text-green-600 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all font-black"
-                                                    >
-                                                        <Save size={14} /> SALVAR MODELO
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setShowCompositionSearch(true)}
-                                                        className="text-[10px] bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all font-black"
-                                                    >
-                                                        <Plus size={14} /> ADICIONAR INSUMO
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {itemComposition.length > 0 ? (
-                                                <div className="border border-slate-100 rounded-xl overflow-hidden">
-                                                    <table className="w-full text-xs">
-                                                        <thead className="bg-slate-800 text-white font-bold">
-                                                            <tr>
-                                                                <th className="p-2 text-left">Código</th>
-                                                                <th className="p-2 text-left">Descrição</th>
-                                                                <th className="p-2 text-center">Unid.</th>
-                                                                <th className="p-2 text-right">Coef.</th>
-                                                                <th className="p-2 text-right">Unitário</th>
-                                                                <th className="p-2 text-right">Total</th>
-                                                                <th className="p-2 w-10"></th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody className="divide-y divide-slate-100">
-                                                            {itemComposition.map((comp, idx) => (
-                                                                <tr key={idx} className="hover:bg-slate-50">
-                                                                    <td className="p-2 font-mono text-slate-400">{comp.code}</td>
-                                                                    <td className="p-2 font-medium text-slate-700">{comp.description}</td>
-                                                                    <td className="p-2 text-center text-slate-500 italic">{comp.unit}</td>
-                                                                    <td className="p-2">
-                                                                        <input
-                                                                            type="number"
-                                                                            className="w-full text-right bg-white border border-slate-200 rounded px-2 py-1 font-bold text-blue-600 focus:border-blue-400 outline-none"
-                                                                            value={comp.coefficient}
-                                                                            onChange={e => handleUpdateCompositionItem(idx, 'coefficient', Number(e.target.value))}
-                                                                        />
-                                                                    </td>
-                                                                    <td className="p-2 text-right text-slate-600 font-mono">
-                                                                        {new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(comp.unitPrice)}
-                                                                    </td>
-                                                                    <td className="p-2 text-right font-black text-slate-800">
-                                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(comp.totalPrice)}
-                                                                    </td>
-                                                                    <td className="p-2 text-center">
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => setItemComposition(prev => prev.filter((_, i) => i !== idx))}
-                                                                            className="text-slate-300 hover:text-red-500"
-                                                                        >
-                                                                            <Trash2 size={14} />
-                                                                        </button>
-                                                                    </td>
-                                                                </tr>
-                                                            ))}
-                                                        </tbody>
-                                                        <tfoot className="bg-slate-50 font-black border-t">
-                                                            <tr>
-                                                                <td colSpan={5} className="p-2 text-right uppercase text-[10px] text-slate-400">Total CPU:</td>
-                                                                <td className="p-2 text-right text-blue-700">
-                                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(itemComposition.reduce((acc, c) => acc + c.totalPrice, 0))}
-                                                                </td>
-                                                                <td></td>
-                                                            </tr>
-                                                        </tfoot>
-                                                    </table>
-                                                </div>
-                                            ) : (
-                                                <div className="text-center py-10 border-2 border-dashed border-slate-100 rounded-2xl bg-slate-50/30">
-                                                    <Database size={32} className="mx-auto text-slate-200 mb-3" />
-                                                    <p className="text-slate-400 text-sm">Este item não possui composição detalhada.</p>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                </div>
-
-                                {/* Search Overlay for Composition */}
-                                {showCompositionSearch && (
-                                    <div className="absolute inset-0 bg-white/95 backdrop-blur-sm z-[60] flex flex-col p-6 animate-in slide-in-from-bottom-4">
-                                        <div className="flex justify-between items-center mb-6">
-                                            <h4 className="text-lg font-bold text-slate-800">Localizar Insumo para CPU</h4>
-                                            <button onClick={() => setShowCompositionSearch(false)} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
-                                        </div>
-                                        <div className="relative mb-6">
-                                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                                    <div className="flex items-center gap-4 w-full md:w-auto">
+                                        <div className="w-24 md:w-32">
+                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 text-center md:text-left">Quantidade</label>
                                             <input
-                                                autoFocus
-                                                className="w-full pl-12 pr-6 py-4 border-2 border-slate-100 rounded-xl outline-none focus:border-blue-500 transition-all text-lg shadow-sm font-bold"
-                                                placeholder="Buscar no banco de dados..."
-                                                value={compositionSearchTerm}
-                                                onChange={(e) => setCompositionSearchTerm(e.target.value)}
+                                                type="number"
+                                                value={quantity}
+                                                onChange={(e) => setQuantity(Number(e.target.value))}
+                                                className="w-full border-2 border-slate-200 p-2.5 rounded-lg font-bold text-center focus:border-accent transition-all bg-white"
+                                                min="0.001"
+                                                step="0.001"
                                             />
                                         </div>
-                                        <div className="flex-1 overflow-auto divide-y divide-slate-50">
-                                            {compositionFilteredResources?.map(res => (
-                                                <div
-                                                    key={res.id}
-                                                    onClick={() => handleAddResToComposition(res)}
-                                                    className="p-4 flex justify-between items-center cursor-pointer hover:bg-blue-50 transition-colors rounded-xl"
+                                        <button
+                                            onClick={handleAddItem}
+                                            className="flex-1 md:flex-initial bg-green-600 text-white px-8 py-3.5 rounded-xl font-black hover:bg-green-700 shadow-lg shadow-green-200 active:scale-95 transition-all text-sm uppercase whitespace-nowrap"
+                                        >
+                                            Adicionar
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Modal de Edição de Item */}
+            {
+                editingItem && (
+                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div className={`bg-white rounded-2xl shadow-2xl w-full relative ${itemComposition.length > 0 ? 'max-w-4xl' : 'max-w-2xl'} overflow-hidden flex flex-col max-h-[90vh]`}>
+                            <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                                <div>
+                                    <h3 className="text-xl font-bold text-slate-800">Editar Item</h3>
+                                    <p className="text-[10px] text-slate-500 font-mono tracking-widest uppercase mt-1">{editingItem.code}</p>
+                                </div>
+                                <button onClick={() => { setEditingItem(null); setItemComposition([]); }} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-4">
+                                    {validateItemUnit(editingItem, itemComposition) && (
+                                        <div className="bg-orange-100 text-orange-700 p-3 rounded-lg flex items-center gap-2 text-xs font-bold border border-orange-200">
+                                            <AlertTriangle size={16} />
+                                            Unidade incompatível com a composição vinculada!
+                                        </div>
+                                    )}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Descrição</label>
+                                            <textarea
+                                                className="w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm h-20 font-medium resize-none"
+                                                value={editingItem.description}
+                                                onChange={e => setEditingItem({ ...editingItem, description: e.target.value })}
+                                            />
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-4">
+                                            <div>
+                                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Unidade</label>
+                                                <input
+                                                    className="w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium"
+                                                    value={editingItem.unit}
+                                                    onChange={e => setEditingItem({ ...editingItem, unit: e.target.value })}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Quantidade {editingItem.calculationMemory && <span className="text-blue-600 ml-1">(= {evaluateCalculation(editingItem.calculationMemory)})</span>}</label>
+                                                <input
+                                                    type="number"
+                                                    step="0.001"
+                                                    className={`w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium ${editingItem.calculationMemory ? 'bg-slate-50 text-slate-400' : ''}`}
+                                                    value={editingItem.calculationMemory ? evaluateCalculation(editingItem.calculationMemory) : editingItem.quantity}
+                                                    onChange={e => setEditingItem({ ...editingItem, quantity: Number(e.target.value) })}
+                                                    readOnly={!!editingItem.calculationMemory}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Preço Unitário</label>
+                                                <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    className={`w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium ${itemComposition.length > 0 ? 'bg-slate-50 text-slate-400' : 'text-blue-600'}`}
+                                                    value={itemComposition.length > 0 ? itemComposition.reduce((acc, c) => acc + c.totalPrice, 0) : editingItem.unitPrice}
+                                                    readOnly={itemComposition.length > 0}
+                                                    onChange={e => setEditingItem({ ...editingItem, unitPrice: Number(e.target.value) })}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <form id="edit-form" onSubmit={handleUpdateItem} className="space-y-4">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
+                                                    <Calculator size={14} className="text-blue-500" /> Memória de Cálculo
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Ex: (2.5*4)+1.2"
+                                                    className="w-full border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-mono"
+                                                    value={editingItem.calculationMemory || ''}
+                                                    onChange={e => setEditingItem({ ...editingItem, calculationMemory: e.target.value })}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
+                                                    <Percent size={14} className="text-orange-500" /> BDI Diferenciado (%)
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    className="w-full border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-bold"
+                                                    value={editingItem.customBDI || ''}
+                                                    onChange={e => setEditingItem({ ...editingItem, customBDI: Number(e.target.value) })}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
+                                                    <RefreshCcw size={14} /> Trocar Base (Origem)
+                                                </label>
+                                                <select
+                                                    className="w-full border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-bold"
+                                                    value={editingItem.source}
+                                                    onChange={(e) => handleSwitchBase(editingItem, e.target.value)}
                                                 >
-                                                    <div>
-                                                        <div className="flex items-center gap-2 mb-1">
-                                                            {/* Indicador de Tipo: [INS] ou [CPU] */}
-                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-black ${res.type === 'COMPOSITION'
-                                                                ? 'bg-purple-100 text-purple-700'
-                                                                : 'bg-blue-100 text-blue-700'
-                                                                }`}>
-                                                                {res.type === 'COMPOSITION' ? '[CPU]' : '[INS]'}
-                                                            </span>
-                                                            <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded text-[10px] font-bold">{res.source}</span>
-                                                            <span className="text-xs font-mono text-slate-400">{res.code}</span>
-                                                        </div>
-                                                        <div className="font-semibold text-slate-800">{res.description}</div>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <div className="text-xs text-slate-400">{res.unit}</div>
-                                                        <div className="text-sm font-black text-slate-700">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price)}</div>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                                    <option value="SINAPI">SINAPI</option>
+                                                    <option value="ORSE">ORSE</option>
+                                                    <option value="SBC">SBC</option>
+                                                    <option value="COMPOSIÇÃO">PRÓPRIA (CPU)</option>
+                                                    <option value="PROPRIO">PRÓPRIO (INSUMO)</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Centro de Custo</label>
+                                                <input
+                                                    className="w-full border-2 border-slate-100 p-3 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-bold"
+                                                    value={editingItem.costCenter || ''}
+                                                    onChange={e => setEditingItem({ ...editingItem, costCenter: e.target.value })}
+                                                    placeholder="Ex: 01.01.01"
+                                                />
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
+                                    </form>
 
-                                <div className="p-6 bg-slate-50 border-t flex justify-end gap-3">
-                                    <button type="button" onClick={() => { setEditingItem(null); setItemComposition([]); }} className="px-6 py-2.5 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition-all">Cancelar</button>
-                                    <button form="edit-form" type="submit" className="px-8 py-3 bg-blue-600 text-white font-black rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200 active:scale-95 transition-all">Salvar Alterações</button>
+                                    {/* Composition Section */}
+                                    <div className="pt-6 border-t font-bold">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                                                Análise da Composição (CPU)
+                                                {itemComposition.length > 0 && <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full">{itemComposition.length} itens</span>}
+                                            </h4>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        // TODO: Migrar para CompositionService do Supabase
+                                                        alert("Funcionalidade em migração para o novo banco de dados!");
+                                                    }}
+                                                    className="text-[10px] bg-green-50 hover:bg-green-100 text-green-600 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all font-black"
+                                                >
+                                                    <Save size={14} /> SALVAR MODELO
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowCompositionSearch(true)}
+                                                    className="text-[10px] bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all font-black"
+                                                >
+                                                    <Plus size={14} /> ADICIONAR INSUMO
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {itemComposition.length > 0 ? (
+                                            <div className="border border-slate-100 rounded-xl overflow-hidden">
+                                                <table className="w-full text-xs">
+                                                    <thead className="bg-slate-800 text-white font-bold">
+                                                        <tr>
+                                                            <th className="p-2 text-left">Código</th>
+                                                            <th className="p-2 text-left">Descrição</th>
+                                                            <th className="p-2 text-center">Unid.</th>
+                                                            <th className="p-2 text-right">Coef.</th>
+                                                            <th className="p-2 text-right">Unitário</th>
+                                                            <th className="p-2 text-right">Total</th>
+                                                            <th className="p-2 w-10"></th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100">
+                                                        {itemComposition.map((comp, idx) => (
+                                                            <tr key={idx} className="hover:bg-slate-50">
+                                                                <td className="p-2 font-mono text-slate-400">{comp.code}</td>
+                                                                <td className="p-2 font-medium text-slate-700">{comp.description}</td>
+                                                                <td className="p-2 text-center text-slate-500 italic">{comp.unit}</td>
+                                                                <td className="p-2">
+                                                                    <input
+                                                                        type="number"
+                                                                        className="w-full text-right bg-white border border-slate-200 rounded px-2 py-1 font-bold text-blue-600 focus:border-blue-400 outline-none"
+                                                                        value={comp.coefficient}
+                                                                        onChange={e => handleUpdateCompositionItem(idx, 'coefficient', Number(e.target.value))}
+                                                                    />
+                                                                </td>
+                                                                <td className="p-2 text-right text-slate-600 font-mono">
+                                                                    {new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(comp.unitPrice)}
+                                                                </td>
+                                                                <td className="p-2 text-right font-black text-slate-800">
+                                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(comp.totalPrice)}
+                                                                </td>
+                                                                <td className="p-2 text-center">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setItemComposition(prev => prev.filter((_, i) => i !== idx))}
+                                                                        className="text-slate-300 hover:text-red-500"
+                                                                    >
+                                                                        <Trash2 size={14} />
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                    <tfoot className="bg-slate-50 font-black border-t">
+                                                        <tr>
+                                                            <td colSpan={5} className="p-2 text-right uppercase text-[10px] text-slate-400">Total CPU:</td>
+                                                            <td className="p-2 text-right text-blue-700">
+                                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(itemComposition.reduce((acc, c) => acc + c.totalPrice, 0))}
+                                                            </td>
+                                                            <td></td>
+                                                        </tr>
+                                                    </tfoot>
+                                                </table>
+                                            </div>
+                                        ) : (
+                                            <div className="text-center py-10 border-2 border-dashed border-slate-100 rounded-2xl bg-slate-50/30">
+                                                <Database size={32} className="mx-auto text-slate-200 mb-3" />
+                                                <p className="text-slate-400 text-sm">Este item não possui composição detalhada.</p>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
+
                             </div>
-                        </div>
-                    )
-                }
 
-                {/* Modal Curva ABC */}
-                {
-                    showABC && (
-                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-                            <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
-                                <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-orange-500 to-orange-600 text-white">
-                                    <div>
-                                        <h3 className="text-2xl font-black flex items-center gap-3">
-                                            <BarChart size={28} /> Curva ABC de {abcType === 'insumos' ? 'Insumos' : 'Serviços'}
-                                        </h3>
-                                        <p className="text-orange-100 text-xs mt-1 uppercase tracking-widest font-bold">Consolidação e impacto financeiro por {abcType === 'insumos' ? 'recurso' : 'serviço'}</p>
+                            {/* Search Overlay for Composition */}
+                            {showCompositionSearch && (
+                                <div className="absolute inset-0 bg-white/95 backdrop-blur-sm z-[60] flex flex-col p-6 animate-in slide-in-from-bottom-4">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h4 className="text-lg font-bold text-slate-800">Localizar Insumo para CPU</h4>
+                                        <button onClick={() => setShowCompositionSearch(false)} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <div className="bg-orange-700/50 p-1 rounded-lg flex mr-4">
-                                            <button
-                                                onClick={() => setAbcType('insumos')}
-                                                className={clsx("px-3 py-1 rounded-md text-sm font-bold transition-all", abcType === 'insumos' ? "bg-white text-orange-600 shadow-sm" : "text-white hover:bg-white/10")}
+                                    <div className="relative mb-6">
+                                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                                        <input
+                                            autoFocus
+                                            className="w-full pl-12 pr-6 py-4 border-2 border-slate-100 rounded-xl outline-none focus:border-blue-500 transition-all text-lg shadow-sm font-bold"
+                                            placeholder="Buscar no banco de dados..."
+                                            value={compositionSearchTerm}
+                                            onChange={(e) => setCompositionSearchTerm(e.target.value)}
+                                        />
+                                    </div>
+                                    <div className="flex-1 overflow-auto divide-y divide-slate-50">
+                                        {compositionFilteredResources?.map(res => (
+                                            <div
+                                                key={res.id}
+                                                onClick={() => handleAddResToComposition(res)}
+                                                className="p-4 flex justify-between items-center cursor-pointer hover:bg-blue-50 transition-colors rounded-xl"
                                             >
-                                                INSUMOS
-                                            </button>
-                                            <button
-                                                onClick={() => setAbcType('servicos')}
-                                                className={clsx("px-3 py-1 rounded-md text-sm font-bold transition-all", abcType === 'servicos' ? "bg-white text-orange-600 shadow-sm" : "text-white hover:bg-white/10")}
-                                            >
-                                                SERVIÇOS
-                                            </button>
-                                        </div>
-
-                                        <button onClick={handleExportABCPDF} className="p-2 hover:bg-white/20 rounded-lg transition-colors flex items-center gap-2 text-xs font-bold bg-white/10" title="Baixar PDF">
-                                            <FileText size={16} /> PDF
-                                        </button>
-                                        <button onClick={handleExportABCExcel} className="p-2 hover:bg-white/20 rounded-lg transition-colors flex items-center gap-2 text-xs font-bold bg-white/10" title="Baixar Excel">
-                                            <FileSpreadsheet size={16} /> EXCEL
-                                        </button>
-                                        <div className="w-px h-6 bg-white/20 mx-2"></div>
-                                        <button onClick={() => setShowABC(false)} className="p-2 hover:bg-white/20 rounded-full transition-colors">
-                                            <X size={24} />
-                                        </button>
-                                    </div>
-                                </div>
-                                <div className="flex-1 overflow-auto p-8">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                                        <div className="bg-green-50 p-6 rounded-2xl border border-green-100">
-                                            <p className="text-[10px] font-black text-green-600 uppercase tracking-widest mb-1">Classe A (80%)</p>
-                                            <div className="flex justify-between items-end">
-                                                <p className="text-2xl font-black text-green-700">
-                                                    {abcData.filter(i => i.group === 'A').length} <span className="text-xs font-normal">ITENS</span>
-                                                </p>
-                                                <p className="text-sm font-bold text-green-600">
-                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(abcData.filter(i => i.group === 'A').reduce((acc, i) => acc + i.total, 0))}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <div className="bg-orange-50 p-6 rounded-2xl border border-orange-100">
-                                            <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-1">Classe B (15%)</p>
-                                            <div className="flex justify-between items-end">
-                                                <p className="text-2xl font-black text-orange-700">
-                                                    {abcData.filter(i => i.group === 'B').length} <span className="text-xs font-normal">ITENS</span>
-                                                </p>
-                                                <p className="text-sm font-bold text-orange-600">
-                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(abcData.filter(i => i.group === 'B').reduce((acc, i) => acc + i.total, 0))}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Classe C (5%)</p>
-                                            <div className="flex justify-between items-end">
-                                                <p className="text-2xl font-black text-slate-700">
-                                                    {abcData.filter(i => i.group === 'C').length} <span className="text-xs font-normal">ITENS</span>
-                                                </p>
-                                                <p className="text-sm font-bold text-slate-500">
-                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(abcData.filter(i => i.group === 'C').reduce((acc, i) => acc + i.total, 0))}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <table className="w-full text-sm">
-                                        <thead className="bg-slate-50 text-[10px] uppercase font-black text-slate-400 tracking-wider">
-                                            <tr>
-                                                <th className="p-4 text-left">Class.</th>
-                                                <th className="p-4 text-left">Código</th>
-                                                <th className="p-4 text-left">{abcType === 'insumos' ? 'Insumo' : 'Serviço'}</th>
-                                                <th className="p-4 text-center">Unid.</th>
-                                                <th className="p-4 text-right">Qtde.</th>
-                                                <th className="p-4 text-right">Unitário</th>
-                                                <th className="p-4 text-right">Valor Total</th>
-                                                <th className="p-4 text-right">Peso (%)</th>
-                                                <th className="p-4 text-right">Acum. (%)</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                            {abcData.map((item, idx) => (
-                                                <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                                                    <td className="p-4">
-                                                        <span className={`px-2 py-1 rounded text-[10px] font-black ${item.group === 'A' ? 'bg-green-100 text-green-700' :
-                                                            item.group === 'B' ? 'bg-orange-100 text-orange-700' :
-                                                                'bg-slate-100 text-slate-500'
+                                                <div>
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        {/* Indicador de Tipo: [INS] ou [CPU] */}
+                                                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-black ${res.type === 'COMPOSITION'
+                                                            ? 'bg-purple-100 text-purple-700'
+                                                            : 'bg-blue-100 text-blue-700'
                                                             }`}>
-                                                            CLASSE {item.group}
+                                                            {res.type === 'COMPOSITION' ? '[CPU]' : '[INS]'}
                                                         </span>
-                                                    </td>
-                                                    <td className="p-4 font-mono text-[10px] text-slate-400">
-                                                        {abcType === 'servicos' && item.itemNumber && <span className="block text-slate-300 font-bold mb-0.5">{item.itemNumber}</span>}
-                                                        {item.code}
-                                                    </td>
-                                                    <td className="p-4 font-bold text-slate-700">{item.description}</td>
-                                                    <td className="p-4 text-center text-slate-400">{item.unit}</td>
-                                                    <td className="p-4 text-right font-mono text-slate-600">{item.quantity.toFixed(2)}</td>
-                                                    <td className="p-4 text-right font-mono text-slate-600">
-                                                        {new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2 }).format(item.unitPrice)}
-                                                    </td>
-                                                    <td className="p-4 text-right font-black text-slate-900 border-x border-slate-50">
-                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.total)}
-                                                    </td>
-                                                    <td className="p-4 text-right font-bold text-slate-700 bg-slate-50/50">{item.weight.toFixed(2)}%</td>
-                                                    <td className="p-4 text-right text-slate-400">{item.accumulatedWeight.toFixed(2)}%</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                                                        <span className="bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded text-[10px] font-bold">{res.source}</span>
+                                                        <span className="text-xs font-mono text-slate-400">{res.code}</span>
+                                                    </div>
+                                                    <div className="font-semibold text-slate-800">{res.description}</div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="text-xs text-slate-400">{res.unit}</div>
+                                                    <div className="text-sm font-black text-slate-700">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price)}</div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
+                            )}
+
+                            <div className="p-6 bg-slate-50 border-t flex justify-end gap-3">
+                                <button type="button" onClick={() => { setEditingItem(null); setItemComposition([]); }} className="px-6 py-2.5 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition-all">Cancelar</button>
+                                <button form="edit-form" type="submit" className="px-8 py-3 bg-blue-600 text-white font-black rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200 active:scale-95 transition-all">Salvar Alterações</button>
                             </div>
                         </div>
-                    )
-                }
+                    </div>
+                )
+            }
 
-                {/* Modal Calculadora BDI */}
-                {
-                    showBDICalculator && (
-                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-                            <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
-                                <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-blue-600 text-white">
-                                    <div>
-                                        <h3 className="text-2xl font-black flex items-center gap-3">
-                                            <Calculator size={28} /> Calculadora de BDI (TCU)
-                                        </h3>
-                                        <p className="text-blue-100 text-xs mt-1 uppercase tracking-widest font-bold">Fórmula oficial para obras e serviços</p>
+            {/* Modal Curva ABC */}
+            {
+                showABC && (
+                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+                        <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+                            <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-orange-500 to-orange-600 text-white">
+                                <div>
+                                    <h3 className="text-2xl font-black flex items-center gap-3">
+                                        <BarChart size={28} /> Curva ABC de {abcType === 'insumos' ? 'Insumos' : 'Serviços'}
+                                    </h3>
+                                    <p className="text-orange-100 text-xs mt-1 uppercase tracking-widest font-bold">Consolidação e impacto financeiro por {abcType === 'insumos' ? 'recurso' : 'serviço'}</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="bg-orange-700/50 p-1 rounded-lg flex mr-4">
+                                        <button
+                                            onClick={() => setAbcType('insumos')}
+                                            className={clsx("px-3 py-1 rounded-md text-sm font-bold transition-all", abcType === 'insumos' ? "bg-white text-orange-600 shadow-sm" : "text-white hover:bg-white/10")}
+                                        >
+                                            INSUMOS
+                                        </button>
+                                        <button
+                                            onClick={() => setAbcType('servicos')}
+                                            className={clsx("px-3 py-1 rounded-md text-sm font-bold transition-all", abcType === 'servicos' ? "bg-white text-orange-600 shadow-sm" : "text-white hover:bg-white/10")}
+                                        >
+                                            SERVIÇOS
+                                        </button>
                                     </div>
-                                    <button onClick={() => setShowBDICalculator(false)} className="p-2 hover:bg-white/20 rounded-full transition-colors">
+
+                                    <button onClick={handleExportABCPDF} className="p-2 hover:bg-white/20 rounded-lg transition-colors flex items-center gap-2 text-xs font-bold bg-white/10" title="Baixar PDF">
+                                        <FileText size={16} /> PDF
+                                    </button>
+                                    <button onClick={handleExportABCExcel} className="p-2 hover:bg-white/20 rounded-lg transition-colors flex items-center gap-2 text-xs font-bold bg-white/10" title="Baixar Excel">
+                                        <FileSpreadsheet size={16} /> EXCEL
+                                    </button>
+                                    <div className="w-px h-6 bg-white/20 mx-2"></div>
+                                    <button onClick={() => setShowABC(false)} className="p-2 hover:bg-white/20 rounded-full transition-colors">
                                         <X size={24} />
                                     </button>
                                 </div>
-                                <div className="p-8 overflow-auto">
-
-                                    {/* BDI Presets */}
-                                    <div className="mb-8 space-y-3">
-                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Escolha o Tipo de Obra (Pre-set Acórdão 2622/2013):</label>
-                                        <div className="grid grid-cols-1 gap-3">
-                                            {BDI_PRESETS.map((p, idx) => (
-                                                <button
-                                                    key={idx}
-                                                    onClick={() => handleApplyPreset(p)}
-                                                    className="text-left p-4 rounded-2xl border-2 border-slate-100 hover:border-blue-500 hover:bg-blue-50 transition-all group"
-                                                >
-                                                    <p className="font-black text-slate-800 group-hover:text-blue-700">{p.name}</p>
-                                                    <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">{p.description}</p>
-                                                </button>
-                                            ))}
+                            </div>
+                            <div className="flex-1 overflow-auto p-8">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                                    <div className="bg-green-50 p-6 rounded-2xl border border-green-100">
+                                        <p className="text-[10px] font-black text-green-600 uppercase tracking-widest mb-1">Classe A (80%)</p>
+                                        <div className="flex justify-between items-end">
+                                            <p className="text-2xl font-black text-green-700">
+                                                {abcData.filter(i => i.group === 'A').length} <span className="text-xs font-normal">ITENS</span>
+                                            </p>
+                                            <p className="text-sm font-bold text-green-600">
+                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(abcData.filter(i => i.group === 'A').reduce((acc, i) => acc + i.total, 0))}
+                                            </p>
                                         </div>
                                     </div>
+                                    <div className="bg-orange-50 p-6 rounded-2xl border border-orange-100">
+                                        <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-1">Classe B (15%)</p>
+                                        <div className="flex justify-between items-end">
+                                            <p className="text-2xl font-black text-orange-700">
+                                                {abcData.filter(i => i.group === 'B').length} <span className="text-xs font-normal">ITENS</span>
+                                            </p>
+                                            <p className="text-sm font-bold text-orange-600">
+                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(abcData.filter(i => i.group === 'B').reduce((acc, i) => acc + i.total, 0))}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Classe C (5%)</p>
+                                        <div className="flex justify-between items-end">
+                                            <p className="text-2xl font-black text-slate-700">
+                                                {abcData.filter(i => i.group === 'C').length} <span className="text-xs font-normal">ITENS</span>
+                                            </p>
+                                            <p className="text-sm font-bold text-slate-500">
+                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(abcData.filter(i => i.group === 'C').reduce((acc, i) => acc + i.total, 0))}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <table className="w-full text-sm">
+                                    <thead className="bg-slate-50 text-[10px] uppercase font-black text-slate-400 tracking-wider">
+                                        <tr>
+                                            <th className="p-4 text-left">Class.</th>
+                                            <th className="p-4 text-left">Código</th>
+                                            <th className="p-4 text-left">{abcType === 'insumos' ? 'Insumo' : 'Serviço'}</th>
+                                            <th className="p-4 text-center">Unid.</th>
+                                            <th className="p-4 text-right">Qtde.</th>
+                                            <th className="p-4 text-right">Unitário</th>
+                                            <th className="p-4 text-right">Valor Total</th>
+                                            <th className="p-4 text-right">Peso (%)</th>
+                                            <th className="p-4 text-right">Acum. (%)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {abcData.map((item, idx) => (
+                                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                                                <td className="p-4">
+                                                    <span className={`px-2 py-1 rounded text-[10px] font-black ${item.group === 'A' ? 'bg-green-100 text-green-700' :
+                                                        item.group === 'B' ? 'bg-orange-100 text-orange-700' :
+                                                            'bg-slate-100 text-slate-500'
+                                                        }`}>
+                                                        CLASSE {item.group}
+                                                    </span>
+                                                </td>
+                                                <td className="p-4 font-mono text-[10px] text-slate-400">
+                                                    {abcType === 'servicos' && item.itemNumber && <span className="block text-slate-300 font-bold mb-0.5">{item.itemNumber}</span>}
+                                                    {item.code}
+                                                </td>
+                                                <td className="p-4 font-bold text-slate-700">{item.description}</td>
+                                                <td className="p-4 text-center text-slate-400">{item.unit}</td>
+                                                <td className="p-4 text-right font-mono text-slate-600">{item.quantity.toFixed(2)}</td>
+                                                <td className="p-4 text-right font-mono text-slate-600">
+                                                    {new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2 }).format(item.unitPrice)}
+                                                </td>
+                                                <td className="p-4 text-right font-black text-slate-900 border-x border-slate-50">
+                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.total)}
+                                                </td>
+                                                <td className="p-4 text-right font-bold text-slate-700 bg-slate-50/50">{item.weight.toFixed(2)}%</td>
+                                                <td className="p-4 text-right text-slate-400">{item.accumulatedWeight.toFixed(2)}%</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
 
-                                    <div className="grid grid-cols-2 gap-6">
+            {/* Modal Calculadora BDI */}
+            {
+                showBDICalculator && (
+                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+                        <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+                            <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-blue-600 text-white">
+                                <div>
+                                    <h3 className="text-2xl font-black flex items-center gap-3">
+                                        <Calculator size={28} /> Calculadora de BDI (TCU)
+                                    </h3>
+                                    <p className="text-blue-100 text-xs mt-1 uppercase tracking-widest font-bold">Fórmula oficial para obras e serviços</p>
+                                </div>
+                                <button onClick={() => setShowBDICalculator(false)} className="p-2 hover:bg-white/20 rounded-full transition-colors">
+                                    <X size={24} />
+                                </button>
+                            </div>
+                            <div className="p-8 overflow-auto">
+
+                                {/* BDI Presets */}
+                                <div className="mb-8 space-y-3">
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Escolha o Tipo de Obra (Pre-set Acórdão 2622/2013):</label>
+                                    <div className="grid grid-cols-1 gap-3">
+                                        {BDI_PRESETS.map((p, idx) => (
+                                            <button
+                                                key={idx}
+                                                onClick={() => handleApplyPreset(p)}
+                                                className="text-left p-4 rounded-2xl border-2 border-slate-100 hover:border-blue-500 hover:bg-blue-50 transition-all group"
+                                            >
+                                                <p className="font-black text-slate-800 group-hover:text-blue-700">{p.name}</p>
+                                                <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">{p.description}</p>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-6">
+                                    {[
+                                        { label: 'Adm. Central (AC)', key: 'ac' },
+                                        { label: 'Seguro + Garantia (S+G)', key: 'sg' },
+                                        { label: 'Taxa de Risco (R)', key: 'r' },
+                                        { label: 'Desp. Financeiras (DF)', key: 'df' },
+                                        { label: 'Taxa de Lucro (L)', key: 'l' },
+                                    ].map((field) => (
+                                        <div key={field.key}>
+                                            <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">
+                                                {field.label}
+                                            </label>
+                                            <div className="relative">
+                                                <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 transition-all font-bold text-slate-800"
+                                                    value={(bdiCalc as any)[field.key]}
+                                                    onChange={e => setBdiCalc({ ...bdiCalc, [field.key]: Number(e.target.value) })}
+                                                />
+                                                <span className="absolute right-4 top-1/2 -translate-y-1/2 font-black text-slate-300">%</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="mt-8 pt-8 border-t border-slate-100">
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-6">Taxa de Tributos (Impostos):</label>
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                         {[
-                                            { label: 'Adm. Central (AC)', key: 'ac' },
-                                            { label: 'Seguro + Garantia (S+G)', key: 'sg' },
-                                            { label: 'Taxa de Risco (R)', key: 'r' },
-                                            { label: 'Desp. Financeiras (DF)', key: 'df' },
-                                            { label: 'Taxa de Lucro (L)', key: 'l' },
+                                            { label: 'PIS', key: 'i_pis' },
+                                            { label: 'COFINS', key: 'i_cofins' },
+                                            { label: 'ISS', key: 'i_iss' },
+                                            { label: 'CPRB (INSS)', key: 'i_cprb' },
                                         ].map((field) => (
                                             <div key={field.key}>
-                                                <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
                                                     {field.label}
                                                 </label>
                                                 <div className="relative">
                                                     <input
                                                         type="number"
                                                         step="0.01"
-                                                        className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 transition-all font-bold text-slate-800"
+                                                        className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-bold"
                                                         value={(bdiCalc as any)[field.key]}
                                                         onChange={e => setBdiCalc({ ...bdiCalc, [field.key]: Number(e.target.value) })}
                                                     />
-                                                    <span className="absolute right-4 top-1/2 -translate-y-1/2 font-black text-slate-300">%</span>
+                                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 font-black text-slate-300 text-xs">%</span>
                                                 </div>
                                             </div>
                                         ))}
                                     </div>
+                                </div>
 
-                                    <div className="mt-8 pt-8 border-t border-slate-100">
-                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-6">Taxa de Tributos (Impostos):</label>
-                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                            {[
-                                                { label: 'PIS', key: 'i_pis' },
-                                                { label: 'COFINS', key: 'i_cofins' },
-                                                { label: 'ISS', key: 'i_iss' },
-                                                { label: 'CPRB (INSS)', key: 'i_cprb' },
-                                            ].map((field) => (
-                                                <div key={field.key}>
-                                                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
-                                                        {field.label}
-                                                    </label>
-                                                    <div className="relative">
-                                                        <input
-                                                            type="number"
-                                                            step="0.01"
-                                                            className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl outline-none focus:border-blue-500 transition-all text-sm font-bold"
-                                                            value={(bdiCalc as any)[field.key]}
-                                                            onChange={e => setBdiCalc({ ...bdiCalc, [field.key]: Number(e.target.value) })}
-                                                        />
-                                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 font-black text-slate-300 text-xs">%</span>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
+                                <div className="mt-8 p-6 bg-blue-50 rounded-2xl border border-blue-100 flex justify-between items-center">
+                                    <div>
+                                        <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Resultado Final</p>
+                                        <p className="text-4xl font-black text-blue-700">{calculateBDI().toFixed(2)}%</p>
                                     </div>
-
-                                    <div className="mt-8 p-6 bg-blue-50 rounded-2xl border border-blue-100 flex justify-between items-center">
-                                        <div>
-                                            <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Resultado Final</p>
-                                            <p className="text-4xl font-black text-blue-700">{calculateBDI().toFixed(2)}%</p>
-                                        </div>
-                                        <div className="flex gap-2">
-                                            <button
-                                                onClick={() => generateBDIReport(settings, bdiCalc, calculateBDI())}
-                                                className="bg-white text-blue-600 px-4 py-3 rounded-xl font-black text-xs border border-blue-200 hover:bg-blue-100 transition-all flex items-center gap-2"
-                                            >
-                                                <Download size={16} /> DOWNLOAD PDF
-                                            </button>
-                                            <button
-                                                onClick={handleApplyBDI}
-                                                className="bg-blue-600 text-white px-6 py-3 rounded-xl font-black text-xs hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-95"
-                                            >
-                                                APLICAR AO ORÇAMENTO
-                                            </button>
-                                        </div>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => generateBDIReport(settings, bdiCalc, calculateBDI())}
+                                            className="bg-white text-blue-600 px-4 py-3 rounded-xl font-black text-xs border border-blue-200 hover:bg-blue-100 transition-all flex items-center gap-2"
+                                        >
+                                            <Download size={16} /> DOWNLOAD PDF
+                                        </button>
+                                        <button
+                                            onClick={handleApplyBDI}
+                                            className="bg-blue-600 text-white px-6 py-3 rounded-xl font-black text-xs hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-95"
+                                        >
+                                            APLICAR AO ORÇAMENTO
+                                        </button>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                    )
-                }
+                    </div>
+                )
+            }
 
-                {/* Modal Encargos Sociais */}
-                {
-                    showEncargosModal && (
-                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-                            <div className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
-                                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-orange-600 text-white">
-                                    <div>
-                                        <h3 className="text-xl font-black flex items-center gap-3">
-                                            <Database size={24} /> Base de Encargos Sociais (SINAPI/Governo)
-                                        </h3>
-                                        <p className="text-orange-100 text-xs mt-1 uppercase tracking-widest font-bold">Consulte e aplique bases oficiais</p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <button
-                                            onClick={() => {
-                                                const baseSem = ENCARGOS_SOCIAIS_BASES.find(b => b.id === 'sinapi-horista-nao-desonerado');
-                                                const baseCom = ENCARGOS_SOCIAIS_BASES.find(b => b.id === 'sinapi-horista-desonerado');
-                                                if (baseSem && baseCom) {
-                                                    generateEncargosFullReport(settings, baseSem, baseCom);
-                                                } else {
-                                                    alert("Bases SINAPI não encontradas para comparação.");
-                                                }
-                                            }}
-                                            className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all text-xs font-bold border border-white/20"
-                                        >
-                                            <FileText size={16} /> QUADRO COMPARATIVO (PDF)
-                                        </button>
-                                        <button onClick={() => setShowEncargosModal(false)} className="p-2 hover:bg-white/20 rounded-full transition-colors">
-                                            <X size={24} />
-                                        </button>
-                                    </div>
+            {/* Modal Encargos Sociais */}
+            {
+                showEncargosModal && (
+                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+                        <div className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+                            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-orange-600 text-white">
+                                <div>
+                                    <h3 className="text-xl font-black flex items-center gap-3">
+                                        <Database size={24} /> Base de Encargos Sociais (SINAPI/Governo)
+                                    </h3>
+                                    <p className="text-orange-100 text-xs mt-1 uppercase tracking-widest font-bold">Consulte e aplique bases oficiais</p>
                                 </div>
-
-                                {/* Toggle Horista/Mensalista */}
-                                <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center gap-4">
-                                    <span className="text-xs font-bold text-slate-500 uppercase">Tipo de Contrato:</span>
-                                    <div className="flex bg-slate-200 rounded-lg p-1">
-                                        <button
-                                            onClick={() => setTipoEncargo('horista')}
-                                            className={clsx(
-                                                "px-4 py-2 text-sm font-bold rounded-lg transition-all",
-                                                tipoEncargo === 'horista' ? "bg-orange-600 text-white shadow" : "text-slate-600 hover:bg-slate-300"
-                                            )}
-                                        >
-                                            Horista
-                                        </button>
-                                        <button
-                                            onClick={() => setTipoEncargo('mensalista')}
-                                            className={clsx(
-                                                "px-4 py-2 text-sm font-bold rounded-lg transition-all",
-                                                tipoEncargo === 'mensalista' ? "bg-orange-600 text-white shadow" : "text-slate-600 hover:bg-slate-300"
-                                            )}
-                                        >
-                                            Mensalista
-                                        </button>
-                                    </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => {
+                                            const baseSem = ENCARGOS_SOCIAIS_BASES.find(b => b.id === 'sinapi-horista-nao-desonerado');
+                                            const baseCom = ENCARGOS_SOCIAIS_BASES.find(b => b.id === 'sinapi-horista-desonerado');
+                                            if (baseSem && baseCom) {
+                                                generateEncargosFullReport(settings, baseSem, baseCom);
+                                            } else {
+                                                alert("Bases SINAPI não encontradas para comparação.");
+                                            }
+                                        }}
+                                        className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all text-xs font-bold border border-white/20"
+                                    >
+                                        <FileText size={16} /> QUADRO COMPARATIVO (PDF)
+                                    </button>
+                                    <button onClick={() => setShowEncargosModal(false)} className="p-2 hover:bg-white/20 rounded-full transition-colors">
+                                        <X size={24} />
+                                    </button>
                                 </div>
+                            </div>
 
-                                <div className="p-6 overflow-auto space-y-4 flex-1">
-                                    {ENCARGOS_SOCIAIS_BASES.map((base, idx) => {
-                                        const totalBase = calcularTotalBase(base, tipoEncargo);
-                                        const grupos = base.grupos.map(g => ({
-                                            nome: g.nome,
-                                            total: g.itens.reduce((acc, item) => acc + item[tipoEncargo], 0)
-                                        }));
+                            {/* Toggle Horista/Mensalista */}
+                            <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center gap-4">
+                                <span className="text-xs font-bold text-slate-500 uppercase">Tipo de Contrato:</span>
+                                <div className="flex bg-slate-200 rounded-lg p-1">
+                                    <button
+                                        onClick={() => setTipoEncargo('horista')}
+                                        className={clsx(
+                                            "px-4 py-2 text-sm font-bold rounded-lg transition-all",
+                                            tipoEncargo === 'horista' ? "bg-orange-600 text-white shadow" : "text-slate-600 hover:bg-slate-300"
+                                        )}
+                                    >
+                                        Horista
+                                    </button>
+                                    <button
+                                        onClick={() => setTipoEncargo('mensalista')}
+                                        className={clsx(
+                                            "px-4 py-2 text-sm font-bold rounded-lg transition-all",
+                                            tipoEncargo === 'mensalista' ? "bg-orange-600 text-white shadow" : "text-slate-600 hover:bg-slate-300"
+                                        )}
+                                    >
+                                        Mensalista
+                                    </button>
+                                </div>
+                            </div>
 
-                                        return (
-                                            <div key={idx} className="p-5 bg-slate-50 border border-slate-100 rounded-2xl hover:bg-orange-50 hover:border-orange-200 transition-all group">
-                                                <div className="flex justify-between items-start mb-3">
-                                                    <div>
-                                                        <h4 className="text-slate-800 font-bold text-base">{base.nome}</h4>
-                                                        <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">
-                                                            {base.fonte} • {base.desonerado ? 'Desonerado' : 'Não Desonerado'} • Ref: {base.dataReferencia}
-                                                        </p>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <p className="text-[10px] text-slate-400 uppercase tracking-widest">Total {tipoEncargo}</p>
-                                                        <p className="text-2xl font-black text-orange-600">{totalBase.toFixed(2)}%</p>
-                                                    </div>
+                            <div className="p-6 overflow-auto space-y-4 flex-1">
+                                {ENCARGOS_SOCIAIS_BASES.map((base, idx) => {
+                                    const totalBase = calcularTotalBase(base, tipoEncargo);
+                                    const grupos = base.grupos.map(g => ({
+                                        nome: g.nome,
+                                        total: g.itens.reduce((acc, item) => acc + item[tipoEncargo], 0)
+                                    }));
+
+                                    return (
+                                        <div key={idx} className="p-5 bg-slate-50 border border-slate-100 rounded-2xl hover:bg-orange-50 hover:border-orange-200 transition-all group">
+                                            <div className="flex justify-between items-start mb-3">
+                                                <div>
+                                                    <h4 className="text-slate-800 font-bold text-base">{base.nome}</h4>
+                                                    <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">
+                                                        {base.fonte} • {base.desonerado ? 'Desonerado' : 'Não Desonerado'} • Ref: {base.dataReferencia}
+                                                    </p>
                                                 </div>
-
-                                                {/* Grupos Resumidos */}
-                                                <div className="flex gap-3 flex-wrap mb-4">
-                                                    {grupos.map((g, i) => (
-                                                        <div key={i} className="bg-white px-3 py-2 rounded-lg border border-slate-100 text-center min-w-[80px]">
-                                                            <p className="text-[9px] text-slate-400 uppercase font-bold">{g.nome}</p>
-                                                            <p className="text-sm font-bold text-slate-700">{g.total.toFixed(2)}%</p>
-                                                        </div>
-                                                    ))}
-                                                </div>
-
-                                                {/* Ações */}
-                                                <div className="flex gap-2 justify-end border-t border-slate-100 pt-3">
-                                                    <button
-                                                        onClick={() => generateEncargosReport(settings, base, tipoEncargo)}
-                                                        className="flex items-center gap-2 px-4 py-2 text-slate-500 hover:text-orange-600 hover:bg-white rounded-xl transition-all text-sm font-bold"
-                                                        title="Baixar Tabela Detalhada"
-                                                    >
-                                                        <Download size={16} />
-                                                        Baixar Detalhado
-                                                    </button>
-                                                    <button
-                                                        onClick={() => {
-                                                            handleUpdateEncargos(totalBase, { desonerado: base.desonerado, id: base.id });
-                                                            setShowEncargosModal(false);
-                                                        }}
-
-                                                        className="bg-orange-600 text-white px-5 py-2 rounded-xl font-bold text-sm hover:bg-orange-700 shadow-lg shadow-orange-100 transition-all active:scale-95 flex items-center gap-2"
-                                                    >
-                                                        <Percent size={14} />
-                                                        APLICAR {totalBase.toFixed(2)}%
-                                                    </button>
+                                                <div className="text-right">
+                                                    <p className="text-[10px] text-slate-400 uppercase tracking-widest">Total {tipoEncargo}</p>
+                                                    <p className="text-2xl font-black text-orange-600">{totalBase.toFixed(2)}%</p>
                                                 </div>
                                             </div>
-                                        );
-                                    })}
-                                </div>
 
+                                            {/* Grupos Resumidos */}
+                                            <div className="flex gap-3 flex-wrap mb-4">
+                                                {grupos.map((g, i) => (
+                                                    <div key={i} className="bg-white px-3 py-2 rounded-lg border border-slate-100 text-center min-w-[80px]">
+                                                        <p className="text-[9px] text-slate-400 uppercase font-bold">{g.nome}</p>
+                                                        <p className="text-sm font-bold text-slate-700">{g.total.toFixed(2)}%</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            {/* Ações */}
+                                            <div className="flex gap-2 justify-end border-t border-slate-100 pt-3">
+                                                <button
+                                                    onClick={() => generateEncargosReport(settings, base, tipoEncargo)}
+                                                    className="flex items-center gap-2 px-4 py-2 text-slate-500 hover:text-orange-600 hover:bg-white rounded-xl transition-all text-sm font-bold"
+                                                    title="Baixar Tabela Detalhada"
+                                                >
+                                                    <Download size={16} />
+                                                    Baixar Detalhado
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        handleUpdateEncargos(totalBase, { desonerado: base.desonerado, id: base.id });
+                                                        setShowEncargosModal(false);
+                                                    }}
+
+                                                    className="bg-orange-600 text-white px-5 py-2 rounded-xl font-bold text-sm hover:bg-orange-700 shadow-lg shadow-orange-100 transition-all active:scale-95 flex items-center gap-2"
+                                                >
+                                                    <Percent size={14} />
+                                                    APLICAR {totalBase.toFixed(2)}%
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
+
                         </div>
-                    )
-                }
-                {isImporterOpen && (
-                    <BudgetImporter
-                        onClose={() => setIsImporterOpen(false)}
-                        onImport={handleImportItems}
-                    />
-                )}
-
-                {/* Analytic Resolution Modal */}
-                <AnalyticResolutionModal
-                    isOpen={showAnalyticModal}
-                    onClose={() => setShowAnalyticModal(false)}
-                    pendingItems={pendingAnalytics}
-                    onResolve={async () => {
-                        await loadBudget(); // Refresh to clear flags if any
-                        // Don't close immediately? Or verify again?
-                        // Let user close or re-validate.
-                        // For UX, we verify list again or just remove resolved item locally?
-                        // validateAnalytics(); // Re-check?
-                    }}
+                    </div>
+                )
+            }
+            {isImporterOpen && (
+                <BudgetImporter
+                    onClose={() => setIsImporterOpen(false)}
+                    onImport={handleImportItems}
                 />
+            )}
 
-                {/* Global Adjustment Modal */}
-                {
-                    showAdjustmentModal && (
-                        <GlobalAdjustmentModal
-                            currentTotal={totalFinal}
-                            onClose={() => setShowAdjustmentModal(false)}
-                            onApply={handleGlobalAdjustment}
-                        />
-                    )
-                }
-            </div >
-        );
-    };
+            {/* Analytic Resolution Modal */}
+            <AnalyticResolutionModal
+                isOpen={showAnalyticModal}
+                onClose={() => setShowAnalyticModal(false)}
+                pendingItems={pendingAnalytics}
+                onResolve={async () => {
+                    await loadBudget(); // Refresh to clear flags if any
+                    // Don't close immediately? Or verify again?
+                    // Let user close or re-validate.
+                    // For UX, we verify list again or just remove resolved item locally?
+                    // validateAnalytics(); // Re-check?
+                }}
+            />
 
-    export default BudgetEditor;
+            {/* Global Adjustment Modal */}
+            {
+                showAdjustmentModal && (
+                    <GlobalAdjustmentModal
+                        currentTotal={totalFinal}
+                        onClose={() => setShowAdjustmentModal(false)}
+                        onApply={handleGlobalAdjustment}
+                    />
+                )
+            }
+        </div>
+    );
+};
+
+export default BudgetEditor;
