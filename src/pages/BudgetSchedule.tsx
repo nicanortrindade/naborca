@@ -33,6 +33,8 @@ const BudgetSchedulePage: React.FC = () => {
     // ANTI-NaN Helper
 
 
+    const [adjustedTotals, setAdjustedTotals] = useState<{ totalBase: number; totalFinal: number; totalBDI: number } | null>(null);
+
     // ANTI-NaN Helper
     const safeNumber = (val: any) => {
         if (val === null || val === undefined) return 0;
@@ -46,7 +48,6 @@ const BudgetSchedulePage: React.FC = () => {
     };
 
 
-    // HIERARCHY HELPER (Same logic as BudgetEditor)
     // HIERARCHY HELPER (Robust Version - Autosync with Editor)
     const organizeHierarchy = (allItems: any[]) => {
         if (!allItems) return [];
@@ -136,6 +137,7 @@ const BudgetSchedulePage: React.FC = () => {
                 settings,
                 budgetData.bdi || 0
             );
+            setAdjustedTotals(globalTotals);
 
             // Calcular fatores para hidratar cada item (necessário para calcular o rateio)
             // Precisamos do contexto RAW para os fatores (agora via SSOT)
@@ -278,8 +280,8 @@ const BudgetSchedulePage: React.FC = () => {
     };
 
     const totalBudgetFromItems = calculateTotalFromItems();
-    // Use calculated total which now respects Adjustment V2 via hydrated items
-    const totalBudget = totalBudgetFromItems > 0 ? totalBudgetFromItems : (budget?.totalValue || 0);
+    // Use calculated total which now respects Adjustment V2 via hydrated items (SSOT Preferred)
+    const totalBudget = adjustedTotals ? adjustedTotals.totalFinal : (totalBudgetFromItems > 0 ? totalBudgetFromItems : (budget?.totalValue || 0));
 
 
     const getItemNumber = (item: any) => {

@@ -667,13 +667,8 @@ const BudgetEditor = () => {
     useEffect(() => {
         if (!budget || !items) return;
 
-        // REGRA 3: Total global = soma dos finalPrice de itens level >= 3
-        const currentTotalGlobal = items.reduce((acc, item) => {
-            if (item.level >= 3 && item.type !== 'group') {
-                return acc + safeNumber(item.finalPrice);
-            }
-            return acc;
-        }, 0);
+        // REGRA 3: Total global = totalFinal ajustado (SSOT)
+        const currentTotalGlobal = totalFinal;
 
         const dbTotal = safeNumber(budget.totalValue);
 
@@ -1017,22 +1012,60 @@ const BudgetEditor = () => {
             return;
         }
 
+        // 1. Reordenar Array (Visual)
         const newItems = [...items];
         const [draggedItem] = newItems.splice(draggedItemIndex, 1);
         newItems.splice(dropIndex, 0, draggedItem);
 
-        // Update orders in DB
-        try {
-            const updates = newItems.map((item, i) => {
-                if (item.order !== i) {
-                    return BudgetItemService.update(item.id, { order: i });
-                }
-                return Promise.resolve();
+        // 2. Reatribuir Order (Sequencial)
+        newItems.forEach((item, index) => {
+            item.order = index + 1;
+        });
+
+        // 3. Reparar Hierarquia (Corrigir Parent IDs baseado na nova ordem)
+        // Isso garante que se moveu um item para dentro de outra etapa, ele assuma o pai correto
+        const repairedItems = repairHierarchy(newItems);
+
+        // 4. Renumerar (Reconstruir 1.1, 1.2, 1.2.1)
+        // Logica espelhada do handleReorderItems
+        let c1 = 0; // Etapa
+        let c2 = 0; // Sub
+        let c3 = 0; // Item
+
+        // Preparar Updates
+        const updates = repairedItems.map((item, i) => {
+            if (item.level === 1) {
+                c1++; c2 = 0; c3 = 0;
+            } else if (item.level === 2) {
+                c2++; c3 = 0;
+            } else if (item.level >= 3) {
+                c3++;
+            }
+
+            let itemNumberStr = "";
+            if (item.level === 1) itemNumberStr = `${c1}`;
+            else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
+            else itemNumberStr = `${c1}.${c2}.${c3}`;
+
+            // Persistir Order + ParentId + ItemNumber
+            // Importante salvar parentId pois o repairHierarchy pode ter alterado
+            return BudgetItemService.update(item.id!, {
+                order: item.order,
+                parentId: item.parentId,
+                itemNumber: itemNumberStr
             });
+        });
+
+        // 5. Persistência
+        try {
+            // "Avoid reload que desfaça" -> wait for full persist
             await Promise.all(updates);
-            loadBudget();
+
+            // Reload garante SSOT do backend (cálculos, etc)
+            await loadBudget();
         } catch (e) {
-            console.error(e);
+            console.error("Erro ao salvar ordem reorganizada:", e);
+            alert("Erro ao salvar a nova ordem.");
         }
 
         setDraggedItemIndex(null);
@@ -1281,15 +1314,15 @@ const BudgetEditor = () => {
                 encargos: budget.encargosSociais || 0,
                 items: itemsWithNumbers,
                 companySettings: settings,
-                totalGlobalBase: calcResult?.totalGlobalBase,
-                totalGlobalFinal: calcResult?.totalGlobalFinal
+                totalGlobalBase: totalBase,
+                totalGlobalFinal: totalFinal
             };
 
             // BUG A FIX: Log de prova OBRIGATÓRIO
             console.log("[EXPORT TOTALS]", {
-                base: calcResult?.totalGlobalBase,
-                bdi: (calcResult?.totalGlobalFinal || 0) - (calcResult?.totalGlobalBase || 0),
-                total: calcResult?.totalGlobalFinal
+                base: totalBase,
+                bdi: totalFinal - totalBase,
+                total: totalFinal
             });
 
             if (abcType === 'servicos') {
@@ -1329,8 +1362,8 @@ const BudgetEditor = () => {
                 encargos: budget.encargosSociais || 0,
                 items: itemsWithNumbers,
                 companySettings: settings,
-                totalGlobalBase: calcResult?.totalGlobalBase,
-                totalGlobalFinal: calcResult?.totalGlobalFinal
+                totalGlobalBase: totalBase,
+                totalGlobalFinal: totalFinal
             };
 
             // Logs removidos para produção
@@ -1740,8 +1773,8 @@ const BudgetEditor = () => {
                 encargos: budget.encargosSociais || 0,
                 items: exportItems,
                 companySettings: settings,
-                totalGlobalBase: calcResult?.totalGlobalBase,
-                totalGlobalFinal: calcResult?.totalGlobalFinal,
+                totalGlobalBase: totalBase,
+                totalGlobalFinal: totalFinal,
                 adjustmentSettings: budget.settings?.global_adjustment_v2
             };
 

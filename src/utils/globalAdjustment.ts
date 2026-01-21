@@ -17,18 +17,27 @@ export interface AdjustmentContext {
 export interface AdjustedValues {
     unitPrice: number;
     finalPrice: number;
-    origin: 'material' | 'labor';
+    origin: 'material' | 'labor' | 'equipment';
 }
 
-export function classifyItem(description: string, type?: string): 'material' | 'labor' {
+export function classifyItem(description: string, _type?: string): 'material' | 'labor' | 'equipment' {
     if (!description) return 'material';
     const desc = description.toUpperCase();
+
+    // Check for Labor keywords
     const laborKeywords = [
         'PEDREIRO', 'SERVENTE', 'ENCARREGADO', 'AJUDANTE',
         'OPERADOR', 'CARPINTEIRO', 'ARMADOR', 'MONTADOR',
-        'ELETRICISTA', 'ENCANADOR', 'PINTOR', 'MESTRE'
+        'ELETRICISTA', 'ENCANADOR', 'PINTOR', 'MESTRE', 'HORISTA', 'MENSALISTA'
     ];
     if (laborKeywords.some(kw => desc.includes(kw))) return 'labor';
+
+    // Check for Equipment keywords
+    const equipKeywords = [
+        'CAMINHÃO', 'TRATOR', 'LOCAÇÃO', 'EQUIPAMENTO', 'MÁQUINA', 'BETONEIRA', 'GUINCHO'
+    ];
+    if (equipKeywords.some(kw => desc.includes(kw))) return 'equipment';
+
     return 'material';
 }
 
@@ -40,39 +49,44 @@ export function calculateAdjustmentFactors(
     if (!adjustment) return result;
 
     const { mode, kind, value } = adjustment;
-    let percentFactor = 1;
+    const bdiMultiplier = context.totalFinal / context.totalBase; // Effectively (1+BDI/100)
 
-    // Normalizar Fator
     if (kind === 'percentage') {
-        percentFactor = 1 + (value / 100);
-    } else {
-        // Absolute: fator = (Total + Delta) / Total
-        let base = context.totalBase;
-        if (mode === 'materials_only') base = context.totalMaterialBase;
-        else if (mode === 'bdi_only') base = context.totalFinal;
+        const factor = 1 + (value / 100);
+        if (mode === 'global_all') {
+            result.materialFactor = factor;
+            result.laborFactor = factor;
+        } else if (mode === 'materials_only') {
+            result.materialFactor = factor;
+        } else if (mode === 'bdi_only') {
+            result.bdiFactor = factor;
+        }
+        return result;
+    }
 
-        if (base > 0) {
-            if (kind === 'fixed_target_total') {
-                percentFactor = value / base;
-            } else {
-                // 'fixed' (legacy/default to delta) or 'fixed_delta'
-                percentFactor = (base + value) / base;
-            }
+    // ABSOLUTE MODES (Fixed Total or Delta)
+    // First, determine the Target Final Total
+    let targetFinal = value;
+    if (kind === 'fixed' || kind === 'fixed_delta') {
+        targetFinal = context.totalFinal + value;
+    }
+
+    if (mode === 'global_all') {
+        const factor = context.totalFinal > 0 ? targetFinal / context.totalFinal : 1;
+        result.materialFactor = factor;
+        result.laborFactor = factor;
+    } else if (mode === 'bdi_only') {
+        const factor = context.totalFinal > 0 ? targetFinal / context.totalFinal : 1;
+        result.bdiFactor = factor;
+    } else if (mode === 'materials_only') {
+        // Precise math: targetFinal = (LaborBase + MaterialBase * Factor) * BDI_Multiplier
+        // Factor = (targetFinal/BDI_Multiplier - LaborBase) / MaterialBase
+        const laborBase = context.totalBase - context.totalMaterialBase;
+        if (context.totalMaterialBase > 0) {
+            result.materialFactor = (targetFinal / bdiMultiplier - laborBase) / context.totalMaterialBase;
         }
     }
 
-    switch (mode) {
-        case 'global_all':
-            result.materialFactor = percentFactor;
-            result.laborFactor = percentFactor;
-            break;
-        case 'materials_only':
-            result.materialFactor = percentFactor;
-            break;
-        case 'bdi_only':
-            result.bdiFactor = percentFactor;
-            break;
-    }
     return result;
 }
 
@@ -151,8 +165,18 @@ export function getAdjustedBudgetTotals(
     items: any[],
     settings: GlobalAdjustmentV2 | null | undefined,
     bdiPercent: number
-): { totalBase: number; totalFinal: number; totalBDI: number } {
-    if (!items || items.length === 0) return { totalBase: 0, totalFinal: 0, totalBDI: 0 };
+): {
+    totalBase: number;
+    totalFinal: number;
+    totalBDI: number;
+    totalMaterialBase: number;
+    totalLaborBase: number;
+    totalEquipmentBase: number;
+} {
+    if (!items || items.length === 0) return {
+        totalBase: 0, totalFinal: 0, totalBDI: 0,
+        totalMaterialBase: 0, totalLaborBase: 0, totalEquipmentBase: 0
+    };
 
     // 1. Calculate Raw Context from items (Source: unmodified unitPrice/quantity)
     const context = getAdjustmentContext(items, bdiPercent);
@@ -163,6 +187,9 @@ export function getAdjustedBudgetTotals(
     // 3. Sum Adjusted Totals
     let adjBase = 0;
     let adjFinal = 0;
+    let adjMaterialBase = 0;
+    let adjLaborBase = 0;
+    let adjEquipmentBase = 0;
 
     // Re-filter leaf items for final sum (optimization: could reuse if passed, but cheap enough)
     const leafItems = items.filter(i => {
@@ -177,13 +204,21 @@ export function getAdjustedBudgetTotals(
             factors,
             bdiPercent
         );
-        adjBase += adj.unitPrice * qty;
+        const itemAdjBase = adj.unitPrice * qty;
+        adjBase += itemAdjBase;
         adjFinal += adj.finalPrice * qty;
+
+        if (adj.origin === 'material') adjMaterialBase += itemAdjBase;
+        else if (adj.origin === 'labor') adjLaborBase += itemAdjBase;
+        else if (adj.origin === 'equipment') adjEquipmentBase += itemAdjBase;
     });
 
     return {
         totalBase: adjBase,
         totalFinal: adjFinal,
-        totalBDI: adjFinal - adjBase
+        totalBDI: adjFinal - adjBase,
+        totalMaterialBase: adjMaterialBase,
+        totalLaborBase: adjLaborBase,
+        totalEquipmentBase: adjEquipmentBase
     };
 }

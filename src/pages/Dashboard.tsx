@@ -1,7 +1,7 @@
 import type { Budget, BudgetItem } from '../types/domain';
 import { BudgetService } from '../lib/supabase-services/BudgetService';
 import { BudgetItemService } from '../lib/supabase-services/BudgetItemService';
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
     Clock,
     CheckCircle,
@@ -20,6 +20,7 @@ import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { clsx } from 'clsx';
+import { getAdjustedBudgetTotals } from '../utils/globalAdjustment';
 
 // Card de Estatística Técnica
 const TechnicalStatCard = ({ title, value, subtext, icon: Icon, color, onClick }: any) => (
@@ -49,30 +50,12 @@ const BudgetTechnicalSummary = ({ budget, items }: { budget: Budget, items: Budg
     // O schema atual tem item.type ('material', 'sinapi', etc)?
     // Vamos usar o que temos. O itemType pode ajudar.
 
-    const total = items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
-    const bdiVal = total * ((budget.bdi || 0) / 100);
-    const totalComBDI = total + bdiVal;
+    const totals = getAdjustedBudgetTotals(items, budget.settings?.global_adjustment_v2, budget.bdi || 0);
+    const totalComBDI = totals.totalFinal;
 
-    // Tentativa de categorização (apenas exemplo, ajuste conforme seu modelo real de dados)
-    let material = 0;
-    let labor = 0;
-    let equip = 0;
-
-    items.forEach(item => {
-        // Lógica simplificada: "MO" ou "H" no código/unidade pode indicar Mão de Obra
-        const txt = (item.description || '').toLowerCase() + (item.unit || '').toLowerCase();
-        if (txt.includes('h') || txt.includes('hora') || txt.includes('servente') || txt.includes('pedreiro')) {
-            labor += item.totalPrice || 0;
-        } else if (txt.includes('caminhão') || txt.includes('trator') || txt.includes('locação')) {
-            equip += item.totalPrice || 0;
-        } else {
-            material += item.totalPrice || 0;
-        }
-    });
-
-    const pMat = total > 0 ? (material / total) * 100 : 0;
-    const pLabor = total > 0 ? (labor / total) * 100 : 0;
-    const pEquip = total > 0 ? (equip / total) * 100 : 0;
+    const pMat = totals.totalBase > 0 ? (totals.totalMaterialBase / totals.totalBase) * 100 : 0;
+    const pLabor = totals.totalBase > 0 ? (totals.totalLaborBase / totals.totalBase) * 100 : 0;
+    const pEquip = totals.totalBase > 0 ? (totals.totalEquipmentBase / totals.totalBase) * 100 : 0;
 
     return (
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
@@ -166,11 +149,9 @@ const Dashboard = () => {
     const [allBudgets, setAllBudgets] = useState<Budget[]>([]);
     const [lastBudgetItems, setLastBudgetItems] = useState<BudgetItem[]>([]);
     const [alerts, setAlerts] = useState({ zeroPrice: 0, noComposition: 0, zeroBDI: 0 });
-    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const fetchDashboardData = async () => {
-            setLoading(true);
             try {
                 // Fetch all budgets
                 const fetchedAll = await BudgetService.getAll();
@@ -208,8 +189,6 @@ const Dashboard = () => {
                 setAlerts({ zeroPrice: zeroPriceCount, noComposition: 0, zeroBDI: zeroBDICount });
             } catch (error) {
                 console.error('Error fetching dashboard data:', error);
-            } finally {
-                setLoading(false);
             }
         };
 
@@ -221,9 +200,7 @@ const Dashboard = () => {
 
     // Valor total em estudo (apenas ativos)
     const totalValueInStudy = activeBudgets.reduce((acc, b) => {
-        const val = b.totalValue || 0;
-        const bdiVal = val * (1 + (b.bdi || 0) / 100);
-        return acc + bdiVal;
+        return acc + (b.totalValue || 0);
     }, 0);
 
     // Último orçamento editado para o resumo técnico

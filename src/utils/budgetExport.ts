@@ -848,17 +848,15 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
     const worksheet = workbook.addWorksheet('Sintético');
 
     // 1. RECALCULATION & LOGIC (SSOT for Presentation)
+    const { totalBase: tBase, totalFinal: tFinal } = getAdjustedBudgetTotals(
+        data.items,
+        data.adjustmentSettings,
+        data.bdi || 0
+    );
+
     const leaves = data.items.filter(i => i.type !== 'group');
-
-    // Total sem BDI (Soma de Qtd * Unitário Base)
-    const total_sem_bdi = leaves.reduce((acc, l) => acc + ((l.quantity || 0) * (l.unitPrice || 0)), 0);
-
-    // Total com BDI (Soma de Qtd * Unitário com BDI ou finalPrice)
-    const total_com_bdi = data.totalGlobalFinal || leaves.reduce((acc, l) => {
-        const itemTotalWithBDI = l.finalPrice || ((l.quantity || 0) * (l.unitPriceWithBDI || (l.unitPrice * (1 + (data.bdi || 0) / 100))));
-        return acc + itemTotalWithBDI;
-    }, 0);
-
+    const total_sem_bdi = tBase;
+    const total_com_bdi = tFinal;
     const total_bdi = total_com_bdi - total_sem_bdi;
 
     // 2. HEADER (Using standard company branding)
@@ -1009,8 +1007,14 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
 export async function generatePDFAnalyticBuffer(data: ExportData): Promise<ArrayBuffer> {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const bdiFactor = 1 + (data.bdi || 0) / 100;
-    const totalSemBDI = data.totalGlobalBase ?? data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
-    const totalGeral = data.totalGlobalFinal ?? (totalSemBDI * bdiFactor);
+    const { totalBase: tBase, totalFinal: tFinal } = getAdjustedBudgetTotals(
+        data.items,
+        data.adjustmentSettings,
+        data.bdi || 0
+    );
+
+    const totalSemBDI = tBase;
+    const totalGeral = tFinal;
 
     addPDFHeader(doc, 'ORÇAMENTO ANALÍTICO (CPU)', data.budgetName, data.companySettings, {
         bdi: data.bdi,
@@ -1249,8 +1253,13 @@ export async function generateExcelAnalyticBuffer(data: ExportData): Promise<Arr
         }
     }
 
-    const totalSemBDI = data.totalGlobalBase ?? data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
-    const totalGlobalFinal = data.totalGlobalFinal ?? (totalSemBDI * bdiFactor);
+    const { totalBase: tBase, totalFinal: tFinal } = getAdjustedBudgetTotals(
+        data.items,
+        data.adjustmentSettings,
+        data.bdi || 0
+    );
+    const totalSemBDI = tBase;
+    const totalGlobalFinal = tFinal;
 
     // Summary Final
     worksheet.addRow([]);
@@ -1280,8 +1289,14 @@ export async function generatePDFABCBuffer(data: ExportData, type: 'servicos' | 
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
     // BUG A FIX: Usar totais vindos do Engine (Fonte única da verdade)
-    const totalSemBDI = data.totalGlobalBase ?? data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
-    const totalGeral = data.totalGlobalFinal ?? (totalSemBDI * (1 + (data.bdi || 0) / 100));
+    const { totalBase: tBase, totalFinal: tFinal } = getAdjustedBudgetTotals(
+        data.items,
+        data.adjustmentSettings,
+        data.bdi || 0
+    );
+
+    const totalSemBDI = tBase;
+    const totalGeral = tFinal;
 
     addPDFHeader(doc, `CURVA ABC - ${type.toUpperCase()}`, data.budgetName, data.companySettings, {
         bdi: data.bdi,
