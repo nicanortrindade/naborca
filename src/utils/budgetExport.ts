@@ -4,7 +4,8 @@ import ExcelJS from 'exceljs';
 import {
     getAdjustedItemValues,
     calculateAdjustmentFactors,
-    type GlobalAdjustmentV2
+    type GlobalAdjustmentV2,
+    getAdjustedBudgetTotals
 } from './globalAdjustment';
 
 // ===================================================================
@@ -636,9 +637,17 @@ export async function exportCurvaSPDF(data: ExportData) {
 
 export async function generatePDFSyntheticBuffer(data: ExportData): Promise<ArrayBuffer> {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+    // SSOT Totals
+    const { totalBase: tBaseAdj, totalFinal: tFinalAdj } = getAdjustedBudgetTotals(
+        data.items,
+        data.adjustmentSettings,
+        data.bdi || 0
+    );
+
     // BUG A FIX: Usar totais vindos do Engine (Fonte única da verdade)
-    const totalSemBDI = data.totalGlobalBase ?? data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
-    const totalGeral = data.totalGlobalFinal ?? data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.finalPrice || item.totalPrice || 0)), 0);
+    const totalSemBDI = data.totalGlobalBase ?? tBaseAdj;
+    const totalGeral = data.totalGlobalFinal ?? tFinalAdj;
 
     // Header with reference info (no financial summary)
     addPDFHeader(doc, 'ORÇAMENTO SINTÉTICO', data.budgetName, data.companySettings, {

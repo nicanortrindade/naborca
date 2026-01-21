@@ -97,3 +97,71 @@ export function getAdjustedItemValues(
         origin
     };
 }
+
+/**
+ * Calculates the complete Budget Totals applying Global Adjustment V2.
+ * SSOT for Editor Cards, PDF Summary, and Schedule.
+ */
+export function getAdjustedBudgetTotals(
+    items: any[],
+    settings: GlobalAdjustmentV2 | null | undefined,
+    bdiPercent: number
+): { totalBase: number; totalFinal: number; totalBDI: number } {
+    if (!items || items.length === 0) return { totalBase: 0, totalFinal: 0, totalBDI: 0 };
+
+    // 1. Calculate Raw Context from items (Source: unmodified unitPrice/quantity)
+    let rawBase = 0;
+    let rawMaterialBase = 0;
+
+    // Use filtered leaf items logic (L3+)
+    const leafItems = items.filter(i => {
+        // Robust check for leaf item
+        // Assuming if type!=group and level>=3 implies leaf.
+        // Or simply strict level check if available.
+        // Fallback: if 'type' is present use it.
+        const isGroup = i.type === 'group' || (i as any).kind === 'GROUP'; // 'kind' from view model
+        return !isGroup && (i.level === undefined || i.level >= 3);
+    });
+
+    leafItems.forEach(item => {
+        const qty = item.quantity || 0;
+        const total = (item.unitPrice || 0) * qty;
+        rawBase += total;
+
+        if (classifyItem(item.description, item.type) === 'material') {
+            rawMaterialBase += total;
+        }
+    });
+
+    const rawFinal = rawBase * (1 + bdiPercent / 100);
+
+    const context: AdjustmentContext = {
+        totalBase: rawBase,
+        totalFinal: rawFinal,
+        totalMaterialBase: rawMaterialBase
+    };
+
+    // 2. Calculate Factors
+    const factors = calculateAdjustmentFactors(settings, context);
+
+    // 3. Sum Adjusted Totals
+    let adjBase = 0;
+    let adjFinal = 0;
+
+    leafItems.forEach(item => {
+        const qty = item.quantity || 0;
+        const adj = getAdjustedItemValues(
+            { unitPrice: item.unitPrice || 0, description: item.description, type: item.type },
+            factors,
+            bdiPercent
+        );
+        adjBase += adj.unitPrice * qty;
+        adjFinal += adj.finalPrice * qty;
+    });
+
+    return {
+        totalBase: adjBase,
+        totalFinal: adjFinal,
+        totalBDI: adjFinal - adjBase
+    };
+}
