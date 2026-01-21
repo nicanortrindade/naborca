@@ -1670,8 +1670,8 @@ const BudgetEditor = () => {
                 encargos: budget.encargosSociais || 0,
                 items: exportItems,
                 companySettings: settings,
-                totalGlobalBase: calcResult?.totalGlobalBase,
-                totalGlobalFinal: calcResult?.totalGlobalFinal,
+                totalGlobalBase: totalBase,
+                totalGlobalFinal: totalFinal,
                 adjustmentSettings: budget.settings?.global_adjustment_v2
             };
 
@@ -1860,8 +1860,8 @@ const BudgetEditor = () => {
                 encargos: budget.encargosSociais || 0,
                 items: itemsWithNumbers,
                 companySettings: settings,
-                totalGlobalBase: calcResult?.totalGlobalBase,
-                totalGlobalFinal: calcResult?.totalGlobalFinal
+                totalGlobalBase: totalBase,
+                totalGlobalFinal: totalFinal
             }, (current, total, message) => {
                 setExportProgress({ current, total, message });
             });
@@ -2004,10 +2004,10 @@ const BudgetEditor = () => {
                                 <p className="text-[10px] text-slate-400 font-semibold uppercase">Total Global (C/ BDI)</p>
                                 <div className="flex items-baseline gap-2">
                                     <p className="text-xl font-bold text-primary">
-                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBudget * (1 + (budget.bdi || 0) / 100))}
+                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal)}
                                     </p>
                                     <span className="text-[10px] font-bold text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded">
-                                        + {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBudget * ((budget.bdi || 0) / 100))} (BDI)
+                                        + {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal - totalBase)} (BDI)
                                     </span>
                                 </div>
                             </div>

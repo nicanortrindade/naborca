@@ -254,7 +254,15 @@ function addPDFFinancialSummary(doc: jsPDF, totalSemBDI: number, bdi: number, to
     doc.setLineWidth(0.5);
     doc.rect(pageWidth / 2, startY, pageWidth / 2 - 14, 30);
 
-    const bdiVal = totalGeral - totalSemBDI;
+    // REGRA DE OURO: Usar os totais passados (que já são ajustados e SSOT)
+    // Recalcular componentes para exibição consistente
+    const valBdi = totalGeral - totalSemBDI;
+
+    // Safety check for display
+    const finalSemBdi = totalSemBDI;
+    const finalBdi = valBdi;
+    const finalGeral = totalGeral;
+
     const rightX = pageWidth - 18;
     let sumY = startY + 8;
 
@@ -265,14 +273,14 @@ function addPDFFinancialSummary(doc: jsPDF, totalSemBDI: number, bdi: number, to
     doc.setFont('helvetica', 'normal');
     doc.text('TOTAL:', rightX - 75, sumY);
     doc.setFont('helvetica', 'bold');
-    doc.text(formatCurrency(totalSemBDI), rightX, sumY, { align: 'right' });
+    doc.text(formatCurrency(finalSemBdi), rightX, sumY, { align: 'right' });
 
     sumY += 7;
     // 2. VALOR DO BDI - Blue
     doc.setTextColor(30, 58, 138);
     doc.setFont('helvetica', 'normal');
     doc.text(`VALOR BDI (${bdi.toFixed(2)}%):`, rightX - 75, sumY);
-    doc.text(formatCurrency(bdiVal), rightX, sumY, { align: 'right' });
+    doc.text(formatCurrency(finalBdi), rightX, sumY, { align: 'right' });
 
     sumY += 7;
     // 3. TOTAL GLOBAL - Blue Bold
@@ -280,7 +288,7 @@ function addPDFFinancialSummary(doc: jsPDF, totalSemBDI: number, bdi: number, to
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
     doc.text('TOTAL GERAL:', rightX - 75, sumY);
-    doc.text(formatCurrency(totalGeral), rightX, sumY, { align: 'right' });
+    doc.text(formatCurrency(finalGeral), rightX, sumY, { align: 'right' });
 
     // Update lastAutoTable for footer positioning
     (doc as any).lastAutoTable = { finalY: startY + 35 };
