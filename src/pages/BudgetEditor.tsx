@@ -11,7 +11,7 @@ import { CompositionService } from '../lib/supabase-services/CompositionService'
 import { SinapiService } from '../lib/supabase-services/SinapiService';
 import { CompanyService } from '../lib/supabase-services/CompanyService';
 import { ArrowLeft, Plus, Trash2, Search, X, Download, FileText, FileSpreadsheet, BarChart, Calculator, Percent, Lock, Unlock, Copy, RefreshCcw, AlertTriangle, TrendingUp, Save, Database, Calendar, Activity, Eye, ChevronDown, ChevronUp, AlertOctagon, Edit2, ListOrdered, Loader, Package } from 'lucide-react';
-import { supabase } from '../supabase';
+import { supabase } from '../lib/supabase';
 
 import { clsx } from "clsx";
 import { AnalyticResolutionModal } from '../features/importer/components/AnalyticResolutionModal';
