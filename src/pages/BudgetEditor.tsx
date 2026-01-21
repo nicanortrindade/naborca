@@ -12,6 +12,7 @@ import { SinapiService } from '../lib/supabase-services/SinapiService';
 import { CompanyService } from '../lib/supabase-services/CompanyService';
 import { ArrowLeft, Plus, Trash2, Search, X, Download, FileText, FileSpreadsheet, BarChart, Calculator, Percent, Lock, Unlock, Copy, RefreshCcw, AlertTriangle, TrendingUp, Save, Database, Calendar, Activity, Eye, ChevronDown, ChevronUp, AlertOctagon, Edit2, ListOrdered, Loader, Package } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { clsx } from "clsx";
 import { AnalyticResolutionModal } from '../features/importer/components/AnalyticResolutionModal';
@@ -1101,7 +1102,7 @@ const BudgetEditor = () => {
         // 5. Persistência via RPC (Batch Optimization)
         try {
             setIsReordering(true);
-            const { error } = await supabase.rpc("reorder_budget_items", {
+            const { error } = await (supabase as SupabaseClient<any>).rpc("reorder_budget_items", {
                 items: payload,
             });
 
