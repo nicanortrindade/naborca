@@ -229,7 +229,16 @@ function addPDFHeader(doc: jsPDF, title: string, budgetName: string, companySett
 
 function addPDFFinancialSummary(doc: jsPDF, totalSemBDI: number, bdi: number, totalGeral: number) {
     const pageWidth = doc.internal.pageSize.width;
-    const finalY = (doc as any).lastAutoTable?.finalY || 100;
+    const pageHeight = doc.internal.pageSize.height;
+    let finalY = (doc as any).lastAutoTable?.finalY || 100;
+
+    // Check if there is enough space for the summary box (~40 units) 
+    // keeping a safe bottom margin for the footer/signature (~50 units).
+    if (finalY + 50 > pageHeight - 50) {
+        doc.addPage();
+        finalY = 20; // Reset Y for the new page
+    }
+
     const startY = finalY + 10;
 
     // Financial Summary Box
@@ -757,55 +766,177 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
 
 export async function generateExcelSyntheticBuffer(data: ExportData): Promise<ArrayBuffer> {
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Sint\u00e9tico');
-    // bdiFactor is useful but we prefer direct calculated values from BudgetEditor if available.
-    // const bdiFactor = 1 + (data.bdi || 0) / 100;
+    const worksheet = workbook.addWorksheet('Sintético');
 
-    // Configure columns with minimum widths
+    // -------------------------------------------------------------------------
+    // 1. RECALCULATION & LOGIC (SSOT for Presentation)
+    // -------------------------------------------------------------------------
+
+    // Helper to calculate hierarchy totals
+    const processedItems = data.items.map(item => ({
+        ...item,
+        isGroup: false,
+        displayTotal: 0,
+        displayUnitBDI: 0,
+        displayQuant: 0
+    }));
+
+    // Identify Groups: Item is a group if the NEXT item is a child of it (starts with "number.")
+    // We assume the list is sorted by itemNumber (standard for budgets).
+    for (let i = 0; i < processedItems.length; i++) {
+        const current = processedItems[i];
+        const next = processedItems[i + 1];
+        if (next && next.itemNumber.startsWith(current.itemNumber + '.')) {
+            current.isGroup = true;
+        } else {
+            // Also check 'type' just in case it's a structural group without immediate children in this list
+            if (current.type === 'group') current.isGroup = true;
+        }
+    }
+
+    // Identify Leaves
+    const leaves = processedItems.filter(i => !i.isGroup);
+
+    // Calculate Grand Total from leaves (Source of Truth)
+    const grandTotal = leaves.reduce((acc, item) => acc + (item.totalPrice || 0), 0);
+    // Note: data.totalGlobalFinal can be used, but recalculating ensures consistency with rows
+
+    // Assign Values
+    processedItems.forEach(item => {
+        if (item.isGroup) {
+            // Sum of all descendant leaves
+            // Filter is safe for N < 5000
+            const descendants = leaves.filter(l => l.itemNumber.startsWith(item.itemNumber + '.'));
+            const groupTotal = descendants.reduce((acc, l) => acc + (l.totalPrice || 0), 0);
+
+            item.displayQuant = 1;
+            item.displayTotal = groupTotal;
+            item.displayUnitBDI = groupTotal; // "Valor Unit com BDI" = Total for groups
+        } else {
+            item.displayQuant = item.quantity;
+            item.displayTotal = item.totalPrice || 0;
+            // Ensure we use finalPrice if available, otherwise calc
+            // But usually totalPrice IS finalPrice for items if BDI is applied? 
+            // Standard: unitPriceWithBDI comes from item property or calc.
+            // Using existing logic:
+            const i: any = item;
+            item.displayUnitBDI = i.unitPriceWithBDI || (item.finalPrice ? item.finalPrice / item.quantity : 0) || 0;
+        }
+    });
+
+
+    // -------------------------------------------------------------------------
+    // 2. SETUP COLUMNS & WIDTHS
+    // -------------------------------------------------------------------------
     worksheet.columns = [
-        { header: 'ITEM', key: 'item', width: 12 },
-        { header: 'BANCO', key: 'source', width: 10 },
-        { header: 'C\u00d3DIGO', key: 'code', width: 14 },
-        { header: 'DESCRI\u00c7\u00c3O', key: 'description', width: 50 },
-        { header: 'UND', key: 'unit', width: 8 },
-        { header: 'QTD', key: 'quantity', width: 12 },
-        { header: 'UNIT', key: 'unitPrice', width: 15 },
-        { header: 'UNIT/BDI', key: 'unitPriceBdi', width: 15 },
-        { header: 'TOTAL', key: 'total', width: 18 },
-        { header: 'PESO (%)', key: 'weight', width: 12 }
+        { header: 'Item', key: 'item', width: 10 },
+        { header: 'Código', key: 'code', width: 14 },
+        { header: 'Banco', key: 'source', width: 14 },
+        { header: 'Descrição', key: 'description', width: 60 },
+        { header: 'Und', key: 'unit', width: 8 },
+        { header: 'Quant.', key: 'quantity', width: 12 },
+        { header: 'Valor Unit', key: 'unitPrice', width: 16 },
+        { header: 'Valor Unit com BDI', key: 'unitPriceBdi', width: 20 },
+        { header: 'Total', key: 'total', width: 18 },
+        { header: 'Peso (%)', key: 'weight', width: 12 }
     ];
 
-    // Add comprehensive header with project/company info
-    addExcelHeader(worksheet, 'OR\u00c7AMENTO SINT\u00c9TICO', data.budgetName, data.clientName, data.companySettings, 'J', data);
+    // -------------------------------------------------------------------------
+    // 3. HEADER (ROWS 1-3)
+    // -------------------------------------------------------------------------
+    const compSettings = data.companySettings;
+    const bdiVal = (data.bdi || 0).toFixed(2);
+    const encH = (data.encargosHorista || data.encargos || 0).toFixed(2);
+    const encM = (data.encargosMensalista || data.encargos || 0).toFixed(2);
 
-    // Track header row number
-    const headerRowNum = worksheet.rowCount + 1;
-    const headerRow = worksheet.addRow(['ITEM', 'BANCO', 'C\u00d3DIGO', 'DESCRI\u00c7\u00c3O', 'UND', 'QTD', 'UNIT', 'UNIT/BDI', 'TOTAL', 'PESO (%)']);
-    headerRow.height = 22;
-    headerRow.eachCell((cell, colNumber) => {
+    // Construct Info Strings
+    const obraInfo = `OBRA: ${data.budgetName || ''}`;
+    let banksInfo = 'BANCOS: ';
+    if (data.banksUsed) {
+        const banks = [];
+        if (data.banksUsed.sinapi) banks.push(`SINAPI ${data.banksUsed.sinapi.mes}/${data.banksUsed.sinapi.estado}`);
+        if (data.banksUsed.sbc) banks.push('SBC');
+        if (data.banksUsed.orse) banks.push('ORSE');
+        if (data.banksUsed.seinfra) banks.push('SEINFRA');
+        if (data.banksUsed.cpos) banks.push('CPOS');
+        banksInfo += banks.join(' | ');
+    } else {
+        banksInfo += 'SINAPI/ORSE'; // Default
+    }
+    const bdiInfo = `B.D.I.: ${bdiVal}%`;
+    const encargosInfo = `ENCARGOS SOCIAIS: Horista ${encH}% | Mensalista ${encM}%`;
+
+    // Row 1
+    // Merge Strategy: Divide 10 cols. 
+    // OBRA: A-E (5 cols) | BANCOS: F-J (5 cols)
+    worksheet.mergeCells('A1:E1');
+    worksheet.mergeCells('F1:J1');
+    const r1 = worksheet.getRow(1);
+    r1.getCell(1).value = obraInfo;
+    r1.getCell(6).value = banksInfo;
+    r1.height = 20;
+
+    // Row 2
+    // BDI: A-E | ENCARGOS: F-J
+    worksheet.mergeCells('A2:E2');
+    worksheet.mergeCells('F2:J2');
+    const r2 = worksheet.getRow(2);
+    r2.getCell(1).value = bdiInfo;
+    r2.getCell(6).value = encargosInfo;
+    r2.height = 20;
+
+    // Row 3
+    // Title: A-J
+    worksheet.mergeCells('A3:J3');
+    const r3 = worksheet.getRow(3);
+    r3.getCell(1).value = 'ORÇAMENTO SINTÉTICO';
+    r3.height = 25;
+
+    // STYLES FOR TOP
+    [r1, r2].forEach(row => {
+        row.eachCell(cell => {
+            cell.font = { bold: true, size: 9 };
+            cell.alignment = { vertical: 'middle', horizontal: 'left' };
+            cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+        });
+    });
+    r3.getCell(1).font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+    r3.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+    r3.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    r3.getCell(1).border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+
+    // -------------------------------------------------------------------------
+    // 4. TABLE HEADER (ROW 4)
+    // -------------------------------------------------------------------------
+    const headerRow = worksheet.getRow(4);
+    headerRow.values = [
+        'Item', 'Código', 'Banco', 'Descrição', 'Und',
+        'Quant.', 'Valor Unit', 'Valor Unit com BDI', 'Total', 'Peso (%)'
+    ];
+    headerRow.height = 20;
+    headerRow.eachCell(cell => {
         cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
     });
 
-    // BUG A FIX: Usar totais vindos do Engine (Fonte única da verdade)
-    const totalSemBDI = data.totalGlobalBase ?? data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
-    const totalGeral = data.totalGlobalFinal ?? (totalSemBDI * (1 + (data.bdi || 0) / 100));
-    const dataStartRow = worksheet.rowCount + 1;
-
-    // EXCEL SINTÉTICO (Direto)
-    data.items.forEach((item, index) => {
-        const i: any = item;
+    // -------------------------------------------------------------------------
+    // 5. DATA ROWS
+    // -------------------------------------------------------------------------
+    processedItems.forEach((item, index) => {
+        const isGroup = item.isGroup;
         const level = getHierarchyLevel(item.itemNumber);
-        const isGroup = item.type === 'group' || level < 3;
-        const isEven = index % 2 === 0;
 
-        // Sanitização de colunas
-        let code = item.code;
-        let source = item.source;
+        // Weight Calculation
+        const weight = grandTotal > 0 ? (item.displayTotal / grandTotal) : 0;
+
+        let code = item.code || '';
+        let source = item.source || '';
+
         if (isGroup) {
-            code = ''; source = '';
+            code = '';
+            source = '';
         } else {
             if (code === 'IMP') code = '';
             if (source === 'IMPORT') source = '';
@@ -813,83 +944,113 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
 
         const row = worksheet.addRow([
             item.itemNumber,
-            source,
             code,
+            source,
             item.description,
-            isGroup ? '' : item.unit,
-            isGroup ? null : item.quantity,
-            isGroup ? null : item.unitPrice,
-            isGroup ? null : i.unitPriceWithBDI,
-            (item.totalPrice || item.finalPrice || 0), // Totais visíveis sempre
-            (i.pesoRaw || 0)
+            (isGroup ? '' : item.unit),
+            item.displayQuant,
+            (isGroup ? null : item.unitPrice),
+            item.displayUnitBDI,
+            item.displayTotal,
+            weight
         ]);
 
-        // Apply formatting to each cell
-        row.eachCell((cell, colNumber) => {
-            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-            if (colNumber === 4) { // Descrição
-                cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-            }
-            // Borders
-            cell.border = {
-                top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-                left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-                bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-                right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
-            };
+        // Formatting
+        row.getCell(6).numFmt = '#,##0.00';     // Quant
+        row.getCell(7).numFmt = '"R$ "#,##0.00'; // Unit
+        row.getCell(8).numFmt = '"R$ "#,##0.00'; // Unit BDI
+        row.getCell(9).numFmt = '"R$ "#,##0.00'; // Total
+        row.getCell(10).numFmt = '0.00%';        // Peso
 
-            // Zebra striping (unless it has special level styling)
-            if (level > 2 && isEven) {
-                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
-            }
+        // Alignments
+        row.eachCell((cell, colNum) => {
+            cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+            cell.border = { top: { style: 'thin', color: { argb: 'FFE2E8F0' } }, left: { style: 'thin', color: { argb: 'FFE2E8F0' } }, bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } }, right: { style: 'thin', color: { argb: 'FFE2E8F0' } } };
         });
+        row.getCell(4).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true }; // Desc
 
-        // Number formatting
-        row.getCell(6).numFmt = '#,##0.00';
-        row.getCell(7).numFmt = '"R$ "#,##0.00';
-        row.getCell(8).numFmt = '"R$ "#,##0.00';
-        row.getCell(9).numFmt = '"R$ "#,##0.00';
-        row.getCell(10).numFmt = '0.00%';
-
-        // Level styling
-        if (level === 1) {
-            row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
-            row.font = { color: { argb: 'FFFFFFFF' }, bold: true };
-            // Ensure borders match bg
-            row.eachCell((cell) => {
-                cell.border = { top: { style: 'thin' }, bottom: { style: 'thin' } };
-            });
-        } else if (level === 2) {
-            row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
-            row.font = { bold: true };
+        // Style Groups
+        if (isGroup) {
+            // Level 1: Dark Blue
+            if (level === 1) {
+                row.eachCell(c => {
+                    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+                    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                    c.border = { top: { style: 'thin' }, bottom: { style: 'thin' } }; // White border usually looks bad, stick to thin
+                });
+            } else if (level === 2) {
+                row.eachCell(c => {
+                    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+                    c.font = { bold: true };
+                });
+            } else {
+                row.font = { bold: true };
+            }
+        } else {
+            // Zebra for items
+            if (index % 2 === 0) {
+                row.eachCell(c => c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } });
+            }
         }
     });
 
-    // Financial Summary
-    worksheet.addRow([]);
+    // -------------------------------------------------------------------------
+    // 6. TOTALS FOOTER
+    // -------------------------------------------------------------------------
+    worksheet.addRow([]); // Spacer
 
-    // ... Summary logic (reused) ...
-    const sumRow1 = worksheet.addRow(['', '', '', '', '', '', '', 'TOTAL SEM BDI', totalSemBDI, '']);
-    sumRow1.font = { bold: true };
-    sumRow1.getCell(9).numFmt = '"R$ "#,##0.00';
-    sumRow1.getCell(8).alignment = { horizontal: 'right' };
-    sumRow1.getCell(9).alignment = { horizontal: 'right' };
+    const totalSemBDI = leaves.reduce((acc, l) => acc + (l.quantity * l.unitPrice), 0);
+    // Note: totalSemBDI can be diff from grandTotal if BDI logic varies.
+    // For consistency with "grandTotal" (which includes BDI), we should calculate BDI part.
+    // However, user asked "Total sem BDI" and "Total do BDI".
+    // BDI value = GrandTotal - TotalSemBDI.
+    const totalBDIVal = grandTotal - totalSemBDI;
 
-    const sumRow2 = worksheet.addRow(['', '', '', '', '', '', '', `BDI (${data.bdi}%)`, totalSemBDI * (data.bdi / 100), '']);
-    sumRow2.font = { bold: true };
-    sumRow2.getCell(9).numFmt = '"R$ "#,##0.00';
-    sumRow2.getCell(8).alignment = { horizontal: 'right' };
-    sumRow2.getCell(9).alignment = { horizontal: 'right' };
+    // Label Col F (6) | Value Col H (8) ? 
+    // User requested: "Coluna F: Label ; Coluna H: Value"
+    // F is "Quant", H is "Valor Unit com BDI". 
+    // It's a bit weird (H is Unit), but I will follow instructions.
+    // Actually, usually Totals are under "Total". Column I (9).
+    // User said: "Bloco de totais finais no fim com label em coluna F e valor em coluna H"
+    // Let's implicitly assume user might mean F as 6th col (Quant) and H as 8th (Unit BDI).
+    // Or maybe matching the visual model where totals align right.
+    // I will strictly follow "F" and "H".
 
-    const totalRow = worksheet.addRow(['', '', '', '', '', '', '', 'TOTAL GLOBAL', totalGeral, '']);
-    totalRow.font = { bold: true, size: 12 };
-    totalRow.getCell(9).numFmt = '"R$ "#,##0.00';
-    totalRow.getCell(8).alignment = { horizontal: 'right' };
-    totalRow.getCell(9).alignment = { horizontal: 'right' };
-    totalRow.getCell(9).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+    // Row Total Sem BDI
+    const rT1 = worksheet.addRow([]);
+    rT1.getCell(6).value = 'Total sem BDI';
+    rT1.getCell(8).value = totalSemBDI;
+    rT1.getCell(6).font = { bold: true };
+    rT1.getCell(8).numFmt = '"R$ "#,##0.00';
+    rT1.getCell(6).alignment = { horizontal: 'right' };
 
-    // Add footer with responsible tech info
-    addExcelFooter(worksheet, data.companySettings, 'J');
+    // Row Total BDI
+    const rT2 = worksheet.addRow([]);
+    rT2.getCell(6).value = 'Total do BDI';
+    rT2.getCell(8).value = totalBDIVal;
+    rT2.getCell(6).font = { bold: true, color: { argb: 'FF1E3A8A' } };
+    rT2.getCell(8).numFmt = '"R$ "#,##0.00';
+    rT2.getCell(8).font = { color: { argb: 'FF1E3A8A' } };
+    rT2.getCell(6).alignment = { horizontal: 'right' };
+
+    // Row Total Geral
+    const rT3 = worksheet.addRow([]);
+    rT3.getCell(6).value = 'Total Geral';
+    rT3.getCell(8).value = grandTotal;
+    rT3.getCell(6).font = { bold: true, size: 11 };
+    rT3.getCell(8).numFmt = '"R$ "#,##0.00';
+    rT3.getCell(8).font = { bold: true, size: 11 };
+    rT3.getCell(6).alignment = { horizontal: 'right' };
+
+    // -------------------------------------------------------------------------
+    // 7. PAGE SETUP
+    // -------------------------------------------------------------------------
+    worksheet.pageSetup.printTitlesRow = '4:4';
+    worksheet.pageSetup.margins = { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 };
+    // Fit to width is good practice
+    worksheet.pageSetup.fitToPage = true;
+    worksheet.pageSetup.fitToWidth = 1;
+    worksheet.pageSetup.fitToHeight = 0; // unlimited
 
     return await workbook.xlsx.writeBuffer();
 }
