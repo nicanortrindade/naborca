@@ -1005,8 +1005,23 @@ const BudgetEditor = () => {
         }
     };
 
+    const [isReordering, setIsReordering] = useState(false);
+
+    // ===========================================
+    // DRAG AND DROP HANDLERS
+    // ===========================================
+
+    type ReorderRPCItem = {
+        id: string;
+        order: number;          // mapeia para budget_items.order_index no RPC
+        parentId: string | null; // mapeia para budget_items.parent_id no RPC
+        itemNumber: string;     // mapeia para budget_items.item_number no RPC
+    };
+
     const handleDrop = async (e: React.DragEvent, dropIndex: number) => {
         e.preventDefault();
+        if (isReordering) return;
+
         if (draggedItemIndex === null || draggedItemIndex === dropIndex || !items) {
             setDraggedItemIndex(null);
             setDragOverIndex(null);
@@ -1034,7 +1049,7 @@ const BudgetEditor = () => {
         let c3 = 0; // Item
 
         // Preparar Payload para RPC
-        const payload = repairedItems.map((item) => {
+        const payload: ReorderRPCItem[] = repairedItems.map((item) => {
             if (item.level === 1) {
                 c1++; c2 = 0; c3 = 0;
             } else if (item.level === 2) {
@@ -1048,17 +1063,24 @@ const BudgetEditor = () => {
             else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
             else itemNumberStr = `${c1}.${c2}.${c3}`;
 
+            // Sanitize parentId to strict UUID or null
+            const parentId =
+                item.parentId && String(item.parentId).trim() !== "" && String(item.parentId).trim().toLowerCase() !== "null"
+                    ? String(item.parentId)
+                    : null;
+
             // Objeto simplificado para o RPC
             return {
-                id: item.id,
+                id: item.id!,
                 order: item.order,
-                parentId: item.parentId,
+                parentId: parentId,
                 itemNumber: itemNumberStr
             };
         });
 
         // 5. Persistência via RPC (Batch Optimization)
         try {
+            setIsReordering(true);
             const { error } = await supabase.rpc("reorder_budget_items", {
                 items: payload,
             });
@@ -1073,6 +1095,8 @@ const BudgetEditor = () => {
         } catch (e) {
             console.error("Erro ao salvar ordem reorganizada:", e);
             alert("Erro ao salvar a nova ordem (RPC Failed).");
+        } finally {
+            setIsReordering(false);
         }
 
         setDraggedItemIndex(null);
