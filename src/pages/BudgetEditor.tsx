@@ -26,6 +26,7 @@ import {
     classifyItem,
     getAdjustedBudgetTotals
 } from '../utils/globalAdjustment';
+import { FEATURES } from '../config/features';
 import type {
     GlobalAdjustmentMode,
     GlobalAdjustmentType,
@@ -2104,13 +2105,15 @@ const BudgetEditor = () => {
                                 >
                                     <FileText size={18} />
                                 </button>
-                                <button
-                                    onClick={() => handleExportExcel('synthetic')}
-                                    className="w-10 h-10 flex items-center justify-center bg-green-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform"
-                                    title="Excel Sintético"
-                                >
-                                    <FileSpreadsheet size={18} />
-                                </button>
+                                {FEATURES.excelExport && (
+                                    <button
+                                        onClick={() => handleExportExcel('synthetic')}
+                                        className="w-10 h-10 flex items-center justify-center bg-green-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform"
+                                        title="Excel Sintético"
+                                    >
+                                        <FileSpreadsheet size={18} />
+                                    </button>
+                                )}
                             </div>
                         </div>
 
@@ -2258,46 +2261,52 @@ const BudgetEditor = () => {
                                             <FileText size={14} /> PDF Analítico (CPU)
                                         </button>
                                         <div className="h-px bg-slate-100 my-1"></div>
-                                        <button onClick={() => handleExportExcel('synthetic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center gap-2">
-                                            <FileSpreadsheet size={14} /> Excel Sintético
-                                        </button>
-                                        <button onClick={() => handleExportExcel('analytic')} disabled={isExportingAnalytic} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center justify-between gap-2">
-                                            <div className="flex items-center gap-2">
-                                                <FileSpreadsheet size={14} /> Excel Analítico
-                                            </div>
-                                            {isExportingAnalytic && <Loader size={12} className="animate-spin text-green-600" />}
-                                        </button>
-                                        <div className="h-px bg-slate-100 my-1"></div>
+                                        {FEATURES.excelExport && (
+                                            <>
+                                                <button onClick={() => handleExportExcel('synthetic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center gap-2">
+                                                    <FileSpreadsheet size={14} /> Excel Sintético
+                                                </button>
+                                                <button onClick={() => handleExportExcel('analytic')} disabled={isExportingAnalytic} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <FileSpreadsheet size={14} /> Excel Analítico
+                                                    </div>
+                                                    {isExportingAnalytic && <Loader size={12} className="animate-spin text-green-600" />}
+                                                </button>
+                                                <div className="h-px bg-slate-100 my-1"></div>
+                                            </>
+                                        )}
                                         <button onClick={() => setShowABC(true)} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-orange-600 flex items-center gap-2">
                                             <BarChart size={14} /> Curva ABC
                                         </button>
                                         <div className="h-px bg-slate-100 my-1"></div>
-                                        <button
-                                            onClick={handleExportCompleteZip}
-                                            disabled={isExportingZip}
-                                            className={clsx(
-                                                "w-full text-left px-4 py-3 text-xs flex flex-col gap-2 transition-all",
-                                                isExportingZip ? "bg-purple-50" : "hover:bg-purple-50 hover:text-purple-700 text-purple-600 font-bold"
-                                            )}
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                {isExportingZip ? <Loader size={12} className="animate-spin text-purple-600" /> : <Package size={14} />}
-                                                <span>PROJETO COMPLETO (.ZIP)</span>
-                                            </div>
-                                            {isExportingZip && (
-                                                <div className="mt-1 space-y-1">
-                                                    <div className="w-full bg-slate-200 rounded-full h-1 overflow-hidden">
-                                                        <div
-                                                            className="bg-purple-600 h-full transition-all duration-300"
-                                                            style={{ width: `${(exportProgress.current / exportProgress.total) * 100}% ` }}
-                                                        />
-                                                    </div>
-                                                    <p className="text-[9px] text-purple-500 font-medium truncate">
-                                                        {exportProgress.message}
-                                                    </p>
+                                        {FEATURES.excelExport && (
+                                            <button
+                                                onClick={handleExportCompleteZip}
+                                                disabled={isExportingZip}
+                                                className={clsx(
+                                                    "w-full text-left px-4 py-3 text-xs flex flex-col gap-2 transition-all",
+                                                    isExportingZip ? "bg-purple-50" : "hover:bg-purple-50 hover:text-purple-700 text-purple-600 font-bold"
+                                                )}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    {isExportingZip ? <Loader size={12} className="animate-spin text-purple-600" /> : <Package size={14} />}
+                                                    <span>PROJETO COMPLETO (.ZIP)</span>
                                                 </div>
-                                            )}
-                                        </button>
+                                                {isExportingZip && (
+                                                    <div className="mt-1 space-y-1">
+                                                        <div className="w-full bg-slate-200 rounded-full h-1 overflow-hidden">
+                                                            <div
+                                                                className="bg-purple-600 h-full transition-all duration-300"
+                                                                style={{ width: `${(exportProgress.current / exportProgress.total) * 100}% ` }}
+                                                            />
+                                                        </div>
+                                                        <p className="text-[9px] text-purple-500 font-medium truncate">
+                                                            {exportProgress.message}
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -3796,12 +3805,14 @@ const BudgetEditor = () => {
                     </div>
                 )
             }
-            {isImporterOpen && (
-                <BudgetImporter
-                    onClose={() => setIsImporterOpen(false)}
-                    onImport={handleImportItems}
-                />
-            )}
+            {
+                isImporterOpen && (
+                    <BudgetImporter
+                        onClose={() => setIsImporterOpen(false)}
+                        onImport={handleImportItems}
+                    />
+                )
+            }
 
             {/* Analytic Resolution Modal */}
             <AnalyticResolutionModal
@@ -3827,7 +3838,7 @@ const BudgetEditor = () => {
                     />
                 )
             }
-        </div>
+        </div >
     );
 };
 

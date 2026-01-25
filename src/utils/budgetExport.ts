@@ -1,3 +1,4 @@
+
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import ExcelJS from 'exceljs';
@@ -5,8 +6,10 @@ import {
     getAdjustedItemValues,
     calculateAdjustmentFactors,
     type GlobalAdjustmentV2,
-    getAdjustedBudgetTotals
+    getAdjustedBudgetTotals,
+    getAdjustmentContext
 } from './globalAdjustment';
+import { FEATURES } from '../config/features';
 
 // ===================================================================
 // TIPAGEM E INTERFACES
@@ -128,7 +131,47 @@ function formatCurrency(value: number): string {
 }
 
 function formatPercent(value: number): string {
-    return `${value.toFixed(2)}%`;
+    return `${value.toFixed(2)}% `;
+}
+
+/**
+ * Hydrates items with SSOT (Single Source of Truth) calculations.
+ * Calculates Context -> Factors -> Final Adjusted Values for every item.
+ */
+function adjustExportItems(data: ExportData): ExportItem[] {
+    // 1. Calculate Factors (SSOT)
+    // Filter groups for context to match globalAdjustment logic
+    const realItems = data.items.filter(i => i.type !== 'group');
+    const ctx = getAdjustmentContext(realItems, data.bdi || 0);
+    const factors = calculateAdjustmentFactors(data.adjustmentSettings, ctx);
+
+    // 2. Normalize items with SSOT values
+    return data.items.map(item => {
+        // We pass the item to getAdjustedItemValues to get the final unit price.
+        // Even for groups, we might want to know factors, but usually groups are sums.
+        // If type is group, we return as is, but logic downstream expects hydrated values?
+        // Let's hydrate everything. If it's a group, unitPrice implies nothing, but we treat it loosely.
+
+        // Fix: Don't adjust groups recursively here, just leaf items.
+        if (item.type === 'group') return item;
+
+        const adj = getAdjustedItemValues({
+            unitPrice: item.unitPrice || 0,
+            description: item.description,
+            type: item.type
+        }, factors, data.bdi || 0);
+
+        const finalUnit = adj.finalPriceUnit ?? adj.finalPrice;
+
+        return {
+            ...item,
+            // Override with SSOT values
+            unitPrice: adj.unitPrice, // Adjusted Base
+            unitPriceWithBDI: finalUnit, // Adjusted Final Unit
+            totalPrice: finalUnit * (item.quantity || 0), // Final Total
+            finalPrice: finalUnit * (item.quantity || 0) // Synonym
+        };
+    });
 }
 
 function getHierarchyLevel(itemNumber: string): 1 | 2 | 3 {
@@ -168,7 +211,7 @@ function addPDFHeader(doc: jsPDF, title: string, budgetName: string, companySett
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(0, 0, 0);
-    doc.text(`CNPJ: ${companySettings?.cnpj || '00.000.000/0000-00'}`, pageWidth / 2, 17, { align: 'center' });
+    doc.text(`CNPJ: ${companySettings?.cnpj || '00.000.000/0000-00'} `, pageWidth / 2, 17, { align: 'center' });
 
     let address = companySettings?.address || '';
     if (companySettings?.city || companySettings?.state) {
@@ -667,54 +710,30 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
         banksUsed: data.banksUsed
     });
 
-    // RECALCULATION SSOT (Global Adjustment V2)
-    // 1. Calculate raw contexts
-    let rawTotalBase = 0;
-    let rawTotalMat = 0;
-    data.items.filter(i => i.type !== 'group' && getHierarchyLevel(i.itemNumber) >= 3).forEach(i => {
-        rawTotalBase += i.totalPrice; // Raw base total
-        if (i.type === 'material' || (i.type === undefined && ['material', 'insumo'].includes((i as any).itemType))) { // Rough estimation or use proper classify if needed
-            rawTotalMat += i.totalPrice;
-        }
-    });
-
-    // Since we don't have rich type context here effectively for all items if they are flattened, 
-    // ideally we trust the item loop to adjust. But we need context for factors.
-    // Better: Calculate factors once using data.totalGlobalBase (Raw).
-
-    const totalBaseRaw = data.totalGlobalBase || rawTotalBase; // Trust passed raw base or calc
-    // Need raw final (Standard BDI) for 'bdi_only' calculation
-    const totalFinalRaw = totalBaseRaw * (1 + (data.bdi || 0) / 100);
-
-    const factors = calculateAdjustmentFactors(data.adjustmentSettings, {
-        totalBase: totalBaseRaw,
-        totalFinal: totalFinalRaw,
-        totalMaterialBase: rawTotalMat // This might be approx if item.type is not perfect, but it's best effort.
-    });
-
-    let accumTotalBase = 0;
-    let accumTotalFinal = 0;
+    // SSOT Hydration
+    const hydratedItems = adjustExportItems(data);
 
     // GERAÇÃO SINTÉTICA (Limpa e Direta)
-    const processedItems = data.items.map(item => {
+    const processedItems = hydratedItems.map(item => {
         const i: any = item;
         const level = getHierarchyLevel(item.itemNumber);
         const isGroup = level < 3 || item.type === 'group';
 
-        // Apply Adjustment
-        // We act as if the item is 'raw'. ExportItem has unitPrice/totalPrice.
-        // We construct a mini-object for the utility.
-        const adj = getAdjustedItemValues(
-            {
-                unitPrice: item.unitPrice,
-                description: item.description,
-                type: (item.type === 'group' || isGroup) ? undefined : (item.type || 'material') // pass type if leaf
-            },
-            factors,
-            data.bdi || 0
-        );
+        // Item already hydrated by adjustExportItems
+        // We just need to conform to the structure expected by the manual grouping logic below
+        // The manual logic uses `_adj` property in the original code. 
+        // Let's reconstruct it or adapt the logic.
+        // The original code calculated `adj` in the map.
 
-        return { ...item, _adj: adj, isGroup, level };
+        return {
+            ...item,
+            _adj: {
+                unitPrice: item.unitPrice,
+                finalPrice: item.unitPriceWithBDI || 0
+            },
+            isGroup,
+            level
+        };
     });
 
     // Now map to visual rows
@@ -844,6 +863,7 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
 }
 
 export async function generateExcelSyntheticBuffer(data: ExportData): Promise<ArrayBuffer> {
+    if (!FEATURES.excelExport) throw new Error('Excel export is disabled');
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Sintético');
 
@@ -853,6 +873,9 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
         data.adjustmentSettings,
         data.bdi || 0
     );
+
+    // Hydrate
+    const items = adjustExportItems(data);
 
     const leaves = data.items.filter(i => i.type !== 'group');
     const total_sem_bdi = tBase;
@@ -877,7 +900,7 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
     });
 
     // 4. DATA ROWS
-    data.items.forEach((item, index) => {
+    items.forEach((item, index) => {
         const isGroup = item.type === 'group';
         const level = getHierarchyLevel(item.itemNumber);
 
@@ -888,15 +911,20 @@ export async function generateExcelSyntheticBuffer(data: ExportData): Promise<Ar
         if (isGroup) {
             // Sum of all descendant leaves
             const descendants = leaves.filter(l => l.itemNumber.startsWith(item.itemNumber + '.'));
-            rowTotalWithBDI = descendants.reduce((acc, l) => {
-                const val = l.finalPrice || ((l.quantity || 0) * (l.unitPriceWithBDI || (l.unitPrice * (1 + (data.bdi || 0) / 100))));
+            // Note: Since 'leaves' comes from original data.items, we should probably map 'items' (hydrated) instead or rely on the loop over 'items' (hydrated).
+            // Actually 'leaves' variable above (line 857) is stale.
+            // But 'items' is the hydrated array we are iterating.
+            // We need hydrated descendants. 
+            const hydratedDescendants = items.filter(l => l.type !== 'group' && l.itemNumber.startsWith(item.itemNumber + '.'));
+
+            rowTotalWithBDI = hydratedDescendants.reduce((acc, l) => {
+                const val = (l.finalPrice || l.totalPrice);
                 return acc + val;
             }, 0);
 
             // Regra Grupos: Quant=1, G vazio, H=subtotal, I=H
             unitPriceRaw = '';
             unitPriceWithBDI = rowTotalWithBDI;
-            rowTotalWithBDI = unitPriceWithBDI;
         } else {
             // Regra Folhas: G=unitPriceBase, H=unitPriceWithBDI, I=Quant*H
             rowTotalWithBDI = (item.quantity || 0) * unitPriceWithBDI;
@@ -1027,7 +1055,9 @@ export async function generatePDFAnalyticBuffer(data: ExportData): Promise<Array
 
     // Prepare flattened table data
     const tableData: any[] = [];
-    data.items.forEach(item => {
+    const hydratedItems = adjustExportItems(data);
+
+    hydratedItems.forEach(item => {
         const level = getHierarchyLevel(item.itemNumber);
         const isGroup = level < 3 || item.type === 'group';
 
@@ -1153,6 +1183,7 @@ export async function generatePDFAnalyticBuffer(data: ExportData): Promise<Array
 }
 
 export async function generateExcelAnalyticBuffer(data: ExportData): Promise<ArrayBuffer> {
+    if (!FEATURES.excelExport) throw new Error('Excel export is disabled');
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Analítico');
     const bdiFactor = 1 + (data.bdi || 0) / 100;
@@ -1178,7 +1209,9 @@ export async function generateExcelAnalyticBuffer(data: ExportData): Promise<Arr
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
     });
 
-    for (const item of data.items) {
+    const hydratedItems = adjustExportItems(data);
+
+    for (const item of hydratedItems) {
         const level = getHierarchyLevel(item.itemNumber);
         const isGroup = level < 3 || item.type === 'group';
 
@@ -1306,9 +1339,12 @@ export async function generatePDFABCBuffer(data: ExportData, type: 'servicos' | 
         encargosMensalista: data.encargosMensalista,
         banksUsed: data.banksUsed
     });
+
+    const hydratedItems = adjustExportItems(data);
+
     let rows: any[] = [];
     if (type === 'servicos') {
-        const items = data.items.filter(i => i.type !== 'group').sort((a, b) => b.totalPrice - a.totalPrice);
+        const items = hydratedItems.filter(i => i.type !== 'group').sort((a, b) => b.totalPrice - a.totalPrice);
         const total = items.reduce((acc, i) => acc + i.totalPrice, 0);
         let accPeso = 0;
         rows = items.map(i => {
@@ -1349,6 +1385,7 @@ export async function generatePDFABCBuffer(data: ExportData, type: 'servicos' | 
 
 
 export async function generateExcelABCBuffer(data: ExportData, type: 'servicos' | 'insumos'): Promise<ArrayBuffer> {
+    if (!FEATURES.excelExport) throw new Error('Excel export is disabled');
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('ABC');
 
@@ -1366,6 +1403,7 @@ export async function generateExcelABCBuffer(data: ExportData, type: 'servicos' 
     ];
 
     addExcelHeader(worksheet, `CURVA ABC - ${type.toUpperCase()}`, data.budgetName, data.clientName, data.companySettings, 'J', data);
+    const hydratedItems = adjustExportItems(data);
 
     const headerRow = worksheet.addRow(['CL', 'ITEM', 'CÓDIGO', 'DESCRIÇÃO', 'UND', 'QTD', 'UNIT', 'TOTAL', '%', 'ACC%']);
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -1373,7 +1411,7 @@ export async function generateExcelABCBuffer(data: ExportData, type: 'servicos' 
     headerRow.alignment = { horizontal: 'center' };
 
     if (type === 'servicos') {
-        const items = data.items.filter(i => i.type !== 'group').sort((a, b) => b.totalPrice - a.totalPrice);
+        const items = hydratedItems.filter(i => i.type !== 'group').sort((a, b) => b.totalPrice - a.totalPrice);
         const total = items.reduce((acc, i) => acc + i.totalPrice, 0);
         let accPeso = 0;
         items.forEach(i => {
@@ -1462,9 +1500,10 @@ export async function generatePDFScheduleBuffer(data: ExportData): Promise<Array
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
     // Calculate Totals for Header
-    const totalSemBDI = data.items.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
-    const bdiFactor = 1 + (data.bdi || 0) / 100;
-    const totalGeral = totalSemBDI * bdiFactor;
+    // Calculate Totals for Header (SSOT)
+    const hydratedItems = adjustExportItems(data);
+    const totalSemBDI = hydratedItems.reduce((acc, item) => acc + (item.type === 'group' ? 0 : ((item.unitPrice || 0) * (item.quantity || 0))), 0);
+    const totalGeral = hydratedItems.reduce((acc, item) => acc + (item.type === 'group' ? 0 : (item.totalPrice || 0)), 0);
 
     addPDFHeader(doc, 'CRONOGRAMA FÍSICO-FINANCEIRO', data.budgetName, data.companySettings, {
         bdi: data.bdi,
@@ -1537,6 +1576,7 @@ export async function generatePDFScheduleBuffer(data: ExportData): Promise<Array
 }
 
 export async function generateExcelCurvaSBuffer(data: ExportData): Promise<ArrayBuffer> {
+    if (!FEATURES.excelExport) throw new Error('Excel export is disabled');
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Curva S');
 
@@ -1963,6 +2003,7 @@ export function validateAnalytics(items: ExportItem[]): ExportItem[] {
 }
 
 export async function generateExcelScheduleBuffer(data: ExportData): Promise<ArrayBuffer> {
+    if (!FEATURES.excelExport) throw new Error('Excel export is disabled');
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Cronograma');
 

@@ -24,6 +24,7 @@ import Clients from './pages/Clients';
 import Proposals from './pages/Proposals';
 import MigrationTool from './pages/MigrationTool';
 import SinapiImporter from './pages/SinapiImporter';
+import ImportStatus from './pages/ImportStatus';
 
 // Hook para detectar mobile
 const useIsMobile = () => {
@@ -243,6 +244,7 @@ function App() {
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/sinapi" element={<SinapiImporter />} />
               <Route path="/migrate" element={<MigrationTool />} />
+              <Route path="/importacoes/:id" element={<ImportStatus />} />
               <Route path="*" element={<div className="text-center mt-20">Em desenvolvimento...</div>} />
             </Route>
           </Route>

@@ -17,6 +17,7 @@ import { CompanyService } from '../lib/supabase-services/CompanyService';
 import { LayoutDashboard, Save, ChevronLeft, DollarSign, Calculator, Download, Plus, Minus, Info, FileSpreadsheet, ChevronDown, ChevronRight, AlertTriangle, Check } from 'lucide-react';
 import { COMPLIANCE_DISCLAIMERS } from '../config/compliance';
 import { clsx } from 'clsx';
+import { FEATURES } from '../config/features';
 
 const BudgetSchedulePage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -668,12 +669,14 @@ const BudgetSchedulePage: React.FC = () => {
                             <Download className="w-4 h-4" /> PDF
                         </button>
 
-                        <button
-                            onClick={handleExportExcel}
-                            className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 border border-green-200 rounded-lg font-medium hover:bg-green-100 transition-all text-sm"
-                        >
-                            <FileSpreadsheet className="w-4 h-4" /> Excel
-                        </button>
+                        {FEATURES.excelExport && (
+                            <button
+                                onClick={handleExportExcel}
+                                className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 border border-green-200 rounded-lg font-medium hover:bg-green-100 transition-all text-sm"
+                            >
+                                <FileSpreadsheet className="w-4 h-4" /> Excel
+                            </button>
+                        )}
 
                         <button
                             onClick={handleSave}

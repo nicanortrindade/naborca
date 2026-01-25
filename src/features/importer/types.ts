@@ -82,3 +82,45 @@ export interface ImportSessionState {
     step: 'UPLOAD' | 'REVIEW' | 'CONFLICTS' | 'FINISH';
     isProcessing: boolean;
 }
+
+// === NEW AI IMPORT TYPES ===
+
+export type ImportJobStatus = 'queued' | 'processing' | 'waiting_user' | 'applying' | 'done' | 'failed';
+
+export interface ImportJob {
+    id: string;
+    user_id: string;
+    status: ImportJobStatus;
+    doc_role: 'synthetic' | 'analytical' | 'unknown';
+    is_desonerado: boolean | null;
+    document_context: Record<string, any> | null;
+    progress: number;
+    current_step: string | null;
+    error_message: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface ImportFile {
+    id: string;
+    user_id: string;
+    job_id: string;
+    file_kind: 'pdf' | 'excel' | 'other';
+    doc_role: 'synthetic' | 'analytical' | 'unknown';
+    original_filename: string;
+    content_type: string;
+    storage_bucket: string;
+    storage_path: string;
+    created_at: string;
+}
+
+export interface AiImportItem {
+    id: string;
+    job_id: string;
+    description_normalized: string | null;
+    quantity: number | null;
+    unit: string | null;
+    price_selected: number | null;
+    confidence_score: number | null;
+    created_at: string;
+}

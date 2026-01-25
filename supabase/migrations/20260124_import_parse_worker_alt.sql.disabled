@@ -1,0 +1,222 @@
+-- =====================================================
+-- NABOORCA - MIGRAÇÃO ALTERNATIVA: SEM pg_net
+-- =====================================================
+-- Use esta migração se pg_net NÃO estiver habilitado.
+-- Em vez de usar pg_net para HTTP, esta versão:
+-- 1. Cria a tabela de fila normalmente
+-- 2. Usa uma RPC simples que retorna tasks pendentes
+-- 3. O dispatch é feito por um script externo ou Edge Function
+-- =====================================================
+
+-- -----------------------------------------------------
+-- 1. TABELA: import_parse_tasks (Fila de parsing)
+-- -----------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS public.import_parse_tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID NOT NULL REFERENCES public.import_jobs(id) ON DELETE CASCADE,
+    file_id UUID NOT NULL REFERENCES public.import_files(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'dispatched', 'running', 'done', 'failed')),
+    attempts INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 3,
+    locked_at TIMESTAMPTZ,
+    locked_by TEXT,
+    last_error TEXT,
+    result JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT unique_parse_task_per_job UNIQUE (job_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_parse_tasks_status_created 
+    ON public.import_parse_tasks(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_import_parse_tasks_file_id 
+    ON public.import_parse_tasks(file_id);
+
+-- Trigger para updated_at
+DROP TRIGGER IF EXISTS update_import_parse_tasks_modtime ON public.import_parse_tasks;
+CREATE TRIGGER update_import_parse_tasks_modtime
+    BEFORE UPDATE ON public.import_parse_tasks
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- RLS
+ALTER TABLE public.import_parse_tasks ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view own parse tasks" ON public.import_parse_tasks;
+CREATE POLICY "Users can view own parse tasks" ON public.import_parse_tasks
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.import_jobs 
+            WHERE import_jobs.id = import_parse_tasks.job_id 
+              AND import_jobs.user_id = auth.uid()
+        )
+    );
+
+DROP POLICY IF EXISTS "Service role full access on parse tasks" ON public.import_parse_tasks;
+CREATE POLICY "Service role full access on parse tasks" ON public.import_parse_tasks
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+-- -----------------------------------------------------
+-- 2. FUNÇÃO RPC: get_pending_parse_tasks
+-- -----------------------------------------------------
+-- Retorna tasks pendentes para processamento por Edge Function externa.
+-- A Edge Function pode chamar esta RPC para buscar work.
+
+CREATE OR REPLACE FUNCTION public.get_pending_parse_tasks(max_tasks INT DEFAULT 2)
+RETURNS TABLE (
+    task_id UUID,
+    job_id UUID,
+    file_id UUID
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    RETURN QUERY
+    UPDATE public.import_parse_tasks
+    SET 
+        status = 'dispatched',
+        attempts = attempts + 1,
+        locked_at = NOW(),
+        locked_by = 'rpc_dispatcher',
+        updated_at = NOW()
+    WHERE id IN (
+        SELECT id FROM public.import_parse_tasks
+        WHERE status = 'queued'
+          AND attempts < max_attempts
+        ORDER BY created_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT max_tasks
+    )
+    RETURNING id AS task_id, import_parse_tasks.job_id, import_parse_tasks.file_id;
+END;
+$$;
+
+-- -----------------------------------------------------
+-- 3. FUNÇÃO: mark_parse_task_done
+-- -----------------------------------------------------
+-- Marca uma task como concluída
+
+CREATE OR REPLACE FUNCTION public.mark_parse_task_done(
+    p_task_id UUID,
+    p_result JSONB DEFAULT NULL
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.import_parse_tasks
+    SET 
+        status = 'done',
+        result = p_result,
+        updated_at = NOW()
+    WHERE id = p_task_id;
+    
+    RETURN FOUND;
+END;
+$$;
+
+-- -----------------------------------------------------
+-- 4. FUNÇÃO: mark_parse_task_failed
+-- -----------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.mark_parse_task_failed(
+    p_task_id UUID,
+    p_error TEXT
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.import_parse_tasks
+    SET 
+        status = 'failed',
+        last_error = p_error,
+        updated_at = NOW()
+    WHERE id = p_task_id;
+    
+    RETURN FOUND;
+END;
+$$;
+
+-- -----------------------------------------------------
+-- 5. FUNÇÃO: recover_stuck_parse_tasks
+-- -----------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.recover_stuck_parse_tasks()
+RETURNS INT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_recovered INT;
+BEGIN
+    WITH stuck AS (
+        SELECT id
+        FROM public.import_parse_tasks
+        WHERE status IN ('dispatched', 'running')
+          AND updated_at < NOW() - INTERVAL '5 minutes'
+          AND attempts < max_attempts
+    )
+    UPDATE public.import_parse_tasks t
+    SET 
+        status = 'queued',
+        locked_at = NULL,
+        locked_by = NULL,
+        last_error = COALESCE(last_error, '') || ' [recovered from stuck at ' || NOW()::TEXT || ']',
+        updated_at = NOW()
+    FROM stuck
+    WHERE t.id = stuck.id;
+    
+    GET DIAGNOSTICS v_recovered = ROW_COUNT;
+    
+    RETURN v_recovered;
+END;
+$$;
+
+-- -----------------------------------------------------
+-- 6. CRON JOBS (Recovery apenas)
+-- -----------------------------------------------------
+-- Nesta versão, o dispatch é feito pela Edge Function.
+-- O cron apenas recupera tasks stuck.
+
+DO $$
+BEGIN
+    PERFORM cron.unschedule('recover_stuck_parse_tasks');
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+
+SELECT cron.schedule(
+    'recover_stuck_parse_tasks',
+    '*/2 * * * *',
+    $$SELECT public.recover_stuck_parse_tasks();$$
+);
+
+-- -----------------------------------------------------
+-- COMENTÁRIOS
+-- -----------------------------------------------------
+
+COMMENT ON TABLE public.import_parse_tasks IS 
+'Fila de tarefas de parsing pesado de PDFs. Processada pelo worker import-parse-worker.';
+
+COMMENT ON FUNCTION public.get_pending_parse_tasks IS 
+'Retorna tasks pendentes para processamento. Usada por Edge Function poller.';
+
+COMMENT ON FUNCTION public.mark_parse_task_done IS 
+'Marca uma task como concluída com resultado.';
+
+COMMENT ON FUNCTION public.mark_parse_task_failed IS 
+'Marca uma task como falha com mensagem de erro.';

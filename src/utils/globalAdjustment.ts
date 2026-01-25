@@ -17,6 +17,7 @@ export interface AdjustmentContext {
 export interface AdjustedValues {
     unitPrice: number;
     finalPrice: number;
+    finalPriceUnit?: number;
     origin: 'material' | 'labor' | 'equipment';
 }
 
@@ -108,6 +109,7 @@ export function getAdjustedItemValues(
     return {
         unitPrice: newBaseUnit,
         finalPrice: newFinalUnit,
+        finalPriceUnit: newFinalUnit,
         origin
     };
 }

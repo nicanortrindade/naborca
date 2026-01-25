@@ -3,9 +3,11 @@ import { BudgetService } from '../lib/supabase-services/BudgetService';
 import { BudgetItemService } from '../lib/supabase-services/BudgetItemService';
 import { repairHierarchy, calculateBudget } from '../utils/calculationEngine';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Trash2, Edit, Upload, Copy, Bookmark, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Edit, Upload, Copy, Bookmark, Loader2, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import BudgetImporter from '../components/budgets/BudgetImporter';
+import AiImporterModal from '../components/budgets/AiImporterModal';
+import { FEATURES } from '../config/features';
 
 /**
  * Componente para exibir o Status em PT-BR com cores
@@ -145,6 +147,7 @@ const Budgets = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isCreating, setIsCreating] = useState(false);
     const [showImporter, setShowImporter] = useState(false);
+    const [showAiImporter, setShowAiImporter] = useState(false);
     const [newBudgetName, setNewBudgetName] = useState('');
 
     useEffect(() => {
@@ -215,6 +218,16 @@ const Budgets = () => {
                         <Upload size={20} />
                         Importar Planilha
                     </button>
+                    {FEATURES.aiImport && (
+                        <button
+                            onClick={() => setShowAiImporter(true)}
+                            className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-md hover:shadow-lg border border-transparent"
+                        >
+                            <Sparkles size={18} className="text-yellow-300" />
+                            Importar com IA
+                            <span className="bg-white/20 text-white text-[10px] px-1.5 py-0.5 rounded font-bold">BETA</span>
+                        </button>
+                    )}
                     <button
                         onClick={() => setIsCreating(true)}
                         className="bg-accent hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-md"
@@ -244,6 +257,12 @@ const Budgets = () => {
                 <BudgetImporter
                     onClose={() => setShowImporter(false)}
                     onSuccess={(id: any) => navigate(`/budgets/${id}`)}
+                />
+            )}
+
+            {showAiImporter && (
+                <AiImporterModal
+                    onClose={() => setShowAiImporter(false)}
                 />
             )}
 

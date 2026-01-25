@@ -7,6 +7,12 @@ import { BudgetItemService } from '../lib/supabase-services/BudgetItemService';
 import { GitCompare, ArrowLeft, TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle } from 'lucide-react';
 import ComplianceAlert from '../components/ComplianceAlert';
 import { COMPLIANCE_DISCLAIMERS } from '../config/compliance';
+import {
+    getAdjustedBudgetTotals,
+    getAdjustmentContext,
+    calculateAdjustmentFactors,
+    getAdjustedItemValues
+} from '../utils/globalAdjustment';
 
 const BudgetComparison: React.FC = () => {
     const navigate = useNavigate();
@@ -19,7 +25,6 @@ const BudgetComparison: React.FC = () => {
     const [budgetDataA, setBudgetDataA] = useState<Budget | null>(null);
     const [budgetDataB, setBudgetDataB] = useState<Budget | null>(null);
     const [showDisclaimer, setShowDisclaimer] = useState(true);
-    const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         const fetchBudgets = async () => {
@@ -71,6 +76,18 @@ const BudgetComparison: React.FC = () => {
             qtyDiff: number;
         }[] = [];
 
+        // Use only real items (exclude groups) for adjustment context
+        const realItemsA = itemsA.filter(i => i.type !== 'group');
+        const realItemsB = itemsB.filter(i => i.type !== 'group');
+
+        // 1. Calculate Factors for A
+        const ctxA = getAdjustmentContext(realItemsA, budgetDataA?.bdi || 0);
+        const factorsA = calculateAdjustmentFactors(budgetDataA?.settings?.global_adjustment_v2, ctxA);
+
+        // 2. Calculate Factors for B
+        const ctxB = getAdjustmentContext(realItemsB, budgetDataB?.bdi || 0);
+        const factorsB = calculateAdjustmentFactors(budgetDataB?.settings?.global_adjustment_v2, ctxB);
+
         const allCodes = new Set([
             ...itemsA.filter(i => i.type !== 'group').map(i => i.code),
             ...itemsB.filter(i => i.type !== 'group').map(i => i.code)
@@ -80,8 +97,28 @@ const BudgetComparison: React.FC = () => {
             const itemA = itemsA.find(i => i.code === code);
             const itemB = itemsB.find(i => i.code === code);
 
-            const priceA = itemA?.totalPrice || 0;
-            const priceB = itemB?.totalPrice || 0;
+            // Calculate Adjusted Price A
+            let priceA = 0;
+            if (itemA) {
+                const adjA = getAdjustedItemValues(
+                    { unitPrice: itemA.unitPrice || 0, description: itemA.description, type: itemA.type },
+                    factorsA,
+                    budgetDataA?.bdi || 0
+                );
+                priceA = (adjA.finalPriceUnit ?? adjA.finalPrice) * (itemA.quantity || 0);
+            }
+
+            // Calculate Adjusted Price B
+            let priceB = 0;
+            if (itemB) {
+                const adjB = getAdjustedItemValues(
+                    { unitPrice: itemB.unitPrice || 0, description: itemB.description, type: itemB.type },
+                    factorsB,
+                    budgetDataB?.bdi || 0
+                );
+                priceB = (adjB.finalPriceUnit ?? adjB.finalPrice) * (itemB.quantity || 0);
+            }
+
             const qtyA = itemA?.quantity || 0;
             const qtyB = itemB?.quantity || 0;
 
@@ -99,8 +136,11 @@ const BudgetComparison: React.FC = () => {
     };
 
     const comparisonData = budgetA && budgetB ? compareItems() : [];
-    const totalA = budgetDataA?.totalValue || 0;
-    const totalB = budgetDataB?.totalValue || 0;
+
+    // SSOT Totals
+    const totalA = getAdjustedBudgetTotals(itemsA, budgetDataA?.settings?.global_adjustment_v2, budgetDataA?.bdi || 0).totalFinal;
+    const totalB = getAdjustedBudgetTotals(itemsB, budgetDataB?.settings?.global_adjustment_v2, budgetDataB?.bdi || 0).totalFinal;
+
     const totalDiff = totalB - totalA;
     const totalDiffPercent = totalA > 0 ? (totalDiff / totalA) * 100 : 0;
 
