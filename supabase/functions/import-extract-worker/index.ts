@@ -244,14 +244,29 @@ Deno.serve(async (req) => {
 
         const currentAttempts = jobData.extraction_attempts || 0;
 
-        const { data: file, error: fileErr } = await supabase
+        const { data: files, error: fileErr } = await supabase
             .from('import_files')
-            .select('id, extracted_text, extracted_completed_at')
-            .eq('job_id', job_id)
-            .maybeSingle();
+            .select('id, extracted_text, extracted_completed_at, role')
+            .eq('job_id', job_id);
 
         if (fileErr) throw new Error(`DB File Error: ${fileErr.message}`);
-        if (!file) throw new Error(`No file found for job_id: ${job_id}`);
+        if (!files || files.length === 0) throw new Error(`No file found for job_id: ${job_id}`);
+
+        // FIX: Select 'synthetic' file, or fallback to first (legacy)
+        let file = files.find(f => f.role === 'synthetic');
+
+        console.log(`[ExtractWorker] Files found: ${files.length}. Roles: ${files.map(f => f.role).join(',')}`);
+
+        if (!file) {
+            // Fallback: If no synthetic explicitly labeled, take the first one (legacy logic)
+            // But if we have 'analytic' ONLY, we might be in trouble? 
+            // Phase 3 specs say we always have synthetic if 2 files exist. 
+            // If legacy, role is null, so files[0] is correct.
+            file = files[0];
+            console.warn(`[ExtractWorker] No 'synthetic' file found. Using fallback: ${file.id} (Role: ${file.role})`);
+        } else {
+            console.log(`[ExtractWorker] Selected synthetic file: ${file.id}`);
+        }
 
         const rawText = file.extracted_text;
         const extracted_completed_at = file.extracted_completed_at;
