@@ -236,7 +236,7 @@ Deno.serve(async (req) => {
         // 1. FETCH JOB & FILE & VALIDATE
         const { data: jobData, error: jobErr } = await supabase
             .from('import_jobs')
-            .select('id, status, extraction_attempts')
+            .select('id, status, extraction_attempts, document_context')
             .eq('id', job_id)
             .maybeSingle();
 
@@ -261,10 +261,10 @@ Deno.serve(async (req) => {
         }));
         console.log(`[ExtractWorker] Candidates: ${JSON.stringify(candidates)}`);
 
-        // SELECTION LOGIC (Corrected Priority Phase 3)
-        // Rule: source_for_structure MUST be synthetic.
+        // SELECTION LOGIC (Fallback Enabled Phase 3.1)
+        // Rule: source_for_structure PREFERS synthetic, but falls back to analytic if synthetic empty.
 
-        // 1. Find Synthetic
+        let structureSource = 'synthetic';
         const synthetic = files.find(f => f.role === 'synthetic');
         const analytic = files.find(f => f.role === 'analytic');
 
@@ -272,45 +272,61 @@ Deno.serve(async (req) => {
 
         // Validation
         if (!synthetic) {
-            // If legacy job has only one file without role or 'unknown', try to use it if it has text
-            // But strict mode requires synthetic check.
-            // Let's rely on the file_kind or if files.length=1 and role is unknown/null
             if (files.length === 1 && (!files[0].role || files[0].role === 'unknown')) {
                 file = files[0];
+                structureSource = 'single_unknown';
                 console.log(`[ExtractWorker] Legacy job (1 file, unknown role), treating as synthetic: ${file.id}`);
             } else {
                 throw new Error("Job missing mandatory 'synthetic' file.");
             }
         }
 
-        const hasText = file && file.extracted_text && file.extracted_text.length > 50;
+        const hasSyntheticText = file && file.extracted_text && file.extracted_text.length >= 50;
 
-        if (!hasText) {
-            console.error("[ExtractWorker] FATAL: Synthetic file exists but has NO TEXT.");
-            const msg = "Arquivo sintético sem texto OCR. Aguarde o processamento ou envie novamente.";
+        if (!hasSyntheticText) {
+            console.warn("[ExtractWorker] Synthetic file has NO TEXT. Checking Analytic fallback...");
 
-            await safeUpdateImportFile(job_id, {
-                extraction_status: 'failed',
-                extraction_reason: 'synthetic_ocr_missing',
-                extraction_last_error: msg,
-                extraction_completed_at: new Date().toISOString()
-            });
+            // Fallback Check
+            const hasAnalyticText = analytic && analytic.extracted_text && analytic.extracted_text.length >= 50;
 
-            return new Response(JSON.stringify({
-                ok: false,
-                code: "SYNTHETIC_OCR_MISSING",
-                message: msg,
-                files_debug: candidates
-            }), {
-                status: 400,
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-        }
+            if (hasAnalyticText) {
+                console.warn(`[ExtractWorker] FALLBACK: Using ANALYTIC file ${analytic.id} for structure generation.`);
+                file = analytic;
+                structureSource = 'analytic_fallback';
 
-        console.log(`[ExtractWorker] Selected SYNTHETIC file logic: ${file.id} (len=${file.extracted_text.length})`);
+                // Mark job metadata for UI/Audit
+                await supabase.from('import_jobs').update({
+                    document_context: {
+                        ...(jobData.document_context || {}),
+                        structure_source: 'analytic_fallback',
+                        synthetic_missing_text: true,
+                        fallback_file_id: analytic.id
+                    }
+                }).eq('id', job_id);
 
-        if (analytic) {
-            console.log(`[ExtractWorker] Job has ANALYTIC file ${analytic.id}. It will be used for hydration later (not structure).`);
+            } else {
+                console.error("[ExtractWorker] FATAL: Neither Synthetic nor Analytic files have OCR text.");
+                const msg = "Nenhum arquivo (Sintético ou Analítico) contém texto OCR válido para extração.";
+
+                await safeUpdateImportFile(job_id, {
+                    extraction_status: 'failed',
+                    extraction_reason: 'all_files_ocr_missing',
+                    extraction_last_error: msg,
+                    extraction_completed_at: new Date().toISOString()
+                });
+
+                return new Response(JSON.stringify({
+                    ok: false,
+                    code: "OCR_TEXT_MISSING",
+                    message: msg,
+                    files_debug: candidates
+                }), {
+                    status: 400,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                });
+            }
+        } else {
+            console.log(`[ExtractWorker] Selected SYNTHETIC file logic: ${file.id} (len=${file.extracted_text.length})`);
         }
 
         const rawText = file.extracted_text;

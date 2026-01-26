@@ -15,6 +15,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [generating, setGenerating] = useState(false);
+    const [jobContext, setJobContext] = useState<any>(null);
 
     const [params, setParams] = useState({
         uf: 'BA',
@@ -27,7 +28,15 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
 
     useEffect(() => {
         fetchItems();
+        fetchJobContext();
     }, [jobId]);
+
+    const fetchJobContext = async () => {
+        const { data } = await supabase.from('import_jobs' as any).select('document_context').eq('id', jobId).single();
+        if (data && data.document_context) {
+            setJobContext(data.document_context);
+        }
+    };
 
     const fetchItems = async () => {
         try {
@@ -148,185 +157,200 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                             </p>
                         </div>
                     </div>
-
-                    <div className="flex gap-3 w-full md:w-auto">
-
-                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6">
-                            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                                <FileSpreadsheet size={20} className="text-blue-600" /> Parâmetros do Orçamento
-                            </h3>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Estado (UF)</label>
-                                    <select
-                                        className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
-                                        value={params.uf}
-                                        onChange={e => setParams({ ...params, uf: e.target.value })}
-                                    >
-                                        <option value="BA">Bahia (BA)</option>
-                                        <option value="SP">São Paulo (SP)</option>
-                                        <option value="RJ">Rio de Janeiro (RJ)</option>
-                                        <option value="MG">Minas Gerais (MG)</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Competência</label>
-                                    <input
-                                        type="month"
-                                        className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
-                                        value={params.competence}
-                                        onChange={e => setParams({ ...params, competence: e.target.value })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">BDI (%)</label>
-                                    <input
-                                        type="number"
-                                        className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
-                                        value={params.bdi_percent}
-                                        onChange={e => setParams({ ...params, bdi_percent: parseFloat(e.target.value) })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Encargos (Horista %)</label>
-                                    <input
-                                        type="number"
-                                        className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
-                                        value={params.encargo_horista_percent}
-                                        onChange={e => setParams({ ...params, encargo_horista_percent: parseFloat(e.target.value) })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Encargos (Mensalista %)</label>
-                                    <input
-                                        type="number"
-                                        className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
-                                        value={params.encargo_mensalista_percent}
-                                        onChange={e => setParams({ ...params, encargo_mensalista_percent: parseFloat(e.target.value) })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Regime</label>
-                                    <div className="flex gap-2 bg-slate-50 p-1.5 rounded-lg border">
-                                        <button
-                                            className={`flex-1 text-xs font-bold py-1 rounded ${params.encargo_mode === 'nao_desonerado' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}
-                                            onClick={() => setParams({ ...params, encargo_mode: 'nao_desonerado' })}
-                                        >
-                                            Não Des.
-                                        </button>
-                                        <button
-                                            className={`flex-1 text-xs font-bold py-1 rounded ${params.encargo_mode === 'desonerado' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}
-                                            onClick={() => setParams({ ...params, encargo_mode: 'desonerado' })}
-                                        >
-                                            Desonerado
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="flex gap-3 justify-end mt-6">
-                            <button
-                                onClick={() => navigate('/budgets')}
-                                className="px-5 py-2.5 border border-slate-200 text-slate-600 bg-white rounded-xl hover:bg-slate-50 hover:border-slate-300 font-medium transition-all flex items-center justify-center gap-2"
-                            >
-                                <ArrowLeft size={18} />
-                                Cancelar
-                            </button>
-                            <button
-                                onClick={handleGenerateBudget}
-                                disabled={generating || items.length === 0}
-                                className="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 active:transform active:scale-95 font-semibold shadow-md shadow-blue-600/20 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 transition-all min-w-[200px]"
-                            >
-                                {generating ? (
-                                    <>
-                                        <Loader2 className="animate-spin" size={20} />
-                                        Gerando Orçamento...
-                                    </>
-                                ) : (
-                                    <>
-                                        <FileSpreadsheet size={20} />
-                                        Gerar Orçamento Final
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    </div>
                 </div>
 
+                <div className="flex gap-3 w-full md:w-auto">
 
-                {/* Content */}
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col min-h-[400px]">
-                    {items.length === 0 ? (
-                        <div className="flex-1 flex flex-col items-center justify-center p-12 text-slate-400 gap-4">
-                            <div className="bg-slate-50 p-6 rounded-full">
-                                <FileSpreadsheet size={48} className="opacity-20" />
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6">
+                        <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                            <FileSpreadsheet size={20} className="text-blue-600" /> Parâmetros do Orçamento
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Estado (UF)</label>
+                                <select
+                                    className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
+                                    value={params.uf}
+                                    onChange={e => setParams({ ...params, uf: e.target.value })}
+                                >
+                                    <option value="BA">Bahia (BA)</option>
+                                    <option value="SP">São Paulo (SP)</option>
+                                    <option value="RJ">Rio de Janeiro (RJ)</option>
+                                    <option value="MG">Minas Gerais (MG)</option>
+                                </select>
                             </div>
-                            <p className="text-lg font-medium text-slate-600">Nenhum item processado</p>
-                            <p className="text-sm max-w-xs text-center">A extração via IA não retornou itens. Verifique se o arquivo original contém tabelas legíveis.</p>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Competência</label>
+                                <input
+                                    type="month"
+                                    className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
+                                    value={params.competence}
+                                    onChange={e => setParams({ ...params, competence: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">BDI (%)</label>
+                                <input
+                                    type="number"
+                                    className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
+                                    value={params.bdi_percent}
+                                    onChange={e => setParams({ ...params, bdi_percent: parseFloat(e.target.value) })}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Encargos (Horista %)</label>
+                                <input
+                                    type="number"
+                                    className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
+                                    value={params.encargo_horista_percent}
+                                    onChange={e => setParams({ ...params, encargo_horista_percent: parseFloat(e.target.value) })}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Encargos (Mensalista %)</label>
+                                <input
+                                    type="number"
+                                    className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
+                                    value={params.encargo_mensalista_percent}
+                                    onChange={e => setParams({ ...params, encargo_mensalista_percent: parseFloat(e.target.value) })}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Regime</label>
+                                <div className="flex gap-2 bg-slate-50 p-1.5 rounded-lg border">
+                                    <button
+                                        className={`flex-1 text-xs font-bold py-1 rounded ${params.encargo_mode === 'nao_desonerado' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}
+                                        onClick={() => setParams({ ...params, encargo_mode: 'nao_desonerado' })}
+                                    >
+                                        Não Des.
+                                    </button>
+                                    <button
+                                        className={`flex-1 text-xs font-bold py-1 rounded ${params.encargo_mode === 'desonerado' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}
+                                        onClick={() => setParams({ ...params, encargo_mode: 'desonerado' })}
+                                    >
+                                        Desonerado
+                                    </button>
+                                </div>
+                            </div>
                         </div>
-                    ) : (
-                        <>
-                            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-                                <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">Itens Extraídos ({items.length})</h3>
-                                <div className="text-xs text-slate-400">Estes itens serão convertidos em orçamento</div>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="bg-white text-slate-500 text-xs font-semibold uppercase tracking-wider border-b border-slate-100">
-                                            <th className="px-6 py-4 w-16 text-center">#</th>
-                                            <th className="px-6 py-4">Descrição</th>
-                                            <th className="px-6 py-4 w-24 text-center">Unid</th>
-                                            <th className="px-6 py-4 w-32 text-right">Qtd</th>
-                                            <th className="px-6 py-4 w-32 text-right">Preço Unit.</th>
-                                            <th className="px-6 py-4 w-32 text-right">Total</th>
-                                            <th className="px-6 py-4 w-28 text-center">Confiança</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-50">
-                                        {items.map((item, idx) => (
-                                            <tr key={item.id || idx} className="hover:bg-slate-50/80 transition-colors group">
-                                                <td className="px-6 py-3 text-center text-slate-400 text-xs font-mono">{idx + 1}</td>
-                                                <td className="px-6 py-3 text-slate-800 font-medium text-sm group-hover:text-blue-700 transition-colors">
-                                                    {item.description || <span className="text-slate-300 italic">Sem descrição</span>}
-                                                </td>
-                                                <td className="px-6 py-3 text-center text-slate-500 text-xs uppercase bg-slate-50/50 rounded m-2">
-                                                    {item.unit || '-'}
-                                                </td>
-                                                <td className="px-6 py-3 text-right text-slate-600 text-sm tabular-nums">
-                                                    {(item.quantity || 0).toLocaleString('pt-BR')}
-                                                </td>
-                                                <td className="px-6 py-3 text-right text-slate-600 text-sm tabular-nums font-mono bg-slate-50/30">
-                                                    {(item.unit_price || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                                </td>
-                                                <td className="px-6 py-3 text-right text-slate-900 font-semibold text-sm tabular-nums font-mono">
-                                                    {(item.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                                </td>
-                                                <td className="px-6 py-3 text-center">
-                                                    {item.confidence !== null ? (
-                                                        <div className="flex items-center justify-center">
-                                                            <div className={`
+                    </div>
+
+                    <div className="flex gap-3 justify-end mt-6">
+                        <button
+                            onClick={() => navigate('/budgets')}
+                            className="px-5 py-2.5 border border-slate-200 text-slate-600 bg-white rounded-xl hover:bg-slate-50 hover:border-slate-300 font-medium transition-all flex items-center justify-center gap-2"
+                        >
+                            <ArrowLeft size={18} />
+                            Cancelar
+                        </button>
+                        <button
+                            onClick={handleGenerateBudget}
+                            disabled={generating || items.length === 0}
+                            className="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 active:transform active:scale-95 font-semibold shadow-md shadow-blue-600/20 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 transition-all min-w-[200px]"
+                        >
+                            {generating ? (
+                                <>
+                                    <Loader2 className="animate-spin" size={20} />
+                                    Gerando Orçamento...
+                                </>
+                            ) : (
+                                <>
+                                    <FileSpreadsheet size={20} />
+                                    Gerar Orçamento Final
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* FALLBACK WARNING (Phase 3.1) */}
+            {jobContext?.structure_source === 'analytic_fallback' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3 w-full animate-in fade-in slide-in-from-top-2">
+                    <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={20} />
+                    <div>
+                        <h4 className="font-bold text-amber-800 text-sm">Atenção: Fonte de Estrutura Alternativa</h4>
+                        <p className="text-amber-700 text-sm mt-1">
+                            O arquivo <strong>Sintético</strong> não continha texto legível (PDF escaneado?).
+                            A estrutura do orçamento foi gerada a partir do arquivo <strong>Analítico</strong> para evitar bloqueio.
+                            Recomendamos verificar se a hierarquia de itens está correta.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* Content */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col min-h-[400px]">
+                {items.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-12 text-slate-400 gap-4">
+                        <div className="bg-slate-50 p-6 rounded-full">
+                            <FileSpreadsheet size={48} className="opacity-20" />
+                        </div>
+                        <p className="text-lg font-medium text-slate-600">Nenhum item processado</p>
+                        <p className="text-sm max-w-xs text-center">A extração via IA não retornou itens. Verifique se o arquivo original contém tabelas legíveis.</p>
+                    </div>
+                ) : (
+                    <>
+                        <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                            <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">Itens Extraídos ({items.length})</h3>
+                            <div className="text-xs text-slate-400">Estes itens serão convertidos em orçamento</div>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-white text-slate-500 text-xs font-semibold uppercase tracking-wider border-b border-slate-100">
+                                        <th className="px-6 py-4 w-16 text-center">#</th>
+                                        <th className="px-6 py-4">Descrição</th>
+                                        <th className="px-6 py-4 w-24 text-center">Unid</th>
+                                        <th className="px-6 py-4 w-32 text-right">Qtd</th>
+                                        <th className="px-6 py-4 w-32 text-right">Preço Unit.</th>
+                                        <th className="px-6 py-4 w-32 text-right">Total</th>
+                                        <th className="px-6 py-4 w-28 text-center">Confiança</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {items.map((item, idx) => (
+                                        <tr key={item.id || idx} className="hover:bg-slate-50/80 transition-colors group">
+                                            <td className="px-6 py-3 text-center text-slate-400 text-xs font-mono">{idx + 1}</td>
+                                            <td className="px-6 py-3 text-slate-800 font-medium text-sm group-hover:text-blue-700 transition-colors">
+                                                {item.description || <span className="text-slate-300 italic">Sem descrição</span>}
+                                            </td>
+                                            <td className="px-6 py-3 text-center text-slate-500 text-xs uppercase bg-slate-50/50 rounded m-2">
+                                                {item.unit || '-'}
+                                            </td>
+                                            <td className="px-6 py-3 text-right text-slate-600 text-sm tabular-nums">
+                                                {(item.quantity || 0).toLocaleString('pt-BR')}
+                                            </td>
+                                            <td className="px-6 py-3 text-right text-slate-600 text-sm tabular-nums font-mono bg-slate-50/30">
+                                                {(item.unit_price || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                            </td>
+                                            <td className="px-6 py-3 text-right text-slate-900 font-semibold text-sm tabular-nums font-mono">
+                                                {(item.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                            </td>
+                                            <td className="px-6 py-3 text-center">
+                                                {item.confidence !== null ? (
+                                                    <div className="flex items-center justify-center">
+                                                        <div className={`
                                                                 w-1.5 h-1.5 rounded-full mr-1.5
                                                                 ${(item.confidence || 0) > 0.8 ? 'bg-green-500' : (item.confidence || 0) > 0.5 ? 'bg-amber-400' : 'bg-red-500'}
                                                             `}></div>
-                                                            <span className={`text-xs font-medium ${(item.confidence || 0) > 0.8 ? 'text-green-700' : (item.confidence || 0) > 0.5 ? 'text-amber-700' : 'text-red-700'}`}>
-                                                                {Math.round((item.confidence || 0) * 100)}%
-                                                            </span>
-                                                        </div>
-                                                    ) : (
-                                                        <span className="text-slate-300">-</span>
-                                                    )}
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </>
-                    )}
-                </div>
+                                                        <span className={`text-xs font-medium ${(item.confidence || 0) > 0.8 ? 'text-green-700' : (item.confidence || 0) > 0.5 ? 'text-amber-700' : 'text-red-700'}`}>
+                                                            {Math.round((item.confidence || 0) * 100)}%
+                                                        </span>
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-slate-300">-</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
+                )}
             </div>
         </div>
+        </div >
     );
 }
