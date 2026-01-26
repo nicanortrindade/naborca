@@ -63,14 +63,41 @@ serve(async (req) => {
             console.log(`[SWEEP ${requestId}] Watchdog caught ${stuckMarked} stuck jobs.`);
         }
 
-        // 2. BUSCAR JOBS PARA RETRY
-        const { data: jobs, error: rpcError } = await supabase.rpc("get_extraction_retries_pending", {
-            p_limit: 10,
-        });
+        // 2. BUSCAR JOBS (NOVOS + RETRIES)
+        const jobs = [];
 
-        if (rpcError) {
-            console.error(`[SWEEP ${requestId}] RPC error fetching pending retries:`, rpcError);
-            return jsonResponse({ error: "Failed to get pending retries", details: rpcError.message }, 500);
+        // 2a. Novos jobs (extraction_queued)
+        const { data: newJobs, error: newJobsErr } = await supabase
+            .from('import_jobs')
+            .select('job_id:id')
+            .eq('stage', 'extraction_queued')
+            .neq('status', 'failed')
+            .limit(10);
+
+        if (newJobsErr) {
+            console.error(`[SWEEP ${requestId}] Error fetching new jobs:`, newJobsErr);
+        } else if (newJobs) {
+            jobs.push(...newJobs);
+        }
+
+        // 2b. Retries (se houver espaço)
+        if (jobs.length < 10) {
+            const limitRetries = 10 - jobs.length;
+            // Usando query direta em vez de RPC para flexibilidade
+            const { data: retryJobs, error: retryErr } = await supabase
+                .from('import_jobs')
+                .select('job_id:id')
+                .eq('extraction_retryable', true)
+                .lte('extraction_next_retry_at', new Date().toISOString())
+                .neq('status', 'failed')
+                .order('extraction_next_retry_at', { ascending: true })
+                .limit(limitRetries);
+
+            if (retryErr) {
+                console.error(`[SWEEP ${requestId}] Error fetching retries:`, retryErr);
+            } else if (retryJobs) {
+                jobs.push(...retryJobs);
+            }
         }
 
         if (!jobs || jobs.length === 0) {

@@ -245,8 +245,8 @@ export default function ImportStatus() {
             const { error } = await (supabase as any).rpc('reprocess_extraction', { p_job_id: job.id });
             if (error) throw error;
 
-            // Immediate re-dispatch
-            await supabase.functions.invoke('import-extract-worker', {
+            // Immediate re-dispatch via secure dispatcher
+            await supabase.functions.invoke('import-extract', {
                 body: { job_id: job.id }
             });
 

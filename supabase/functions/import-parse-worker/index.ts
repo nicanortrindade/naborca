@@ -289,32 +289,27 @@ serve(async (req) => {
         const supabase = getSupabase();
 
         // 1. Resolve File
-        const file = await resolveImportFileWithPolling(supabase, jobId);
+        let file: ImportFileRow;
+        const { file_id: explicitFileId, task_id: taskId } = body;
 
-        // === B4. AUTOMATIC RECONCILIATION (Self-healing) ===
-        // If we already have text, we should force the job to be healthy.
-        const meta = (file.metadata || {}) as any;
-        const ocrMeta = meta.ocr || {};
+        if (explicitFileId) {
+            console.log(`[WORKER ${reqId}] Resolving explicit file_id=${explicitFileId}`);
+            const { data: f, error } = await supabase
+                .from("import_files")
+                .select("*")
+                .eq("id", explicitFileId)
+                .single();
 
-        if ((file.extracted_text && file.extracted_text.length > 50) || ocrMeta.completed_at) {
-            console.log(`[WORKER] Text already extracted for ${jobId}. Reconciling job status.`);
-
-            await supabase.from("import_jobs").update({
-                stage: "ocr_done",
-                status: "processing",
-                last_error: null,
-                progress: 100
-            }).eq("id", jobId);
-
-            // Ensure file metadata is consistent
-            if (!ocrMeta.completed_at) {
-                const fixMeta = { ...meta, ocr: { ...ocrMeta, status: "done", completed_at: new Date().toISOString() } };
-                await supabase.from("import_files").update({ metadata: fixMeta }).eq("id", file.id);
-            }
-
-            return jsonResponse({ status: "success", reconciled: true, len: file.extracted_text?.length });
+            if (error || !f) throw new Error(`File not found: ${explicitFileId}`);
+            file = f as ImportFileRow;
+        } else {
+            // Legacy fallback
+            console.warn(`[WORKER ${reqId}] No file_id provided, falling back to legacy polling.`);
+            file = await resolveImportFileWithPolling(supabase, jobId);
         }
-        // ===================================================
+
+        // === B4. AUTOMATIC RECONCILIATION REMOVED FOR SINGLE FILE CHECK ===
+        // We now check completion at the end.
 
         // 2. Async OCR Flow
         let ocrResult;
@@ -322,19 +317,21 @@ serve(async (req) => {
             ocrResult = await processAsyncOcrFlow(supabase, file);
         } catch (e: any) {
             console.error(`[OCR-ASYNC] Flow Error: ${e.message}`);
+            // ... (keep logic, but update task if taskId exists)
+            if (taskId) {
+                await supabase.from("import_parse_tasks").update({
+                    status: "failed",
+                    last_error: e.message,
+                    attempts: 99
+                }).eq("task_id", taskId);
+            }
 
-            // === B3. CRITICAL GUARD: TRANSIENT ERROR HANDLING ===
-            // If request_id exists, we assume job is running remotely.
-            // We DO NOT fail the job locally just because check failed (timeout/network).
+            // === B3. CRITICAL GUARD: TRANSIENT ERROR HANDLING === 
+            // (Copy existing logic but ensure we don't fail job if other files are running)
             if (ocrMeta.request_id && !ocrMeta.completed_at) {
                 console.warn(`[OCR-ASYNC] Transient error. Keeping job alive.`);
-
-                await supabase.from("import_jobs").update({
-                    stage: "ocr_running",
-                    status: "processing"
-                    // No last_error to avoid UI confusion
-                }).eq("id", jobId);
-
+                // Do NOT update job status here blindly, it might affect other files.
+                // Just return.
                 return jsonResponse({
                     status: "ocr_running",
                     message: "OCR in progress (transient check error)",
@@ -342,45 +339,55 @@ serve(async (req) => {
                 });
             }
 
-            // If it's a hard failure (e.g. failed to start), mark as failed.
-            await supabase.from("import_jobs").update({
-                error_message: `OCR Error: ${e.message}`,
-                status: "failed"
-            }).eq("id", jobId);
+            // Hard failure for this file
+            await supabase.from("import_files").update({
+                metadata: { ...((file.metadata as any) || {}), extraction_error: e.message }
+            }).eq("id", file.id);
 
             return jsonResponse({ error: e.message }, 500);
         }
 
         // 3. Handle Status Return
-        if (ocrResult.status === "started") {
-            return jsonResponse({ status: "ocr_started" });
-        }
-        if (ocrResult.status === "running") {
-            return jsonResponse({ status: "ocr_running" });
+        if (ocrResult.status === "started" || ocrResult.status === "running") {
+            if (taskId) await supabase.from("import_parse_tasks").update({ status: "running", updated_at: new Date().toISOString() }).eq("task_id", taskId);
+            return jsonResponse({ status: ocrResult.status });
         }
 
         // 4. If DONE
         if (ocrResult.status === "done") {
             const text = ocrResult.text || "";
 
-            if (text.length < 50) {
-                await supabase.from("import_jobs").update({
-                    status: "waiting_user",
-                    progress: 100,
-                    current_step: "ocr_empty",
-                    error_message: null
-                }).eq("id", jobId);
-                return jsonResponse({ status: "ocr_empty", len: text.length });
+            // Mark task done
+            if (taskId) {
+                await supabase.from("import_parse_tasks").update({
+                    status: "completed",
+                    updated_at: new Date().toISOString()
+                }).eq("task_id", taskId);
             }
 
-            // Success -> Job Ready
-            await supabase.from("import_jobs").update({
-                status: "processing", // Processing means "workflow active" (ready for extract)
-                stage: "ocr_done",    // Stage ocr_done implies text is ready
-                progress: 100,
-                current_step: "ocr_done",
-                error_message: null
-            }).eq("id", jobId);
+            if (text.length < 50) {
+                // Warning on file, but maybe not fail job if other files are good?
+                // For now, let's keep it simple: just mark file as empty.
+                console.warn(`[WORKER] File ${file.id} resulted in empty text.`);
+            }
+
+            // CHECK IF ALL FILES ARE DONE
+            const { data: allFiles } = await supabase.from("import_files").select("id, extracted_text").eq("job_id", jobId);
+            const pending = allFiles?.filter(f => !f.extracted_text || f.extracted_text.length < 50) || [];
+
+            if (pending.length === 0) {
+                console.log(`[WORKER] All files processed. Advancing job to ocr_done.`);
+                // Success -> Job Ready
+                await supabase.from("import_jobs").update({
+                    status: "waiting_user", // Ready for Next Step (Extraction)
+                    stage: "ocr_done",
+                    progress: 100,
+                    current_step: "ocr_done",
+                    error_message: null
+                }).eq("id", jobId);
+            } else {
+                console.log(`[WORKER] File done, but job has ${pending.length} pending files.`);
+            }
 
             return jsonResponse({ status: "success", len: text.length });
         }

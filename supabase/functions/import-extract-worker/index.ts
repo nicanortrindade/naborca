@@ -23,9 +23,10 @@ const RAW_BATCH_SIZE = BATCH_SIZE_ENV ? parseInt(BATCH_SIZE_ENV) : 1000;
 const BATCH_SIZE = Math.max(100, Math.min(5000, isNaN(RAW_BATCH_SIZE) ? 1000 : RAW_BATCH_SIZE));
 
 // Parallelism
+// Parallelism
 const RAW_CHUNK_CONCURRENCY = CHUNK_CONCURRENCY_ENV ? parseInt(CHUNK_CONCURRENCY_ENV) : 1;
-const CHUNK_CONCURRENCY = Math.max(1, Math.min(6, isNaN(RAW_CHUNK_CONCURRENCY) ? 1 : RAW_CHUNK_CONCURRENCY));
-const PARALLEL_ENABLED = CHUNK_CONCURRENCY > 1;
+const CHUNK_CONCURRENCY = 1; // FORCED TO 1 to avoid Quota Errors
+const PARALLEL_ENABLED = false;
 
 // Reprocess Logic
 const ENABLE_FAILED_CHUNK_REPROCESS = (ENABLE_FAILED_CHUNK_REPROCESS_ENV === 'true' || ENABLE_FAILED_CHUNK_REPROCESS_ENV === '1');
@@ -252,54 +253,69 @@ Deno.serve(async (req) => {
         if (fileErr) throw new Error(`DB File Error: ${fileErr.message}`);
         if (!files || files.length === 0) throw new Error(`No file found for job_id: ${job_id}`);
 
-        // FIX: Select 'synthetic' file, or fallback to first (legacy)
-        let file = files.find(f => f.role === 'synthetic');
+        // LOGGING CANDIDATES
+        const candidates = files.map(f => ({
+            id: f.id,
+            role: f.role,
+            len: f.extracted_text ? f.extracted_text.length : 0
+        }));
+        console.log(`[ExtractWorker] Candidates: ${JSON.stringify(candidates)}`);
 
-        console.log(`[ExtractWorker] Files found: ${files.length}. Roles: ${files.map(f => f.role).join(',')}`);
+        // SELECTION LOGIC (Corrected Priority Phase 3)
+        // Rule: source_for_structure MUST be synthetic.
 
-        if (!file) {
-            // Fallback: If no synthetic explicitly labeled, take the first one (legacy logic)
-            // But if we have 'analytic' ONLY, we might be in trouble? 
-            // Phase 3 specs say we always have synthetic if 2 files exist. 
-            // If legacy, role is null, so files[0] is correct.
-            file = files[0];
-            console.warn(`[ExtractWorker] No 'synthetic' file found. Using fallback: ${file.id} (Role: ${file.role})`);
-        } else {
-            console.log(`[ExtractWorker] Selected synthetic file: ${file.id}`);
+        // 1. Find Synthetic
+        const synthetic = files.find(f => f.role === 'synthetic');
+        const analytic = files.find(f => f.role === 'analytic');
+
+        let file = synthetic;
+
+        // Validation
+        if (!synthetic) {
+            // If legacy job has only one file without role or 'unknown', try to use it if it has text
+            // But strict mode requires synthetic check.
+            // Let's rely on the file_kind or if files.length=1 and role is unknown/null
+            if (files.length === 1 && (!files[0].role || files[0].role === 'unknown')) {
+                file = files[0];
+                console.log(`[ExtractWorker] Legacy job (1 file, unknown role), treating as synthetic: ${file.id}`);
+            } else {
+                throw new Error("Job missing mandatory 'synthetic' file.");
+            }
+        }
+
+        const hasText = file && file.extracted_text && file.extracted_text.length > 50;
+
+        if (!hasText) {
+            console.error("[ExtractWorker] FATAL: Synthetic file exists but has NO TEXT.");
+            const msg = "Arquivo sintético sem texto OCR. Aguarde o processamento ou envie novamente.";
+
+            await safeUpdateImportFile(job_id, {
+                extraction_status: 'failed',
+                extraction_reason: 'synthetic_ocr_missing',
+                extraction_last_error: msg,
+                extraction_completed_at: new Date().toISOString()
+            });
+
+            return new Response(JSON.stringify({
+                ok: false,
+                code: "SYNTHETIC_OCR_MISSING",
+                message: msg,
+                files_debug: candidates
+            }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+
+        console.log(`[ExtractWorker] Selected SYNTHETIC file logic: ${file.id} (len=${file.extracted_text.length})`);
+
+        if (analytic) {
+            console.log(`[ExtractWorker] Job has ANALYTIC file ${analytic.id}. It will be used for hydration later (not structure).`);
         }
 
         const rawText = file.extracted_text;
         const extracted_completed_at = file.extracted_completed_at;
         const extracted_text_len = rawText ? rawText.length : 0;
-
-        // 2. LOG PREFLIGHT
-        console.log(JSON.stringify({
-            stage: "preflight",
-            job_id,
-            extracted_text_len,
-            extracted_completed_at,
-            parallel_enabled: PARALLEL_ENABLED,
-            concurrency: CHUNK_CONCURRENCY,
-            reprocess_enabled: ENABLE_FAILED_CHUNK_REPROCESS
-        }));
-
-        // 3. VALIDATE TEXT
-        if (!rawText || rawText.trim().length === 0) {
-            const msg = "No extracted_text found for job_id; OCR text missing.";
-            console.warn(`[ExtractWorker] ${msg}`);
-
-            await safeUpdateImportFile(job_id, {
-                extraction_status: 'failed',
-                extraction_reason: 'missing_extracted_text',
-                extraction_last_error: msg,
-                extraction_completed_at: new Date().toISOString()
-            });
-
-            return new Response(JSON.stringify({ ok: false, message: msg }), {
-                status: 400,
-                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-        }
 
         // TELEMETRY: INIT
         // Better Chunking Strategy (Phase 2.2C)

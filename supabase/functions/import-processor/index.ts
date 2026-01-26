@@ -1209,7 +1209,7 @@ serve(async (req) => {
                             created_at: attemptedAt,
                             updated_at: attemptedAt,
                         }, {
-                            onConflict: "job_id",
+                            onConflict: "job_id, file_id",
                             ignoreDuplicates: true,
                         });
 
