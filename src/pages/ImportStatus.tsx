@@ -210,8 +210,8 @@ export default function ImportStatus() {
             setIsExtracting(true);
             setErrorMessage(null);
 
-            // Invoke Extraction Worker
-            const { data, error } = await supabase.functions.invoke('import-extract-worker', {
+            // Invoke Extraction Dispatcher (Secure)
+            const { data, error } = await supabase.functions.invoke('import-extract', {
                 body: { job_id: job.id }
             });
 
