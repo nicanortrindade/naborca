@@ -26,6 +26,8 @@ import {
     classifyItem,
     getAdjustedBudgetTotals
 } from '../utils/globalAdjustment';
+import { BudgetCompletenessBadge } from '../components/budgets/BudgetCompletenessBadge';
+import { ImportPendencyPanel } from '../components/budgets/ImportPendencyPanel';
 import { FEATURES } from '../config/features';
 import type {
     GlobalAdjustmentMode,
@@ -261,6 +263,9 @@ const BudgetEditor = () => {
     // Analytic Blocking State
     const [showAnalyticModal, setShowAnalyticModal] = useState(false);
     const [pendingAnalytics, setPendingAnalytics] = useState<any[]>([]);
+
+    // Phase 3 Pendency Panel
+    const [showPendencyPanel, setShowPendencyPanel] = useState(false);
 
     // Drag and Drop States
     const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
@@ -2214,27 +2219,37 @@ const BudgetEditor = () => {
                             </div>
 
 
-                            {/* Seção Direita: Totais Corrigidos (Em Esquadro) */}
-                            <div className="grid grid-cols-3 gap-0 bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-lg border border-slate-200 shrink-0 overflow-hidden">
-                                <div className="text-right border-r border-slate-200 p-2 min-w-[90px]">
-                                    <span className="text-[9px] text-slate-400 uppercase block font-black leading-none mb-1">Custo Total</span>
-                                    <span className="text-xs font-bold text-slate-600 block">
-                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBase)}
-                                    </span>
+
+                            {/* Seção Direita: Totais Corrigidos + Badge de Hidratação */}
+                            <div className="flex flex-col gap-2 shrink-0">
+                                <div className="grid grid-cols-3 gap-0 bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-lg border border-slate-200 overflow-hidden shadow-sm">
+                                    <div className="text-right border-r border-slate-200 p-2 min-w-[90px]">
+                                        <span className="text-[9px] text-slate-400 uppercase block font-black leading-none mb-1">Custo Total</span>
+                                        <span className="text-xs font-bold text-slate-600 block">
+                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalBase)}
+                                        </span>
+                                    </div>
+                                    <div className="text-right border-r border-slate-200 p-2 min-w-[90px]">
+                                        <span className="text-[9px] text-slate-400 uppercase block font-black leading-none mb-1">BDI ({budget.bdi || 0}%)</span>
+                                        <span className="text-xs font-bold text-indigo-500 block">
+                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal - totalBase)}
+                                        </span>
+                                    </div>
+                                    <div className="text-right p-2 min-w-[110px] bg-blue-100/30">
+                                        <span className="text-[9px] text-accent uppercase block font-black leading-none mb-1">Total Geral</span>
+                                        <span className="text-sm font-black text-primary block">
+                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal)}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div className="text-right border-r border-slate-200 p-2 min-w-[90px]">
-                                    <span className="text-[9px] text-slate-400 uppercase block font-black leading-none mb-1">BDI ({budget.bdi || 0}%)</span>
-                                    <span className="text-xs font-bold text-indigo-500 block">
-                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal - totalBase)}
-                                    </span>
-                                </div>
-                                <div className="text-right p-2 min-w-[110px] bg-blue-100/30">
-                                    <span className="text-[9px] text-accent uppercase block font-black leading-none mb-1">Total Geral</span>
-                                    <span className="text-sm font-black text-primary block">
-                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalFinal)}
-                                    </span>
-                                </div>
+
+                                {/* Badge de Completude (Phase 3) */}
+                                <button onClick={() => setShowPendencyPanel(true)} className="hover:opacity-80 transition-opacity text-left">
+                                    <BudgetCompletenessBadge budgetId={budgetId} />
+                                </button>
+
                             </div>
+
 
                         </div>
                         <div className="flex items-center gap-1 shrink-0 pl-1 relative z-50">
@@ -3838,6 +3853,13 @@ const BudgetEditor = () => {
                     />
                 )
             }
+
+            {/* Phase 3: Pendency Panel */}
+            <ImportPendencyPanel
+                budgetId={budgetId}
+                isOpen={showPendencyPanel}
+                onClose={() => setShowPendencyPanel(false)}
+            />
         </div >
     );
 };

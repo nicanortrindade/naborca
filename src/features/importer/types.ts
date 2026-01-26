@@ -96,7 +96,18 @@ export interface ImportJob {
     document_context: Record<string, any> | null;
     progress: number;
     current_step: string | null;
+    stage?: string;
+    stage_updated_at?: string;
+    last_error: string | null;
+    heartbeat_at?: string;
     error_message: string | null;
+
+    // Extraction Phase 2 Retry Mechanism
+    extraction_attempts?: number;
+    extraction_retryable?: boolean;
+    extraction_next_retry_at?: string;
+    extraction_last_reason?: string;
+
     created_at: string;
     updated_at: string;
 }

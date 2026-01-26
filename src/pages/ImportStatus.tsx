@@ -17,6 +17,7 @@ type UIStatus =
     | 'ocr_empty'
     | 'failed'
     | 'review_ready'
+    | 'retryable'
     | 'unknown_but_renderable';
 
 interface ExtendedImportFile {
@@ -150,6 +151,19 @@ export default function ImportStatus() {
             return { status: "review_ready" };
         }
 
+        // RETRYABLE EXTRACTION (Phase 2.2 Bonus)
+        const jobExtra = j as any;
+        if (jobExtra?.extraction_retryable) {
+            const reason = jobExtra.extraction_last_reason;
+            let msg = "IA indisponível no momento.";
+            if (reason === 'watchdog_timeout_processing') msg = "Instabilidade no processamento detectada.";
+
+            return {
+                status: "retryable",
+                warning: msg
+            };
+        }
+
         // REGRA SUPREMA — TEXTO EXISTE = SUCESSO
         if (textLen > 50) {
             const hasHistoricError =
@@ -202,12 +216,44 @@ export default function ImportStatus() {
             });
 
             if (error) throw error;
-            if (data?.status === 'failed') throw new Error(data.message);
+
+            // Handle retryable response from worker (legacy/direct)
+            if (data?.retryable) {
+                setWarningMessage(`IA temporariamente ocupada. Tentaremos novamente em breve.`);
+                fetchData();
+                return;
+            }
+
+            if (data?.status === 'failed' || data?.ok === false) throw new Error(data.message || "Falha na extração");
 
             fetchData();
         } catch (e: any) {
             console.error(e);
             setErrorMessage(e.message || "Erro na extração.");
+        } finally {
+            setIsExtracting(false);
+        }
+    };
+
+    const handleRetryExtraction = async () => {
+        if (!job) return;
+        try {
+            setIsExtracting(true);
+            setErrorMessage(null);
+
+            // Clean state via RPC
+            const { error } = await (supabase as any).rpc('reprocess_extraction', { p_job_id: job.id });
+            if (error) throw error;
+
+            // Immediate re-dispatch
+            await supabase.functions.invoke('import-extract-worker', {
+                body: { job_id: job.id }
+            });
+
+            fetchData();
+        } catch (e: any) {
+            console.error(e);
+            setErrorMessage(e.message || "Erro ao tentar novamente.");
         } finally {
             setIsExtracting(false);
         }
@@ -282,6 +328,38 @@ export default function ImportStatus() {
                             </div>
                         )}
 
+                        {uiStatus === 'retryable' && (
+                            <div className="space-y-6">
+                                <div className="bg-amber-50 border border-amber-200 p-6 rounded-xl flex items-center justify-between shadow-sm">
+                                    <div className="flex-1">
+                                        <h4 className="font-bold text-amber-900 flex items-center gap-2">
+                                            <AlertCircle className="w-4 h-4" />
+                                            IA indisponível no momento
+                                        </h4>
+                                        <p className="text-amber-800 text-sm mt-1">
+                                            {(job as any)?.extraction_next_retry_at
+                                                ? `O sistema tentará novamente automaticamente às ${new Date((job as any).extraction_next_retry_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+                                                : "O processamento será retomado em breve."
+                                            }
+                                        </p>
+                                    </div>
+                                    <button
+                                        onClick={handleRetryExtraction}
+                                        disabled={isExtracting}
+                                        className="px-6 py-3 bg-amber-600 text-white rounded-lg font-bold shadow hover:bg-amber-700 flex gap-2 items-center transition-all disabled:opacity-50"
+                                    >
+                                        {isExtracting ? <Loader2 className="animate-spin" size={16} /> : <Sparkles className="w-4 h-4" />}
+                                        Tentar agora
+                                    </button>
+                                </div>
+
+                                <div className="p-4 bg-slate-100 rounded-lg text-xs text-slate-500 font-mono">
+                                    Reason: {(job as any)?.extraction_last_reason || 'unknown'} •
+                                    Attempt: {(job as any)?.extraction_attempts || 0} / 6
+                                </div>
+                            </div>
+                        )}
+
                         {['failed', 'ocr_empty', 'unknown_but_renderable'].includes(uiStatus) && (
                             <div className="text-center py-12">
                                 <h3 className="text-lg font-bold text-slate-700 mb-2">{uiStatus === 'failed' ? 'Falha' : 'Status Impreciso'}</h3>
@@ -310,6 +388,7 @@ function StatusTitle({ status, isExtracting }: { status: UIStatus, isExtracting:
         case 'review_ready': return 'Importação Concluída';
         case 'ocr_success': case 'ocr_success_with_warn': return 'Leitura Concluída';
         case 'ocr_running': return 'OCR em Andamento';
+        case 'retryable': return 'Aguardando Retentativa';
         case 'queued': return 'Iniciando...';
         case 'failed': return 'Falha na Importação';
         default: return 'Verificando Status...';

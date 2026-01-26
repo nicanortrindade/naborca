@@ -1,7 +1,8 @@
+
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { AiImportItem } from '../features/importer/types';
-import { Loader2, ArrowLeft, Check, AlertCircle } from 'lucide-react';
+import { Loader2, ArrowLeft, CheckCircle, AlertCircle, Wand2, FileSpreadsheet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 interface ImportReviewPageProps {
@@ -10,10 +11,19 @@ interface ImportReviewPageProps {
 
 export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
     const navigate = useNavigate();
-    const [items, setItems] = useState<AiImportItem[]>([]);
+    const [items, setItems] = useState<any[]>([]); // Use loose type to match raw DB for now
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [confirming, setConfirming] = useState(false);
+    const [generating, setGenerating] = useState(false);
+
+    const [params, setParams] = useState({
+        uf: 'BA',
+        competence: '2025-01',
+        bdi_percent: 0,
+        encargo_mode: 'nao_desonerado',
+        encargo_horista_percent: 0,
+        encargo_mensalista_percent: 0
+    });
 
     useEffect(() => {
         fetchItems();
@@ -22,14 +32,15 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
     const fetchItems = async () => {
         try {
             setLoading(true);
+            // Fetch from import_ai_items (Phase 2 output)
             const { data, error } = await (supabase
-                .from('import_items' as any) as any)
+                .from('import_ai_items' as any) as any)
                 .select('*')
                 .eq('job_id', jobId)
-                .order('created_at', { ascending: true });
+                .order('idx', { ascending: true }); // Use idx from extraction
 
             if (error) throw error;
-            setItems(data);
+            setItems(data || []);
         } catch (err: any) {
             console.error('Fetch error:', err);
             setError(err.message || 'Erro ao carregar itens.');
@@ -38,30 +49,66 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         }
     };
 
-    const handleConfirm = async () => {
+    const handleGenerateBudget = async () => {
+        if (!jobId) return;
+        setGenerating(true);
+
         try {
-            setConfirming(true);
-            // Update job status to done
-            const { error } = await (supabase
-                .from('import_jobs' as any) as any)
-                .update({ status: 'done' })
-                .eq('id', jobId);
+            // Function call with Auth
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) {
+                alert("Sessão expirada. Faça login novamente.");
+                return;
+            }
 
-            if (error) throw error;
+            const response = await fetch('https://cgebiryqfqheyazwtzzm.supabase.co/functions/v1/import-finalize-budget', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session.access_token}`
+                },
+                body: JSON.stringify({
+                    job_id: jobId,
+                    ...params
+                })
+            });
 
-            // Redirect to budgets (encerrar fluxo)
-            navigate('/budgets');
+            if (!response.ok) {
+                // HTTP Error
+                if (response.status === 403) throw new Error("Acesso negado ao Job.");
+                if (response.status === 400) throw new Error("Requisição inválida (Job ID ausente).");
+                const txt = await response.text();
+                throw new Error(`Erro do servidor (${response.status}): ${txt}`);
+            }
+
+            const result = await response.json();
+
+            if (!result.ok) {
+                // Logical Error from Function
+                if (result.reason === 'no_items_found') {
+                    alert("Atenção: Nenhum item foi encontrado para gerar o orçamento.");
+                    return;
+                }
+                throw new Error(result.details || result.reason || "Erro desconhecido ao gerar orçamento.");
+            }
+
+            // Success!
+            console.log("Budget Generated:", result.budget_id);
+            navigate(`/budget/${result.budget_id}`);
+
         } catch (err: any) {
-            alert('Erro ao confirmar: ' + err.message);
-            setConfirming(false);
+            console.error("Generate Error:", err);
+            alert(`Falha ao gerar orçamento: ${err.message}`);
+        } finally {
+            setGenerating(false);
         }
     };
 
     if (loading) {
         return (
-            <div className="flex justify-center items-center h-screen bg-slate-50">
+            <div className="flex flex-col justify-center items-center h-screen bg-slate-50 gap-3">
                 <Loader2 className="animate-spin text-blue-600" size={32} />
-                <span className="ml-2 text-slate-600 font-medium">Carregando itens importados...</span>
+                <span className="text-slate-600 font-medium animate-pulse">Carregando dados da IA...</span>
             </div>
         );
     }
@@ -69,105 +116,216 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
     if (error) {
         return (
             <div className="min-h-screen bg-slate-50 p-8 flex flex-col items-center justify-center text-red-600">
-                <AlertCircle size={48} className="mb-4" />
-                <p className="font-bold text-lg">Erro ao carregar itens</p>
-                <p className="text-slate-600 mt-2">{error}</p>
-                <button
-                    onClick={() => navigate('/budgets')}
-                    className="mt-6 px-4 py-2 bg-white border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 font-medium shadow-sm transition-colors"
-                >
-                    Voltar para Orçamentos
-                </button>
+                <div className="bg-white p-8 rounded-xl shadow-lg border border-red-100 flex flex-col items-center max-w-md w-full">
+                    <AlertCircle size={48} className="mb-4 text-red-500" />
+                    <p className="font-bold text-lg text-slate-800">Não foi possível carregar</p>
+                    <p className="text-slate-600 mt-2 text-center text-sm">{error}</p>
+                    <button
+                        onClick={() => navigate('/budgets')}
+                        className="mt-6 w-full px-4 py-3 bg-slate-800 text-white rounded-lg hover:bg-slate-900 font-medium transition-colors"
+                    >
+                        Voltar para Lista
+                    </button>
+                </div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-slate-50 p-4 md:p-8">
-            <div className="max-w-6xl mx-auto bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                    <div>
-                        <h1 className="text-2xl font-bold text-slate-900">Revisão da Importação</h1>
-                        <p className="text-slate-500 text-sm mt-1">Job ID: <span className="font-mono bg-slate-100 px-1 rounded">{jobId}</span></p>
+        <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 p-4 md:p-8">
+            <div className="max-w-7xl mx-auto space-y-6">
+
+                {/* Header */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col md:flex-row justify-between items-center gap-6">
+                    <div className="flex items-center gap-4">
+                        <div className="bg-blue-50 p-3 rounded-xl">
+                            <Wand2 className="text-blue-600" size={24} />
+                        </div>
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Revisão da Importação (Fase 3)</h1>
+                            <p className="text-slate-500 text-sm mt-0.5 flex items-center gap-2">
+                                Job: <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-xs text-slate-700">{jobId.slice(0, 8)}...</span>
+                            </p>
+                        </div>
                     </div>
+
                     <div className="flex gap-3 w-full md:w-auto">
-                        <button
-                            onClick={() => navigate('/budgets')}
-                            className="flex-1 md:flex-none px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 font-medium transition-colors flex items-center justify-center gap-2"
-                        >
-                            <ArrowLeft size={18} />
-                            Voltar
-                        </button>
-                        <button
-                            onClick={handleConfirm}
-                            disabled={confirming}
-                            className="flex-1 md:flex-none px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold flex items-center justify-center gap-2 shadow-sm disabled:opacity-50 transition-all hover:shadow-md"
-                        >
-                            {confirming ? <Loader2 className="animate-spin" size={18} /> : <Check size={18} />}
-                            Confirmar Importação
-                        </button>
+
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mt-6">
+                            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                <FileSpreadsheet size={20} className="text-blue-600" /> Parâmetros do Orçamento
+                            </h3>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Estado (UF)</label>
+                                    <select
+                                        className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
+                                        value={params.uf}
+                                        onChange={e => setParams({ ...params, uf: e.target.value })}
+                                    >
+                                        <option value="BA">Bahia (BA)</option>
+                                        <option value="SP">São Paulo (SP)</option>
+                                        <option value="RJ">Rio de Janeiro (RJ)</option>
+                                        <option value="MG">Minas Gerais (MG)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Competência</label>
+                                    <input
+                                        type="month"
+                                        className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
+                                        value={params.competence}
+                                        onChange={e => setParams({ ...params, competence: e.target.value })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">BDI (%)</label>
+                                    <input
+                                        type="number"
+                                        className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
+                                        value={params.bdi_percent}
+                                        onChange={e => setParams({ ...params, bdi_percent: parseFloat(e.target.value) })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Encargos (Horista %)</label>
+                                    <input
+                                        type="number"
+                                        className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
+                                        value={params.encargo_horista_percent}
+                                        onChange={e => setParams({ ...params, encargo_horista_percent: parseFloat(e.target.value) })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Encargos (Mensalista %)</label>
+                                    <input
+                                        type="number"
+                                        className="w-full p-2 border rounded-lg bg-slate-50 font-medium"
+                                        value={params.encargo_mensalista_percent}
+                                        onChange={e => setParams({ ...params, encargo_mensalista_percent: parseFloat(e.target.value) })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Regime</label>
+                                    <div className="flex gap-2 bg-slate-50 p-1.5 rounded-lg border">
+                                        <button
+                                            className={`flex-1 text-xs font-bold py-1 rounded ${params.encargo_mode === 'nao_desonerado' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}
+                                            onClick={() => setParams({ ...params, encargo_mode: 'nao_desonerado' })}
+                                        >
+                                            Não Des.
+                                        </button>
+                                        <button
+                                            className={`flex-1 text-xs font-bold py-1 rounded ${params.encargo_mode === 'desonerado' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}
+                                            onClick={() => setParams({ ...params, encargo_mode: 'desonerado' })}
+                                        >
+                                            Desonerado
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 justify-end mt-6">
+                            <button
+                                onClick={() => navigate('/budgets')}
+                                className="px-5 py-2.5 border border-slate-200 text-slate-600 bg-white rounded-xl hover:bg-slate-50 hover:border-slate-300 font-medium transition-all flex items-center justify-center gap-2"
+                            >
+                                <ArrowLeft size={18} />
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleGenerateBudget}
+                                disabled={generating || items.length === 0}
+                                className="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 active:transform active:scale-95 font-semibold shadow-md shadow-blue-600/20 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 transition-all min-w-[200px]"
+                            >
+                                {generating ? (
+                                    <>
+                                        <Loader2 className="animate-spin" size={20} />
+                                        Gerando Orçamento...
+                                    </>
+                                ) : (
+                                    <>
+                                        <FileSpreadsheet size={20} />
+                                        Gerar Orçamento Final
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                <div className="overflow-x-auto">
+
+                {/* Content */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col min-h-[400px]">
                     {items.length === 0 ? (
-                        <div className="p-12 text-center text-slate-500 bg-slate-50/50">
-                            <p className="text-lg">Nenhum item encontrado para esta importação.</p>
-                            <p className="text-sm mt-2">O processamento pode não ter gerado resultados ou ocorreu um erro.</p>
+                        <div className="flex-1 flex flex-col items-center justify-center p-12 text-slate-400 gap-4">
+                            <div className="bg-slate-50 p-6 rounded-full">
+                                <FileSpreadsheet size={48} className="opacity-20" />
+                            </div>
+                            <p className="text-lg font-medium text-slate-600">Nenhum item processado</p>
+                            <p className="text-sm max-w-xs text-center">A extração via IA não retornou itens. Verifique se o arquivo original contém tabelas legíveis.</p>
                         </div>
                     ) : (
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider border-b border-slate-200">
-                                    <th className="p-4 font-semibold">Descrição</th>
-                                    <th className="p-4 font-semibold w-24 text-center">Qtd</th>
-                                    <th className="p-4 font-semibold w-24 text-center">Unid</th>
-                                    <th className="p-4 font-semibold w-32 text-right">Preço</th>
-                                    <th className="p-4 font-semibold w-24 text-center">Confiança</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 text-sm">
-                                {items.map((item) => (
-                                    <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                                        <td className="p-4 text-slate-900 font-medium">
-                                            {item.description_normalized || <span className="text-slate-400 italic">Sem descrição</span>}
-                                        </td>
-                                        <td className="p-4 text-slate-600 text-center">
-                                            {item.quantity?.toLocaleString('pt-BR') || '-'}
-                                        </td>
-                                        <td className="p-4 text-slate-600 text-center">
-                                            {item.unit || '-'}
-                                        </td>
-                                        <td className="p-4 text-right font-mono text-slate-700">
-                                            {item.price_selected
-                                                ? item.price_selected.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-                                                : '-'}
-                                        </td>
-                                        <td className="p-4 text-center">
-                                            {item.confidence_score !== null ? (
-                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold
-                                                    ${(item.confidence_score || 0) > 0.8 ? 'bg-green-100 text-green-700' :
-                                                        (item.confidence_score || 0) > 0.5 ? 'bg-amber-100 text-amber-700' :
-                                                            'bg-red-100 text-red-700'
-                                                    }
-                                                `}>
-                                                    {Math.round((item.confidence_score || 0) * 100)}%
-                                                </span>
-                                            ) : (
-                                                <span className="text-slate-400 text-xs">-</span>
-                                            )}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                        <>
+                            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                                <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">Itens Extraídos ({items.length})</h3>
+                                <div className="text-xs text-slate-400">Estes itens serão convertidos em orçamento</div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse">
+                                    <thead>
+                                        <tr className="bg-white text-slate-500 text-xs font-semibold uppercase tracking-wider border-b border-slate-100">
+                                            <th className="px-6 py-4 w-16 text-center">#</th>
+                                            <th className="px-6 py-4">Descrição</th>
+                                            <th className="px-6 py-4 w-24 text-center">Unid</th>
+                                            <th className="px-6 py-4 w-32 text-right">Qtd</th>
+                                            <th className="px-6 py-4 w-32 text-right">Preço Unit.</th>
+                                            <th className="px-6 py-4 w-32 text-right">Total</th>
+                                            <th className="px-6 py-4 w-28 text-center">Confiança</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {items.map((item, idx) => (
+                                            <tr key={item.id || idx} className="hover:bg-slate-50/80 transition-colors group">
+                                                <td className="px-6 py-3 text-center text-slate-400 text-xs font-mono">{idx + 1}</td>
+                                                <td className="px-6 py-3 text-slate-800 font-medium text-sm group-hover:text-blue-700 transition-colors">
+                                                    {item.description || <span className="text-slate-300 italic">Sem descrição</span>}
+                                                </td>
+                                                <td className="px-6 py-3 text-center text-slate-500 text-xs uppercase bg-slate-50/50 rounded m-2">
+                                                    {item.unit || '-'}
+                                                </td>
+                                                <td className="px-6 py-3 text-right text-slate-600 text-sm tabular-nums">
+                                                    {(item.quantity || 0).toLocaleString('pt-BR')}
+                                                </td>
+                                                <td className="px-6 py-3 text-right text-slate-600 text-sm tabular-nums font-mono bg-slate-50/30">
+                                                    {(item.unit_price || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                </td>
+                                                <td className="px-6 py-3 text-right text-slate-900 font-semibold text-sm tabular-nums font-mono">
+                                                    {(item.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                </td>
+                                                <td className="px-6 py-3 text-center">
+                                                    {item.confidence !== null ? (
+                                                        <div className="flex items-center justify-center">
+                                                            <div className={`
+                                                                w-1.5 h-1.5 rounded-full mr-1.5
+                                                                ${(item.confidence || 0) > 0.8 ? 'bg-green-500' : (item.confidence || 0) > 0.5 ? 'bg-amber-400' : 'bg-red-500'}
+                                                            `}></div>
+                                                            <span className={`text-xs font-medium ${(item.confidence || 0) > 0.8 ? 'text-green-700' : (item.confidence || 0) > 0.5 ? 'text-amber-700' : 'text-red-700'}`}>
+                                                                {Math.round((item.confidence || 0) * 100)}%
+                                                            </span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-slate-300">-</span>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
                     )}
                 </div>
-                {items.length > 0 && (
-                    <div className="p-4 border-t border-slate-100 bg-slate-50 text-xs text-slate-500 text-center">
-                        Exibindo {items.length} itens recuperados da Inteligência Artificial.
-                    </div>
-                )}
             </div>
         </div>
     );
