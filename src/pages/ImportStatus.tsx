@@ -6,6 +6,7 @@ import { Loader2, AlertCircle, CheckCircle2, FileText, ArrowLeft, Download, Spar
 import type { ImportJob } from '../features/importer/types';
 import ImportReviewPage from './ImportReviewPage';
 import { saveAs } from 'file-saver';
+import { toRelativePath } from '../utils/appUrl';
 
 // --- TYPES ---
 type UIStatus =
@@ -74,7 +75,7 @@ export default function ImportStatus() {
             // PRIORITY REDIRECT: IF BUDGET EXISTS, GO THERE (Ignore status)
             if ((jobData as any)?.result_budget_id) {
                 console.log("[ImportStatus] Budget ready, redirecting:", (jobData as any).result_budget_id);
-                navigate(`/budget/${(jobData as any).result_budget_id}`);
+                navigate(toRelativePath(`/budget/${(jobData as any).result_budget_id}`));
                 return; // Stop processing
             }
 
@@ -138,7 +139,7 @@ export default function ImportStatus() {
         // PRIORITY NAVIGATION: If budget exists, go there immediately
         if ((job as any)?.result_budget_id) {
             console.log("Redirecting to existing budget:", (job as any).result_budget_id);
-            navigate(`/budget/${(job as any).result_budget_id}`);
+            navigate(toRelativePath(`/budget/${(job as any).result_budget_id}`));
         }
 
     }, [uiStatus, id, job]);

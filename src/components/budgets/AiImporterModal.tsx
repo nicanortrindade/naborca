@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { runImportParseWorkerUntilDone } from '../../services/importWorkerPolling';
 import { saveImportSession, loadImportSession, clearImportSession, type ImportSession } from '../../services/importPollingSession';
 import { clsx } from 'clsx';
+import { toRelativePath } from '../../utils/appUrl';
 
 interface AiImporterModalProps {
     onClose: () => void;
@@ -108,12 +109,14 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                 setUploadStep('Concluído! Redirecionando...');
                 clearImportSession();
 
+
                 // IMPORTANT: Immediate Navigation if budget ID is present
                 if (result.resultBudgetId) {
                     // Short delay purely for UX "Concluído" message visibility
                     await new Promise(r => setTimeout(r, 600));
                     if (!controller.signal.aborted) {
-                        navigate(`/budget/${result.resultBudgetId}`);
+                        // DEFENSIVE: Ensure we never navigate to an absolute URL accidentally
+                        navigate(toRelativePath(`/budget/${result.resultBudgetId}`));
                         onClose();
                         return; // Stop execution
                     }

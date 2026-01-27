@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import type { AiImportItem } from '../features/importer/types';
 import { Loader2, ArrowLeft, CheckCircle, AlertCircle, Wand2, FileSpreadsheet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { toRelativePath } from '../utils/appUrl';
 
 interface ImportReviewPageProps {
     jobId: string;
@@ -100,7 +101,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
             }
 
             // Success
-            navigate(`/budget/${result.budget_id}`);
+            navigate(toRelativePath(`/budget/${result.budget_id}`));
 
         } catch (err: any) {
             console.error("Generate Error:", err);
