@@ -8,6 +8,7 @@ interface PollingResult {
     extractedTextLen?: number;
     message?: string;
     raw?: any;
+    resultBudgetId?: string;
 }
 
 interface WorkerResponse {
@@ -69,156 +70,135 @@ function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
     });
 }
 
+// NEW IMPLEMENTATION: DB Polling
 export async function runImportParseWorkerUntilDone(params: {
     jobId: string;
     importFileId?: string;
     signal?: AbortSignal;
     onProgress?: (info: { status: WorkerStatus; attempt: number; nextDelayMs: number; elapsedMs: number; message?: string }) => void;
 }): Promise<PollingResult> {
-    const { jobId, importFileId, signal, onProgress } = params;
+    const { jobId, signal, onProgress } = params;
     const startAt = Date.now();
     let attempt = 0;
+    const MAX_TIME_MS = 10 * 60 * 1000; // 10 minutes timeout
+    const POLLING_INTERVAL_MS = 3000;
 
-    // Backoff settings
-    let delayMs = 5000;
-    const MAX_DELAY = 20000;
-    const MAX_ATTEMPTS = 60;
-    const MAX_TIME_MS = 10 * 60 * 1000; // 10 minutes
+    logTelemetry('info', 'polling_start_db_mode', { jobId });
 
-    let lastResponse: WorkerResponse | null = null;
-    let consecutiveErrors = 0;
-    let unknownCounter = 0;
-
-    logTelemetry('info', 'polling_start', { jobId, importFileId });
-
-    while (attempt < MAX_ATTEMPTS) {
+    while (true) {
         attempt++;
         const elapsedMs = Date.now() - startAt;
 
         // Check Timeout
         if (elapsedMs > MAX_TIME_MS) {
             logTelemetry('warn', 'polling_terminal', { jobId, reason: 'timeout_duration', elapsedMs });
-            return { finalStatus: 'timeout', raw: lastResponse, message: "Tempo limite excedido." };
+            return { finalStatus: 'timeout', message: "Tempo limite excedido." };
         }
 
-        // Check User Abort
+        // Check Abort
         if (signal?.aborted) {
             logTelemetry('info', 'polling_cancel', { jobId, attempt });
             throw new Error('Polling cancelled');
         }
 
-        // Debug log (Dev only)
-        logTelemetry('debug', 'polling_attempt', { jobId, attempt, elapsedMs });
-
         try {
-            // Invoke Worker
-            const { data, error } = await supabase.functions.invoke('import-parse-worker', {
-                body: { job_id: jobId, import_file_id: importFileId }
-            });
+            // 1. Fetch Job Status (Fail-fast)
+            const { data: jobRaw, error: jobError } = await supabase
+                .from('import_jobs' as any)
+                .select('status, last_error, result_budget_id')
+                .eq('id', jobId)
+                .single();
 
-            if (error) {
-                const status = (error as any)?.status || (error as any)?.context?.status || 0;
-                const isRateLimit = status === 429;
-                const isServerErr = status >= 500 && status < 600;
-                const isNetwork = !status;
+            const job = jobRaw as any;
 
-                logTelemetry('warn', 'polling_http_error', { jobId, attempt, status, message: error.message });
+            if (jobError) {
+                // Ignore transient errors, log warning
+                console.warn("[IMPORT-POLL] Error fetching job:", jobError);
+            } else if (job?.status === 'failed') {
+                const msg = job.last_error || "O Job falhou durante o processamento.";
+                logTelemetry('error', 'polling_terminal', { jobId, reason: 'job_failed', msg });
+                return { finalStatus: 'failed', message: msg };
+            }
 
-                // Retry Logic
-                if (isRateLimit || isServerErr || isNetwork) {
-                    consecutiveErrors++;
-                    if (consecutiveErrors >= 8) {
-                        const msg = `Erro de conexão persistente (${consecutiveErrors} falhas seguidas). Status: ${status}`;
-                        logTelemetry('error', 'polling_terminal', { jobId, reason: 'max_consecutive_errors', msg });
-                        return { finalStatus: 'failed', message: msg, raw: error };
-                    }
-                } else {
-                    // Client Error
-                    const msg = `Erro na requisição: ${error.message || status}`;
-                    logTelemetry('error', 'polling_terminal', { jobId, reason: 'client_error', msg });
-                    return { finalStatus: 'failed', message: msg, raw: error };
-                }
-            } else {
-                consecutiveErrors = 0;
-                lastResponse = data as WorkerResponse;
-                const statusRaw = lastResponse.status;
-                const message = lastResponse.message;
+            // CHECK RESULT BUDGET ID (Immediate Success)
+            if (job?.result_budget_id) {
+                logTelemetry('info', 'polling_terminal', { jobId, result: 'success_budget_ready' });
+                return {
+                    finalStatus: 'success',
+                    resultBudgetId: job.result_budget_id,
+                    message: "Orçamento gerado com sucesso."
+                };
+            }
 
-                // Map raw status to WorkerStatus
-                let status: WorkerStatus = 'unknown';
+            // 2. Fetch Tasks Status (Progress)
+            const { data: tasks, error: tasksError } = await supabase
+                .from('import_parse_tasks' as any)
+                .select('status')
+                .eq('job_id', jobId);
 
-                if (statusRaw === 'success') status = 'success';
-                else if (statusRaw === 'ocr_empty') status = 'ocr_empty';
-                else if (statusRaw === 'failed' || statusRaw === 'error' || statusRaw === 'ocr_error') status = 'failed';
-                else if (statusRaw === 'ocr_started') status = 'ocr_started';
-                else if (statusRaw === 'ocr_running') status = 'ocr_running';
+            if (tasksError) {
+                console.warn("[IMPORT-POLL] Error fetching tasks:", tasksError);
+            }
 
-                // Handle Unknown
-                if (status === 'unknown') {
-                    unknownCounter++;
-                    logTelemetry('warn', 'polling_unknown_status', { jobId, statusRaw, count: unknownCounter });
-                    if (unknownCounter >= 3) {
-                        const msg = `Status inesperado do worker: ${statusRaw}`;
-                        logTelemetry('error', 'polling_terminal', { jobId, reason: 'max_unknown_status', msg });
-                        return { finalStatus: 'failed', message: msg, raw: lastResponse };
-                    }
-                } else {
-                    unknownCounter = 0;
-                }
+            // 3. Fetch Items Count (Feedback)
+            const { count: itemsCount, error: itemsError } = await supabase
+                .from('import_ai_items' as any)
+                .select('*', { count: 'exact', head: true })
+                .eq('job_id', jobId);
 
-                // Terminal States
-                if (status === 'success') {
-                    logTelemetry('info', 'polling_terminal', { jobId, finalStatus: 'success', len: lastResponse.len, elapsedMs });
-                    return { finalStatus: 'success', extractedTextLen: lastResponse.len, message, raw: lastResponse };
-                }
-                if (status === 'ocr_empty') {
-                    logTelemetry('info', 'polling_terminal', { jobId, finalStatus: 'ocr_empty', elapsedMs });
-                    return { finalStatus: 'ocr_empty', message, raw: lastResponse };
-                }
-                if (status === 'failed') {
-                    const fallbackMsg = lastResponse.error_message || lastResponse.error || message || "Erro desconhecido no worker";
-                    logTelemetry('error', 'polling_terminal', { jobId, finalStatus: 'failed', msg: fallbackMsg, elapsedMs });
-                    return { finalStatus: 'failed', message: fallbackMsg, raw: lastResponse };
-                }
+            // Logic
+            if (tasks && tasks.length > 0) {
+                const total = tasks.length;
+                const done = tasks.filter((t: any) => t.status === 'done').length;
+                const failed = tasks.filter((t: any) => t.status === 'failed').length;
+                const completed = done + failed;
+                const isFinished = completed === total;
 
-                // Report Progress
+                // Progress Update
                 if (onProgress) {
                     onProgress({
-                        status,
+                        status: 'ocr_running', // Maps to "Processando..." in UI
                         attempt,
-                        nextDelayMs: delayMs,
+                        nextDelayMs: POLLING_INTERVAL_MS,
                         elapsedMs,
-                        message
+                        message: `Processando itens... (${done}/${total}) - ${itemsCount || 0} extraídos`
+                    });
+                }
+
+                // Check Completion
+                if (isFinished) {
+                    if (failed === total) {
+                        // All failed
+                        logTelemetry('error', 'polling_terminal', { jobId, result: 'all_tasks_failed' });
+                        return { finalStatus: 'failed', message: "Todas as tarefas de processamento falharam." };
+                    }
+
+                    // Success
+                    logTelemetry('info', 'polling_terminal', { jobId, result: 'success', items: itemsCount });
+                    return {
+                        finalStatus: 'success',
+                        extractedTextLen: itemsCount || 0, // Abuse field for item count
+                        message: `Concluído! ${itemsCount} itens extraídos.`
+                    };
+                }
+            } else {
+                // No tasks yet? Maybe just started.
+                if (onProgress) {
+                    onProgress({
+                        status: 'ocr_started',
+                        attempt,
+                        nextDelayMs: POLLING_INTERVAL_MS,
+                        elapsedMs,
+                        message: "Iniciando processamento..."
                     });
                 }
             }
 
-        } catch (e: any) {
-            if (e.message === 'Polling cancelled') {
-                logTelemetry('info', 'polling_cancel', { jobId, attempt });
-                throw e;
-            }
-
-            console.error(`[IMPORT-POLL] Unexpected exception:`, e);
-            consecutiveErrors++;
-
-            if (consecutiveErrors >= 8) {
-                const msg = `Exceção crítica no polling: ${e.message}`;
-                logTelemetry('error', 'polling_terminal', { jobId, reason: 'exception_loop', msg });
-                return { finalStatus: 'failed', message: msg, raw: e };
-            }
+        } catch (err: any) {
+            console.error("[IMPORT-POLL] Unexpected error:", err);
         }
 
-        // Apply Backoff + Jitter
-        const jitter = 0.9 + Math.random() * 0.2;
-        const sleepTime = Math.round(delayMs * jitter);
-
-        await sleepAbortable(sleepTime, signal);
-
-        // Increase delay for next time (cap at MAX_DELAY)
-        delayMs = Math.min(MAX_DELAY, Math.round(delayMs * 1.35));
+        // Wait
+        await sleepAbortable(POLLING_INTERVAL_MS, signal);
     }
-
-    logTelemetry('warn', 'polling_terminal', { jobId, reason: 'max_attempts' });
-    return { finalStatus: 'timeout', raw: lastResponse, message: "Número máximo de tentativas excedido." };
 }

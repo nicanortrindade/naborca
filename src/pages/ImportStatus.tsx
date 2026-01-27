@@ -128,13 +128,13 @@ export default function ImportStatus() {
             pollIntervalRef.current = null;
         }
 
-        // POKE WORKER if running
-        if (uiStatus === 'ocr_running' && id) {
-            console.log("Poking worker...");
-            supabase.functions.invoke('import-parse-worker', { body: { job_id: id } }).catch(console.error);
+        // PRIORITY NAVIGATION: If budget exists, go there immediately
+        if ((job as any)?.result_budget_id) {
+            console.log("Redirecting to existing budget:", (job as any).result_budget_id);
+            navigate(`/budget/${(job as any).result_budget_id}`);
         }
 
-    }, [uiStatus, id]);
+    }, [uiStatus, id, job]);
 
 
     // --- 3. STATUS DERIVATION (MATCHING BACKEND LOGIC) ---
@@ -143,10 +143,29 @@ export default function ImportStatus() {
         error?: string,
         warning?: string
     } => {
+        // PRIORITY 1: Budget Already Created (Success)
+        // If the backend created a budget, we don't care about job status failures.
+        if ((j as any)?.result_budget_id) {
+            console.log("[ImportStatus] Budget found, ignoring failed status.");
+            // Auto-redirect if needed, but for now show success UI
+            // Actually, the user requirement is "Navegar imediatamente para /budget/{budget_id}" in ImportReview?
+            // But ImportStatus redirects to ImportReviewPage if "review_ready".
+            // We'll let ImportReviewPage handle the final navigation or just go straight there?
+            // "Encerrar o modal de importação" -> This implies we should maybe just navigate away.
+            // But let's stick to "review_ready" to render ImportReviewPage which allows "Generate" (or "View"?)
+            // Wait, ImportReviewPage generates the budget.
+            // If result_budget_id is ALREADY set, that means it's ALREADY finalized?
+            // The user request says: "Se budget_id existir... Navegar imediatamente para /budget/{budget_id}"
+            // This implies we should redirect automatically.
+
+            // However, strictly inside deriveUiStatus, we should return a success state.
+            return { status: "review_ready" };
+        }
+
         const textLen = f?.extracted_text?.length ?? 0;
         const ocr = f?.metadata?.ocr;
 
-        // FINAL-FINAL (itens IA já extraídos, se existir)
+        // ... rest of logic for extracting items ...
         if (f?.extracted_completed_at) {
             return { status: "review_ready" };
         }

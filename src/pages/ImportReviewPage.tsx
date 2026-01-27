@@ -63,54 +63,43 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         setGenerating(true);
 
         try {
-            // Function call with Auth
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) {
-                alert("Sessão expirada. Faça login novamente.");
-                return;
-            }
-
-            const response = await fetch('https://cgebiryqfqheyazwtzzm.supabase.co/functions/v1/import-finalize-budget', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${session.access_token}`
-                },
-                body: JSON.stringify({
-                    job_id: jobId,
+            const { data, error } = await supabase.functions.invoke('import-finalize-budget', {
+                body: {
+                    job_id: jobId, // Backend expects job_id
+                    import_job_id: jobId, // Included for compliance with user instructions
                     uf: params.uf,
                     competence: params.competence,
                     desonerado: params.encargo_mode === 'desonerado',
-                    bdi_percent: params.bdi_percent,
                     bdi_mode: params.bdi_percent,
                     social_charges: {
                         horista: params.encargo_horista_percent,
                         mensalista: params.encargo_mensalista_percent
                     }
-                })
+                }
             });
 
-            if (!response.ok) {
-                // HTTP Error
-                if (response.status === 403) throw new Error("Acesso negado ao Job.");
-                if (response.status === 400) throw new Error("Requisição inválida (Job ID ausente).");
-                const txt = await response.text();
-                throw new Error(`Erro do servidor (${response.status}): ${txt}`);
+            if (error) {
+                // Supabase Functions invoke returns an error object if the function fails or returns non-2xx
+                // We convert it to a throwable error to be caught below
+                throw new Error(error.message || "Erro na chamada da função");
             }
 
-            const result = await response.json();
+            const result = data;
 
-            if (!result.ok) {
-                // Logical Error from Function
-                if (result.reason === 'no_items_found') {
+            if (!result || !result.budget_id) {
+                // Logical Error
+                if (result?.reason === 'no_items_found') {
                     alert("Atenção: Nenhum item foi encontrado para gerar o orçamento.");
                     return;
                 }
-                throw new Error(result.details || result.reason || "Erro desconhecido ao gerar orçamento.");
+                if (result?.ok === false) {
+                    throw new Error(result.details || result.reason || "Erro desconhecido no processamento.");
+                }
+                // Fallback
+                throw new Error("Resposta inválida do servidor (Budget ID ausente).");
             }
 
-            // Success!
-            console.log("Budget Generated:", result.budget_id);
+            // Success
             navigate(`/budget/${result.budget_id}`);
 
         } catch (err: any) {

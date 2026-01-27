@@ -57,9 +57,19 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
         };
     }, []);
 
+
+    // State to track the current active job strictly
+    const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+
     // --- CORE LOGIC: POLLING ENGINE ---
     const executePolling = async (jobId: string, importFileId?: string, fileName?: string) => {
         if (isRunningRef.current) return;
+
+        // Force strictly current ID
+        if (currentJobId && currentJobId !== jobId) {
+            console.warn('[UI-IMPORT] Polling requested for mismatched Job ID. Ignoring old job.');
+            return;
+        }
 
         isRunningRef.current = true;
         const controller = new AbortController();
@@ -97,9 +107,16 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
             if (result.finalStatus === 'success') {
                 setUploadStep('Concluído! Redirecionando...');
                 clearImportSession();
+
                 await new Promise(r => setTimeout(r, 800));
+
                 if (!controller.signal.aborted) {
-                    navigate(`/importacoes/${jobId}`);
+                    // Check for direct budget navigation first
+                    if (result.resultBudgetId) {
+                        navigate(`/budget/${result.resultBudgetId}`);
+                    } else {
+                        navigate(`/importacoes/${jobId}`);
+                    }
                     onClose();
                 }
             } else {
@@ -117,6 +134,7 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
         } finally {
             isRunningRef.current = false;
             setCancelMode(false);
+            // Don't clear currentJobId here to avoid UI flicker, let unmount handle it
         }
     };
 
@@ -126,15 +144,26 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
         try {
             logUiEvent('start_import_click', { fileName: syntheticFile.name });
             setIsUploading(true);
+            setUploadStep('Preparando ambiente...');
+
+            // PATCH OBIGATÓRIO: Limpar qualquer sessão anterior para evitar "Resume" de job antigo
+            clearImportSession();
+            setResumeSession(null);
+            setCurrentJobId(null);
+
             setUploadStep('Criando job de importação...');
 
-            // 1. Create Job
+            // 1. Create Job with robust error handling
             const { data: jobData, error: jobError } = await (supabase
                 .from('import_jobs' as any)
                 .insert({ user_id: user.id, status: 'queued' })
                 .select()
                 .single() as any);
+
             if (jobError) throw new Error(jobError.message);
+
+            // Set the Source of Truth immediately
+            setCurrentJobId(jobData.id);
 
             // 2. Upload Files Function
             const uploadFile = async (file: File, role: 'synthetic' | 'analytic') => {
@@ -169,12 +198,13 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                 await uploadFile(analyticFile, 'analytic');
             }
 
-            // 3. Start Polling
+            // 3. Start Polling with strict ID
             await executePolling(jobData.id, synId, syntheticFile.name);
 
         } catch (error: any) {
             alert(error.message);
             setIsUploading(false);
+            setCurrentJobId(null);
         }
     };
 
