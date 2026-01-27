@@ -71,6 +71,13 @@ export default function ImportStatus() {
 
             if (jobError) throw jobError;
 
+            // PRIORITY REDIRECT: IF BUDGET EXISTS, GO THERE (Ignore status)
+            if ((jobData as any)?.result_budget_id) {
+                console.log("[ImportStatus] Budget ready, redirecting:", (jobData as any).result_budget_id);
+                navigate(`/budget/${(jobData as any).result_budget_id}`);
+                return; // Stop processing
+            }
+
             // B. Fetch Latest File
             const { data: fileData, error: fileError } = await (supabase
                 .from('import_files' as any)

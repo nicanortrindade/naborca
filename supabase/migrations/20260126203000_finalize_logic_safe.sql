@@ -2,6 +2,7 @@
 -- Ajustes: Idempotência SEGURA (Short-circuit se já existe)
 -- Depends on: 20260126180000_phase3_schema.sql
 
+DROP FUNCTION IF EXISTS public.finalize_import_to_budget(uuid, uuid, jsonb, jsonb);
 CREATE OR REPLACE FUNCTION public.finalize_import_to_budget(
     p_job_id uuid,
     p_user_id uuid,

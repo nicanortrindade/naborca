@@ -111,6 +111,17 @@ export async function runImportParseWorkerUntilDone(params: {
 
             const job = jobRaw as any;
 
+            // --- CRITICAL FIX: RESULT BUDGET ID TAKES PRECEDENCE OVER ANY STATUS ---
+            // If we have a result, WE ARE DONE. Ignore "failed" or any other status.
+            if (job?.result_budget_id) {
+                logTelemetry('info', 'polling_terminal', { jobId, result: 'success_budget_ready_priority' });
+                return {
+                    finalStatus: 'success',
+                    resultBudgetId: job.result_budget_id,
+                    message: "Orçamento gerado com sucesso."
+                };
+            }
+
             if (jobError) {
                 // Ignore transient errors, log warning
                 console.warn("[IMPORT-POLL] Error fetching job:", jobError);
@@ -118,16 +129,6 @@ export async function runImportParseWorkerUntilDone(params: {
                 const msg = job.last_error || "O Job falhou durante o processamento.";
                 logTelemetry('error', 'polling_terminal', { jobId, reason: 'job_failed', msg });
                 return { finalStatus: 'failed', message: msg };
-            }
-
-            // CHECK RESULT BUDGET ID (Immediate Success)
-            if (job?.result_budget_id) {
-                logTelemetry('info', 'polling_terminal', { jobId, result: 'success_budget_ready' });
-                return {
-                    finalStatus: 'success',
-                    resultBudgetId: job.result_budget_id,
-                    message: "Orçamento gerado com sucesso."
-                };
             }
 
             // 2. Fetch Tasks Status (Progress)

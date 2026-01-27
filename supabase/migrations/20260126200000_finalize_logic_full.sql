@@ -3,6 +3,7 @@
 -- Includes Path A, Path B, and Path C logic.
 
 -- Helper: Find Internal Composition (Path A) --
+DROP FUNCTION IF EXISTS public.find_internal_composition(text, text, text, boolean);
 CREATE OR REPLACE FUNCTION public.find_internal_composition(
     p_code text,
     p_uf text,
@@ -53,6 +54,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
 -- Main RPC: finalization with Analytic Data Payload --
+DROP FUNCTION IF EXISTS public.finalize_import_to_budget(uuid, uuid, jsonb, jsonb);
 CREATE OR REPLACE FUNCTION public.finalize_import_to_budget(
     p_job_id uuid,
     p_user_id uuid,

@@ -53,6 +53,9 @@ $$;
 -- FUNÇÃO 2: import_extraction_watchdog
 -- Objetivo: Identificar jobs travados e marcar para retentativa automática
 -- ----------------------------------------------------------------------------
+-- Drop old signature from previous migration to avoid ambiguity
+DROP FUNCTION IF EXISTS public.import_extraction_watchdog(interval);
+
 CREATE OR REPLACE FUNCTION public.import_extraction_watchdog()
 RETURNS int
 LANGUAGE plpgsql
@@ -140,8 +143,8 @@ END $$;
 -- ----------------------------------------------------------------------------
 -- COMENTÁRIOS DE DOCUMENTAÇÃO
 -- ----------------------------------------------------------------------------
-COMMENT ON FUNCTION public.reprocess_extraction IS 'Reseta um job de extração IA para nova tentativa manual, respeitando o limite de 6 tentativas.';
-COMMENT ON FUNCTION public.import_extraction_watchdog IS 'Monitor de jobs de extração travados. Implementa backoff exponencial para retentativas automáticas.';
+COMMENT ON FUNCTION public.reprocess_extraction(uuid) IS 'Reseta um job de extração IA para nova tentativa manual, respeitando o limite de 6 tentativas.';
+COMMENT ON FUNCTION public.import_extraction_watchdog() IS 'Monitor de jobs de extração travados. Implementa backoff exponencial para retentativas automáticas.';
 
 -- ----------------------------------------------------------------------------
 -- FUNÇÃO 3: get_extraction_retries_pending

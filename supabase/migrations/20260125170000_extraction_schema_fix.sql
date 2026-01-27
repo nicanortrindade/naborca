@@ -77,23 +77,35 @@ ALTER TABLE public.import_ai_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.import_ai_summaries ENABLE ROW LEVEL SECURITY;
 
 -- Policies import_ai_items
-CREATE POLICY "Users can insert their own ai items" ON public.import_ai_items FOR INSERT WITH CHECK (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
-CREATE POLICY "Users can view their own ai items" ON public.import_ai_items FOR SELECT USING (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
-CREATE POLICY "Users can delete their own ai items" ON public.import_ai_items FOR DELETE USING (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
+DO $$
+BEGIN
+    DROP POLICY IF EXISTS "Users can insert their own ai items" ON public.import_ai_items;
+    CREATE POLICY "Users can insert their own ai items" ON public.import_ai_items FOR INSERT WITH CHECK (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
 
--- Policies import_ai_summaries
-CREATE POLICY "Users can insert their own ai summaries" ON public.import_ai_summaries FOR INSERT WITH CHECK (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
-CREATE POLICY "Users can view their own ai summaries" ON public.import_ai_summaries FOR SELECT USING (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
-CREATE POLICY "Users can update their own ai summaries" ON public.import_ai_summaries FOR UPDATE USING (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
+    DROP POLICY IF EXISTS "Users can view their own ai items" ON public.import_ai_items;
+    CREATE POLICY "Users can view their own ai items" ON public.import_ai_items FOR SELECT USING (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
+
+    DROP POLICY IF EXISTS "Users can delete their own ai items" ON public.import_ai_items;
+    CREATE POLICY "Users can delete their own ai items" ON public.import_ai_items FOR DELETE USING (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
+
+    DROP POLICY IF EXISTS "Users can insert their own ai summaries" ON public.import_ai_summaries;
+    CREATE POLICY "Users can insert their own ai summaries" ON public.import_ai_summaries FOR INSERT WITH CHECK (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
+
+    DROP POLICY IF EXISTS "Users can view their own ai summaries" ON public.import_ai_summaries;
+    CREATE POLICY "Users can view their own ai summaries" ON public.import_ai_summaries FOR SELECT USING (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
+
+    DROP POLICY IF EXISTS "Users can update their own ai summaries" ON public.import_ai_summaries;
+    CREATE POLICY "Users can update their own ai summaries" ON public.import_ai_summaries FOR UPDATE USING (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
+END $$;

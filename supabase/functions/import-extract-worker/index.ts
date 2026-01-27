@@ -481,25 +481,110 @@ Deno.serve(async (req) => {
             const t0 = Date.now();
             const ts = new Date().toISOString();
 
-            // STRICT PROMPT FOR REPROCESS
             const systemPrompt = isReprocess
-                ? "You are a strict data extractor. Return JSON ONLY. No text."
-                : "You are an expert construction budget analyzer.";
+                ? "ATENÇÃO: MODO DE REPROCESSAMENTO. IGNORAR FALHAS ANTERIORES. FOCAR EM JSON VÁLIDO."
+                : "";
 
+            // USER DEFINED SYSTEM PROMPT (STRICT)
             const prompt = `
 ${systemPrompt}
-Extract structured line items from the provided text chunk.
+Você é um sistema de extração orçamentária para engenharia de custos.
 
-Rules:
-1. Return APENAS VALID JSON. No Markdown. No comments.
-2. Output Schema:
+OBJETIVO PRINCIPAL (OBRIGATÓRIO):
+Gerar UMA LISTA DE ITENS ORÇAMENTÁRIOS SINTÉTICOS A PARTIR DO TEXTO ABAIXO (TRECHO DE DOCUMENTO),
+MESMO QUE O DOCUMENTO SEJA IMPERFEITO, INCOMPLETO OU MAL FORMATADO.
+
+REGRA ABSOLUTA:
+❗ É PROIBIDO retornar uma lista vazia de itens (exceto se o trecho for absolutamente irrelevante).
+❗ É PROIBIDO abortar a extração por falta de dados.
+❗ É PROIBIDO usar mensagens genéricas como “Falha na extração automática” como resultado final.
+
+---
+
+PROCESSO DE EXTRAÇÃO (SEMPRE EXECUTAR):
+
+1. Analise O TEXTO DISPONÍVEL NO TRECHO.
+2. Identifique qualquer coisa que represente:
+   - serviços
+   - etapas
+   - atividades
+   - materiais
+   - descrições técnicas
+   - títulos, subtítulos ou listas
+3. Cada conceito identificado DEVE virar um item orçamentário.
+
+---
+
+ESTRUTURA DE CADA ITEM (OBRIGATÓRIA):
+
+Para CADA item, gere:
+
+- description (string clara e editável)
+- unit: (use a unidade encontrada ou "UN")
+- quantity: (use o valor encontrado ou 1)
+- unit_price: (SEMPRE 0)
+- total: (SEMPRE 0)
+- level:
+  - 1 = Etapa
+  - 2 = Subetapa
+  - 3 = Item
+- confidence:
+  - 0.9 → extração clara
+  - 0.5 → inferido
+  - 0.2 → altamente incerto
+
+---
+
+HIERARQUIA:
+
+- Sempre que possível:
+  - Crie uma Etapa (level 1)
+  - Dentro dela Subetapas (level 2)
+  - Dentro delas Itens (level 3)
+- Se não houver hierarquia clara:
+  - Crie tudo como level 3
+
+---
+
+FALLBACK OBRIGATÓRIO (CRÍTICO):
+
+Se o texto NÃO contiver itens claramente estruturados:
+- Gere itens sintéticos a partir de:
+  - títulos
+  - seções
+  - frases técnicas
+  - qualquer texto relevante
+- Use descrições genéricas porém úteis, por exemplo:
+  - “Serviços preliminares conforme documento”
+  - “Execução de etapas descritas no memorial”
+  - “Fornecimento de materiais conforme especificação”
+
+⚠️ Mesmo nesse cenário, gere NO MÍNIMO 3 itens (se houver texto legível).
+
+---
+
+SAÍDA FINAL:
+
+Retorne EXCLUSIVAMENTE um JSON válido no formato:
+
 {
-  "items": [{ "description": string, "unit": string | null, "quantity": number | null, "unit_price": number | null, "confidence": number }],
-  "summary": string | null 
+  "items": [
+    {
+      "description": "...",
+      "unit": "UN",
+      "quantity": 1,
+      "unit_price": 0,
+      "total": 0,
+      "level": 3,
+      "confidence": 0.5
+    }
+  ],
+  "summary": "Resumo do que foi encontrado neste trecho."
 }
-3. Ignore header repetitions.
-4. Normalize numbers (1.234,50 -> 1234.50).
-5. If no items found, return "items": [].
+
+Não inclua comentários.
+Não inclua explicações.
+Não inclua texto fora do JSON.
 
 TEXT CHUNK:
 """
@@ -804,6 +889,7 @@ ${chunk}
             quantity: parseBRNumber(item.quantity) || 0,
             unit_price: parseBRNumber(item.unit_price) || 0,
             confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
+            level: item.level || 3,
             total: (parseBRNumber(item.quantity) || 0) * (parseBRNumber(item.unit_price) || 0)
         })).filter(r => r.description.length > 0);
 
@@ -924,14 +1010,39 @@ ${chunk}
         });
 
         // 13. FINISH
-        await supabase.from('import_jobs').update({
-            status: 'waiting_user',
-            stage: 'success',
-            stage_updated_at: endTs.toISOString(),
-            extraction_retryable: false,
-            extraction_next_retry_at: null,
-            extraction_last_reason: 'standard_success'
-        }).eq('id', job_id);
+        const nowIso = new Date().toISOString();
+
+        // Marca job como pronto para finalização (sem inventar status enum)
+        const { error: jobUpdateErr } = await supabase
+            .from("import_jobs")
+            .update({
+                status: "processing",
+                current_step: "ready_for_finalize",
+                stage: "finalize",
+                stage_updated_at: nowIso,
+                updated_at: nowIso,
+                last_error: null,
+                extraction_retryable: false,
+                extraction_next_retry_at: null,
+                extraction_last_reason: 'standard_success'
+            })
+            .eq("id", job_id);
+
+        if (jobUpdateErr) {
+            console.error(`[EXTRACT] job ${job_id} failed to mark ready_for_finalize`, jobUpdateErr);
+            await supabase
+                .from("import_jobs")
+                .update({
+                    status: "failed",
+                    last_error: `extract_worker: failed to mark ready_for_finalize: ${jobUpdateErr.message}`,
+                    updated_at: nowIso,
+                })
+                .eq("id", job_id);
+
+            throw new Error(`Failed to mark job ready_for_finalize: ${jobUpdateErr.message}`);
+        } else {
+            console.info(`[EXTRACT] job ${job_id} marked ready_for_finalize`);
+        }
 
         return new Response(JSON.stringify({
             ok: true,

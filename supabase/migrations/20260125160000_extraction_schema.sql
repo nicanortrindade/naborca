@@ -75,22 +75,35 @@ CREATE TABLE IF NOT EXISTS public.import_summaries (
 ALTER TABLE public.import_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.import_summaries ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can insert their own import items" ON public.import_items FOR INSERT WITH CHECK (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
-CREATE POLICY "Users can view their own import items" ON public.import_items FOR SELECT USING (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
-CREATE POLICY "Users can delete their own import items" ON public.import_items FOR DELETE USING (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
+DO $$
+BEGIN
+    DROP POLICY IF EXISTS "Users can insert their own import items" ON public.import_items;
+    CREATE POLICY "Users can insert their own import items" ON public.import_items FOR INSERT WITH CHECK (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
 
-CREATE POLICY "Users can insert their own import summaries" ON public.import_summaries FOR INSERT WITH CHECK (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
-CREATE POLICY "Users can view their own import summaries" ON public.import_summaries FOR SELECT USING (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
-CREATE POLICY "Users can update their own import summaries" ON public.import_summaries FOR UPDATE USING (
-    auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
-);
+    DROP POLICY IF EXISTS "Users can view their own import items" ON public.import_items;
+    CREATE POLICY "Users can view their own import items" ON public.import_items FOR SELECT USING (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
+
+    DROP POLICY IF EXISTS "Users can delete their own import items" ON public.import_items;
+    CREATE POLICY "Users can delete their own import items" ON public.import_items FOR DELETE USING (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
+
+    DROP POLICY IF EXISTS "Users can insert their own import summaries" ON public.import_summaries;
+    CREATE POLICY "Users can insert their own import summaries" ON public.import_summaries FOR INSERT WITH CHECK (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
+
+    DROP POLICY IF EXISTS "Users can view their own import summaries" ON public.import_summaries;
+    CREATE POLICY "Users can view their own import summaries" ON public.import_summaries FOR SELECT USING (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
+
+    DROP POLICY IF EXISTS "Users can update their own import summaries" ON public.import_summaries;
+    CREATE POLICY "Users can update their own import summaries" ON public.import_summaries FOR UPDATE USING (
+        auth.uid() IN (SELECT user_id FROM public.import_jobs WHERE id = job_id)
+    );
+END $$;

@@ -108,15 +108,21 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                 setUploadStep('Concluído! Redirecionando...');
                 clearImportSession();
 
+                // IMPORTANT: Immediate Navigation if budget ID is present
+                if (result.resultBudgetId) {
+                    // Short delay purely for UX "Concluído" message visibility
+                    await new Promise(r => setTimeout(r, 600));
+                    if (!controller.signal.aborted) {
+                        navigate(`/budget/${result.resultBudgetId}`);
+                        onClose();
+                        return; // Stop execution
+                    }
+                }
+
                 await new Promise(r => setTimeout(r, 800));
 
                 if (!controller.signal.aborted) {
-                    // Check for direct budget navigation first
-                    if (result.resultBudgetId) {
-                        navigate(`/budget/${result.resultBudgetId}`);
-                    } else {
-                        navigate(`/importacoes/${jobId}`);
-                    }
+                    navigate(`/importacoes/${jobId}`);
                     onClose();
                 }
             } else {
