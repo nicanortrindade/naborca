@@ -1,7 +1,7 @@
 {
   "domain_hint": "naborca.netlify.app",
-  "git_sha": "e605f9a",
-  "build_time_iso": "2026-01-25T18:17:49.935Z",
+  "git_sha": "6bc15f5",
+  "build_time_iso": "2026-01-27T02:49:10.192Z",
   "features_expected": [
     "NO_sinapi_inputs_requests",
     "modal_add_item_uses_insumos",

@@ -1,24 +1,6 @@
 // supabase/functions/import-parse-dispatcher/index.ts
 // ============================================================================
-// NABOORÇA • DISPATCHER DE PARSE TASKS — Edge Function (Deno)
-// Função: import-parse-dispatcher
-// 
-// QUANDO USAR:
-// Esta função é uma ALTERNATIVA ao dispatcher via pg_net.
-// Use quando pg_net NÃO estiver habilitado no seu projeto Supabase.
-//
-// COMO FUNCIONA:
-// 1. Esta função é chamada periodicamente (cron externo, cloud scheduler, etc.)
-// 2. Busca tasks pendentes via RPC get_pending_parse_tasks
-// 3. Para cada task, invoca a Edge Function import-parse-worker
-// 4. Retorna status do dispatch
-//
-// INVOCAÇÃO:
-// POST sem body, ou GET
-// Header: Authorization: Bearer <service_role_key>
-//
-// NOTA: Para automatizar, configure um trigger externo (Cloudflare Worker,
-// GitHub Actions scheduled, ou outro serviço de cron que chame esta função).
+// NABOORÇA • DISPATCHER (PURE STATELESS + BACKOFF)
 // ============================================================================
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
@@ -27,36 +9,32 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
+// --- CONFIG ---
+const DB_FETCH_LIMIT = 50;
+const MAX_TASKS_PER_TICK = 10;
+
+// Backoff config
+const BACKOFF_DEFAULT_MIN = 5;
+const BACKOFF_429_MIN = 1; // 60s for 429/Fallback scenarios
+
+// --- HELPERS ---
 function jsonResponse(body: unknown, status = 200) {
-    return new Response(JSON.stringify(body, null, 2), {
+    return new Response(JSON.stringify(body), {
         status,
         headers: {
             "content-type": "application/json; charset=utf-8",
-            "access-control-allow-origin": "*",
-            "access-control-allow-headers": "authorization, x-client-info, apikey, content-type",
         },
     });
 }
 
-function corsPreflight() {
-    return new Response(null, {
-        status: 204,
-        headers: {
-            "access-control-allow-origin": "*",
-            "access-control-allow-headers": "authorization, x-client-info, apikey, content-type",
-            "access-control-allow-methods": "POST, GET, OPTIONS",
-        },
-    });
-}
-
-serve(async (req) => {
-    if (req.method === "OPTIONS") return corsPreflight();
-
-    const requestId = crypto.randomUUID();
-    console.log(`[DISPATCHER ${requestId}] Start`);
+// --- MAIN ---
+serve(async (req: Request) => {
+    const dispatchId = `dispatch-${crypto.randomUUID().slice(0, 6)}`;
+    console.log(`[DISPATCH ${dispatchId}] tick`);
 
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-        return jsonResponse({ error: "Server misconfigured (Supabase env)" }, 500);
+        console.error(`[DISPATCH ${dispatchId}] missing env SUPABASE_URL or SERVICE_ROLE_KEY`);
+        return jsonResponse({ error: "Server misconfigured (Env)" }, 500);
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -64,80 +42,120 @@ serve(async (req) => {
     });
 
     try {
-        // Buscar tasks pendentes via RPC
-        const { data: tasks, error: rpcError } = await supabase.rpc("get_pending_parse_tasks", {
-            max_tasks: 2,
-        });
+        // 1. SELECT ELIGIBLE TASKS
+        // Criteria: 
+        // - status 'queued' 
+        // - attempts < max
+        // - BACKOFF: updated_at check depending on last_error
 
-        if (rpcError) {
-            console.error(`[DISPATCHER ${requestId}] RPC error:`, rpcError);
-            return jsonResponse({ error: "Failed to get pending tasks", details: rpcError.message }, 500);
+        // We fetch a bit more to filter in memory for complex backoff logic
+        // Because "last_error" might need checking.
+        // Or we use a safe common denominator (1 min) in DB and filter 5 min in memory?
+        // Let's rely on DB for the base 1 min (minimum backoff) and filter specifically for 5 min default.
+
+        const minBackoffThreshold = new Date(Date.now() - 60000).toISOString(); // 1 min ago
+
+        const { data: tasks, error } = await supabase
+            .from("import_parse_tasks")
+            .select("id, job_id, file_id, status, locked_at, attempts, max_attempts, updated_at, last_error")
+            .eq("status", "queued")
+            .lt("updated_at", minBackoffThreshold) // At least 1 min cooldown for everyone
+            .order("updated_at", { ascending: true })
+            .limit(DB_FETCH_LIMIT);
+
+        if (error) {
+            console.error(`[DISPATCH ${dispatchId}] DB Error: ${error.message}`);
+            return jsonResponse({ error: error.message }, 500);
         }
 
         if (!tasks || tasks.length === 0) {
-            console.log(`[DISPATCHER ${requestId}] No pending tasks`);
-            return jsonResponse({ ok: true, dispatched: 0, message: "No pending tasks" });
+            console.log(`[DISPATCH ${dispatchId}] found 0 (after base backoff)`);
+            return jsonResponse({ count: 0, message: "No tasks ready" });
         }
 
-        console.log(`[DISPATCHER ${requestId}] Found ${tasks.length} tasks to dispatch`);
+        // 2. FILTER (Memory - Complex Backoff + Lock Expiry)
+        const candidates = tasks.filter((t: any) => {
+            const max = t.max_attempts || 5;
+            if (t.attempts >= max) return false;
 
-        const results: Array<{ task_id: string; status: string; error?: string }> = [];
+            if (t.locked_at) {
+                const lockedTime = new Date(t.locked_at).getTime();
+                const tenMin = 10 * 60 * 1000;
+                if (Date.now() - lockedTime < tenMin) return false;
+            }
 
-        // Dispatch each task
-        for (const task of tasks) {
-            console.log(`[DISPATCHER ${requestId}] Dispatching task=${task.task_id}`);
+            // Dynamic Backoff
+            // If last_error includes GEMINI_429, we accept the 1 min DB filter (already passed).
+            // If OTHER error execution, enforce 5 min.
+            // If NULL last_error (new task), 1 min filter is fine (or 0, but updated_at usually old)
+
+            if (t.last_error && !t.last_error.includes("GEMINI_429")) {
+                const updatedTime = new Date(t.updated_at).getTime();
+                const fiveMin = 5 * 60 * 1000;
+                if (Date.now() - updatedTime < fiveMin) return false;
+            }
+
+            return true;
+        }).slice(0, MAX_TASKS_PER_TICK);
+
+        console.log(`[DISPATCH ${dispatchId}] found ${candidates.length} ready (from ${tasks.length} fetched)`);
+
+        if (candidates.length === 0) {
+            return jsonResponse({ count: 0 });
+        }
+
+        // 3. INVOKE LOOP (Direct Fetch)
+        const results = [];
+        const workerUrl = `${SUPABASE_URL}/functions/v1/import-parse-worker`;
+
+        for (const task of candidates) {
+            const taskId = task.id;
+            console.log(`[DISPATCH ${dispatchId}] invoking worker task_id=${taskId}`);
 
             try {
-                // Invoke import-parse-worker
-                const { data, error } = await supabase.functions.invoke("import-parse-worker", {
-                    body: {
-                        task_id: task.task_id,
-                        job_id: task.job_id,
-                        file_id: task.file_id,
+                // Direct Fetch Call
+                const res = await fetch(workerUrl, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
                     },
+                    body: JSON.stringify({
+                        task_id: taskId,
+                        job_id: task.job_id,
+                        file_id: task.file_id
+                    })
                 });
 
-                if (error) {
-                    console.error(`[DISPATCHER ${requestId}] Worker invoke error for task=${task.task_id}:`, error);
-                    results.push({
-                        task_id: task.task_id,
-                        status: "invoke_error",
-                        error: error.message || String(error),
-                    });
-
-                    // Mark task as failed if invoke failed
-                    await supabase.rpc("mark_parse_task_failed", {
-                        p_task_id: task.task_id,
-                        p_error: `Dispatcher invoke error: ${error.message || String(error)}`,
-                    });
-                } else {
-                    console.log(`[DISPATCHER ${requestId}] Worker invoked for task=${task.task_id}`);
-                    results.push({
-                        task_id: task.task_id,
-                        status: "dispatched",
-                    });
+                const status = res.status;
+                let bodySnippet = "";
+                if (!res.ok || status === 200) {
+                    const txt = await res.text();
+                    bodySnippet = txt.slice(0, 200);
                 }
-            } catch (invokeErr: unknown) {
-                const errMsg = invokeErr instanceof Error ? invokeErr.message : String(invokeErr);
-                console.error(`[DISPATCHER ${requestId}] Exception dispatching task=${task.task_id}:`, errMsg);
+
+                console.log(`[DISPATCH ${dispatchId}] worker response task_id=${taskId} status=${status}`);
+
                 results.push({
-                    task_id: task.task_id,
-                    status: "exception",
-                    error: errMsg,
+                    id: taskId,
+                    http_status: status,
+                    status: res.ok ? 'ok' : 'error',
+                    body_snippet: bodySnippet
                 });
+
+            } catch (err: any) {
+                console.error(`[DISPATCH ${dispatchId}] worker fetch failed task_id=${taskId} err=${err.message}`);
+                results.push({ id: taskId, status: "fetch_exception", error: err.message });
             }
         }
 
-        console.log(`[DISPATCHER ${requestId}] Dispatch complete. Results:`, results);
-
         return jsonResponse({
-            ok: true,
-            dispatched: results.filter((r) => r.status === "dispatched").length,
-            results,
+            count: results.length,
+            details: results
         });
-    } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        console.error(`[DISPATCHER ${requestId}] Critical error:`, errMsg);
-        return jsonResponse({ error: "Dispatcher failed", message: errMsg }, 500);
+
+    } catch (e: any) {
+        console.error(`[DISPATCH ${dispatchId}] Fatal: ${e.message}`);
+        return jsonResponse({ error: e.message }, 500);
     }
 });

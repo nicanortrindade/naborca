@@ -78,7 +78,15 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                 },
                 body: JSON.stringify({
                     job_id: jobId,
-                    ...params
+                    uf: params.uf,
+                    competence: params.competence,
+                    desonerado: params.encargo_mode === 'desonerado',
+                    bdi_percent: params.bdi_percent,
+                    bdi_mode: params.bdi_percent,
+                    social_charges: {
+                        horista: params.encargo_horista_percent,
+                        mensalista: params.encargo_mensalista_percent
+                    }
                 })
             });
 
@@ -351,6 +359,8 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                 )}
             </div>
         </div>
-        </div >
+
     );
 }
+
+// RECREATED
