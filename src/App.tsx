@@ -216,7 +216,14 @@ const LayoutWrapper = () => {
   );
 }
 
+import { enforceCanonicalDomain } from './utils/domainGuard';
+
 function App() {
+  // GUARDIAN: Ensure we are on the correct domain immediately
+  useEffect(() => {
+    enforceCanonicalDomain();
+  }, []);
+
   return (
     <AuthProvider>
       <Router>
