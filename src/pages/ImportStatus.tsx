@@ -289,6 +289,36 @@ export default function ImportStatus() {
         }
     };
 
+    const handleAdvancedOcr = async () => {
+        if (!job) return;
+        try {
+            if (!confirm("O OCR Avançado é um processo mais lento (pode levar 2-3 minutos). Deseja continuar?")) return;
+
+            setUiStatus('extraction_failed_action'); // Mantém UI, mas vou mudar msg via state local se der
+            setWarningMessage("Iniciando OCR Avançado... Aguarde.");
+            setIsExtracting(true);
+
+            const { data, error } = await supabase.functions.invoke('import-ocr-fallback', {
+                body: { job_id: job.id }
+            });
+
+            if (error) throw error;
+
+            if (data?.ok) {
+                setWarningMessage("OCR Avançado finalizado! Recarregando dados...");
+                fetchData();
+            } else {
+                throw new Error(data?.message || "O OCR não retornou sucesso.");
+            }
+
+        } catch (e: any) {
+            console.error(e);
+            setErrorMessage(e.message || "Erro no OCR Avançado.");
+        } finally {
+            setIsExtracting(false);
+        }
+    };
+
     // ... download helper ...
     const handleDownloadText = () => {
         if (!file?.extracted_text) return;
@@ -401,10 +431,12 @@ export default function ImportStatus() {
 
                                     <div className="space-y-3">
                                         <button
-                                            onClick={() => alert('Feature em desenvolvimento: Em breve usaremos OCR avançado para recuperar este documento!')}
-                                            className="w-full py-2 bg-blue-50 text-blue-700 font-medium rounded hover:bg-blue-100 border border-blue-200"
+                                            onClick={handleAdvancedOcr}
+                                            disabled={isExtracting}
+                                            className="w-full py-2 bg-blue-50 text-blue-700 font-medium rounded hover:bg-blue-100 border border-blue-200 flex items-center justify-center gap-2"
                                         >
-                                            Tentar OCR Avançado (Em breve)
+                                            {isExtracting ? <Loader2 className="animate-spin w-4 h-4" /> : null}
+                                            Tentar OCR Avançado
                                         </button>
                                         <button
                                             // Se for pra enviar outro PDF, o ideal seria resetar ou reiniciar o processo.
@@ -439,7 +471,7 @@ export default function ImportStatus() {
                             </div>
                         )}
                     </div>
-                    {isDebug && <div className="bg-black text-white p-2 text-xs font-mono text-center">DEBUG: {uiStatus} | Build: IMPORTSTATUS_FIX_FINAL | Cloudflare Pages</div>}
+                    {isDebug && <div className="bg-black text-white p-2 text-xs font-mono text-center">DEBUG: {uiStatus} | Build: IMPORTSTATUS_OCR_V1 | Cloudflare Pages</div>}
                 </div>
             </div>
         </div>
