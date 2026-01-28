@@ -107,26 +107,28 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
 
             if (result.finalStatus === 'success') {
                 setUploadStep('Concluído! Redirecionando...');
-                clearImportSession();
 
-
-                // IMPORTANT: Immediate Navigation if budget ID is present
+                // IMPORTANT: Immediate Navigation if budget ID is present (Complete Success)
                 if (result.resultBudgetId) {
+                    clearImportSession(); // Job is done
                     // Short delay purely for UX "Concluído" message visibility
                     await new Promise(r => setTimeout(r, 600));
                     if (!controller.signal.aborted) {
                         // DEFENSIVE: Ensure we never navigate to an absolute URL accidentally
-                        navigate(toRelativePath(`/budget/${result.resultBudgetId}`));
+                        navigate(toRelativePath(`/budgets/${result.resultBudgetId}`));
                         onClose();
                         return; // Stop execution
                     }
-                }
-
-                await new Promise(r => setTimeout(r, 800));
-
-                if (!controller.signal.aborted) {
-                    navigate(`/importacoes/${jobId}`);
-                    onClose();
+                } else {
+                    // PARTIAL SUCCESS: Waiting User Review
+                    // Do NOT clear session yet because user might refresh page during review
+                    // navigate to REVIEW page
+                    await new Promise(r => setTimeout(r, 600));
+                    if (!controller.signal.aborted) {
+                        navigate(toRelativePath(`/importacoes/${jobId}`));
+                        onClose();
+                        return;
+                    }
                 }
             } else {
                 clearImportSession();
@@ -205,6 +207,17 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
             const synId = await uploadFile(syntheticFile, 'synthetic');
             if (analyticFile) {
                 await uploadFile(analyticFile, 'analytic');
+            }
+
+            // 2.5 Invoke Edge Function (Explicit Execution)
+            setUploadStep('Iniciando processamento inteligente...');
+            const { error: invokeError } = await supabase.functions.invoke('import-processor', {
+                body: { job_id: jobData.id }
+            });
+
+            if (invokeError) {
+                console.error("[UI] Failed to invoke import-processor:", invokeError);
+                throw new Error("Falha ao iniciar processamento. Tente novamente.");
             }
 
             // 3. Start Polling with strict ID

@@ -33,7 +33,7 @@ export function toAbsoluteUrl(path: string): string {
 /**
  * Strips domain/protocol from a URL to ensure it is relative.
  * Useful for internal navigate() calls to prevent accidental domain switching.
- * Example: https://naborca.com/budget/123 -> /budget/123
+ * Example: https://naborca.com/budgets/123 -> /budgets/123
  */
 export function toRelativePath(urlOrPath: string): string {
     if (!urlOrPath) return '/';

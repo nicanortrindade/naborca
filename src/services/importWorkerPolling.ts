@@ -122,6 +122,14 @@ export async function runImportParseWorkerUntilDone(params: {
                 };
             }
 
+            if (job?.status === 'waiting_user') {
+                logTelemetry('info', 'polling_terminal', { jobId, result: 'waiting_user_terminal' });
+                return {
+                    finalStatus: 'success',
+                    message: "Aguardando revisão do usuário."
+                };
+            }
+
             if (jobError) {
                 // Ignore transient errors, log warning
                 console.warn("[IMPORT-POLL] Error fetching job:", jobError);

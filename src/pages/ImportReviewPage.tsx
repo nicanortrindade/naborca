@@ -101,7 +101,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
             }
 
             // Success
-            navigate(toRelativePath(`/budget/${result.budget_id}`));
+            navigate(toRelativePath(`/budgets/${result.budget_id}`));
 
         } catch (err: any) {
             console.error("Generate Error:", err);

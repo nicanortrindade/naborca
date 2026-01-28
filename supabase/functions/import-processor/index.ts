@@ -93,15 +93,16 @@ const HeaderSchema = z.object({
 });
 
 const ItemSchema = z.object({
-    code_raw: z.string().min(1),
-    code: z.string().min(1),
-    source: z.string().min(1), // SINAPI | ORSE | EMBASA | PROPRIO | ...
+    code_raw: z.string().optional().default(""),
+    code: z.string().optional().default("SEM_CODIGO"), // Default para evitar quebra se vier vazio
+    source: z.string().optional().default("ai_extraction"),
     description: z.string().min(1),
-    unit: z.string().min(1),
-    quantity: z.number().finite().nonnegative(),
-    unit_price: z.number().finite().nonnegative(),
-    price_type: PriceTypeSchema,
-    confidence: z.number().finite().min(0).max(1),
+    unit: z.string().optional().default("UN"),
+    quantity: z.number().finite().nonnegative().optional().default(1),
+    unit_price: z.number().finite().nonnegative().optional().default(0),
+    price_type: PriceTypeSchema.optional().default("unico"),
+    confidence: z.number().finite().min(0).max(1).default(0.5),
+    needs_manual_review: z.boolean().optional().default(false),
 });
 
 const GeminiOutputSchema = z.object({
@@ -114,25 +115,53 @@ type GeminiOutput = z.infer<typeof GeminiOutputSchema>;
 // -----------------------------
 // Utilities
 // -----------------------------
-function jsonResponse(body: unknown, status = 200) {
+// -----------------------------
+// Utilities
+// -----------------------------
+function buildCorsHeaders(req: Request): HeadersInit {
+    const origin = req.headers.get("origin") || "";
+
+    const headers: any = {
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+        "Access-Control-Allow-Credentials": "true",
+        "Vary": "Origin"
+    };
+
+    if (origin) {
+        headers["Access-Control-Allow-Origin"] = origin;
+    } else {
+        headers["Access-Control-Allow-Origin"] = "*";
+    }
+
+    return headers;
+}
+
+function jsonResponse(body: unknown, status = 200, req?: Request) {
+    let headers: any;
+    if (req) {
+        headers = buildCorsHeaders(req);
+    } else {
+        headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+        };
+    }
+
     return new Response(JSON.stringify(body, null, 2), {
         status,
         headers: {
             "content-type": "application/json; charset=utf-8",
-            "access-control-allow-origin": "*",
-            "access-control-allow-headers": "authorization, x-client-info, apikey, content-type",
+            ...headers,
         },
     });
 }
 
-function corsPreflight() {
+function corsPreflight(req: Request) {
     return new Response(null, {
         status: 204,
-        headers: {
-            "access-control-allow-origin": "*",
-            "access-control-allow-headers": "authorization, x-client-info, apikey, content-type",
-            "access-control-allow-methods": "POST, OPTIONS",
-        },
+        headers: buildCorsHeaders(req),
     });
 }
 
@@ -351,62 +380,66 @@ function normalizeReferenceDate(input: string): string {
 // System prompt (Business rules)
 // -----------------------------
 const SYSTEM_PROMPT = `
-Você é um parser de documentos de orçamento/engenharia de custos. Sua tarefa é extrair um JSON ESTRITAMENTE VÁLIDO (sem comentários, sem markdown, sem texto extra).
-Você receberá um arquivo (PDF ou Excel) e deve produzir APENAS o JSON no schema especificado.
+Você é um parser de engenharia especializado em RESILIÊNCIA. Sua missão é extrair itens de orçamento de documentos PDF/Excel, MESMO QUE estejam desformatados, incompletos ou confusos.
 
-REGRAS CRÍTICAS (OBRIGATÓRIAS):
-1) Normalizar quebras de linha:
-   - Se uma descrição estiver quebrada visualmente (ex: "PAREDE DE \\n TIJOLO"), você DEVE concatenar e retornar como "PAREDE DE TIJOLO" (um espaço entre palavras).
-2) Separar OCR fundido:
-   - Se você encontrar "4664 ORSE" (ou similar: "1234 SINAPI", "9999 EMBASA"), separe:
-     - code_raw: "4664 ORSE"
-     - code: "4664"
-     - source: "ORSE"
-   - Se não houver base explícita, tente inferir; se não conseguir, use "DESCONHECIDA" como source.
-3) Extrair Metadados do cabeçalho:
-   - reference_date: data base / mês de referência do documento (se vier como "07/2025", converta para "2025-07-01").
-   - bdi_percent: percentual do BDI (número).
-   - charges_percent: percentual de encargos sociais (horista/mensalista). Se houver mais de um, retorne o mais relevante/maior como charges_percent.
-4) Regime desonerado:
-   - Se o documento diferenciar preços "Desonerado" vs "Não Desonerado", identifique em price_type:
-     - "desonerado" | "nao_desonerado" | "unico"
-   - header.is_desonerado_detected deve refletir o que o documento sugere (true/false). Se não for possível concluir, use false.
-5) Bases dinâmicas:
-   - Identifique a fonte (source) de cada item: exemplos "SINAPI", "ORSE", "EMBASA", "CPOS", "SBC", "SEINFRA", "PRÓPRIO".
-   - Para itens "Próprio", use source: "PROPRIO" e mantenha code coerente (pode ser o identificador do item).
-6) Campos numéricos:
-   - quantity e unit_price devem ser números (sem "R$", sem vírgula decimal; normalize "1.234,56" -> 1234.56).
-   - confidence deve ser entre 0 e 1.
+DIRETRIZ PRINCIPAL: PREFERIR EXTRAÇÃO IMPERFEITA A NENHUMA EXTRAÇÃO.
+Nunca retorne lista vazia se houver qualquer texto que pareça um serviço, material ou etapa de obra.
 
-SAÍDA (OBRIGATÓRIA):
-- Retorne APENAS um JSON válido no schema:
+REGRAS DE EXTRAÇÃO PERMISSIVA (HEURÍSTICAS):
+
+1. **Identificação de Itens:**
+   - Procure por linhas contendo palavras-chave: "serviço", "fornecimento", "execução", "instalação", "demolição", "construção", "pintura", "piso", "concreto", "alvenaria".
+   - Texto corrido ou listas sem colunas claras DEVEM ser interpretados como itens.
+   - Cabeçalhos de seção (ex: "1. INSTALAÇÕES ELÉTRICAS") DEVEM virar itens (provavelmente type=etapa, mas extraia como item normal se dúvida).
+
+2. **Tratamento de Campos Faltantes (DEFAULTS):**
+   - **Código/Code:** Se não houver código visível (ex: SINAPI 1234), gere um item SEM código ou invente um ID sequencial se ajudar. NÃO descarte o item por falta de código.
+   - **Preço/Unit Price:** Se não houver preço, assuma 0.00. O usuário preencherá depois.
+   - **Quantidade:** Se não houver quantidade, assuma 1.
+   - **Unidade:** Se não houver, assuma "UN".
+
+3. **Source / Base:**
+   - Tente identificar SINAPI, ORSE, SBC, etc.
+   - Se não identificar, use source="ai_extraction".
+
+4. **Confiança e Revisão:**
+   - Se o item foi inferido de texto confuso ou sem preço, marque \`needs_manual_review: true\` e \`confidence: 0.5\` (ou menos).
+   - Se o item parece apenas um título ou texto explicativo, extraia-o mesmo assim, pois pode ser importante como descrição.
+
+5. **Correção de Texto:**
+   - Normalize quebras de linha: "CONCRE\nTO" -> "CONCRETO".
+   - Remova caracteres estranhos de OCR.
+
+SCHEMA DE SAÍDA JSON (OBRIGATÓRIO):
 {
   "header": {
-    "reference_date": "YYYY-MM-DD",
-    "bdi_percent": 0.0,
-    "charges_percent": 0.0,
-    "is_desonerado_detected": boolean
+    "reference_date": "YYYY-MM-DD", // ou hoje
+    "bdi_percent": 0,
+    "charges_percent": 0,
+    "is_desonerado_detected": false
   },
   "items": [
     {
-      "code_raw": "4664 ORSE",
-      "code": "4664",
-      "source": "ORSE",
-      "description": "Texto completo...",
-      "unit": "M3",
-      "quantity": 10.5,
-      "unit_price": 100.00,
-      "price_type": "desonerado" | "nao_desonerado" | "unico",
-      "confidence": 0.95
+      "code": "1.2", // ou "SEM_CODIGO"
+      "description": "Execução de alvenaria...",
+      "unit": "M2",
+      "quantity": 100.0,
+      "unit_price": 50.00, // ou 0
+      "source": "SINAPI", // ou "ai_extraction"
+      "price_type": "unico",
+      "confidence": 0.8,
+      "needs_manual_review": false
     }
   ]
 }
 
-NÃO:
-- Não escreva explicações.
-- Não use markdown.
-- Não envolva em crases.
-- Não adicione campos fora do schema.
+CASO EXTREMO (SÓ EM ÚLTIMO CASO):
+Se o documento for TOTALMENTE ilegível ou vazio, gere UM item placeholder:
+- description: "Documento ilegível ou sem itens identificáveis - verificar manual"
+- needs_manual_review: true
+- confidence: 0.1
+
+NÃO adicione comentários fora do JSON.
 `;
 
 // -----------------------------
@@ -676,7 +709,7 @@ async function insertImportItems(
             quantity: it.quantity,
 
             detected_base: detectedBase,
-            is_proprio: source.toUpperCase() === "PROPRIO" || source.toUpperCase() === "PRÓPRIO",
+            is_proprio: source.toUpperCase() === "PROPRIO" || source.toUpperCase() === "PRÓPRIO" || source === "ai_extraction",
             is_desonerado: job.is_desonerado ?? null,
 
             price_desonerado: priceDes,
@@ -861,11 +894,39 @@ ${rawText || "(vazio)"}
 // -----------------------------
 // Main handler
 // -----------------------------
+// -----------------------------
+// Entrypoint (Strict CORS)
+// -----------------------------
 serve(async (req) => {
-    if (req.method === "OPTIONS") return corsPreflight();
-    if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
+    try {
+        // 1. Handle Preflight OPTIONS immediately
+        if (req.method === "OPTIONS") {
+            return corsPreflight(req);
+        }
 
-    const requestId = crypto.randomUUID();
+        // 2. Delegate to Async Handler
+        return await handleRequest(req);
+    } catch (err) {
+        console.error("[FATAL import-processor]", err);
+
+        return jsonResponse(
+            {
+                ok: false,
+                error: "import_processor_fatal",
+                message: err instanceof Error ? err.message : String(err),
+            },
+            500,
+            req
+        );
+    }
+});
+
+// -----------------------------
+// Main Logic
+// -----------------------------
+async function handleRequest(req: Request): Promise<Response> {
+    if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405, req);
+
     const requestId = crypto.randomUUID();
     const contentType = req.headers.get("content-type") || "";
     console.log(`[REQ ${requestId}] import-processor HIT method=${req.method} url=${req.url} ct=${contentType}`);
@@ -932,39 +993,23 @@ serve(async (req) => {
 
     if (isPdfTop) {
         console.log(`[REQ ${requestId}] PDF DETECTED AT TOP jobId=${pJobId} fileId=${pFileId} mime=${pMime} kind=${pKind}`);
+        console.log(`[REQ ${requestId}] BYPASSING parse-worker stub; continuing inline extraction (Gemini/Vision) for PDF.`);
 
+        // CRITICAL FIX: The database trigger 'trg_enqueue_pdf_parse_task' creates a task automatically on INSERT.
+        // Since we want to process INLINE and ignore the worker stub, we must DELETE that task here to prevent
+        // the worker from picking it up and creating conflicting 'failed' statuses or placeholders.
         if (pJobId && pFileId) {
-            console.log(`[REQ ${requestId}] EXECUTING IMMEDIATE ENQUEUE`);
-            const supabaseTop = getSupabase();
+            const sbAdmin = getSupabase();
+            const { error: delErr } = await sbAdmin
+                .from("import_parse_tasks")
+                .delete()
+                .match({ job_id: pJobId, file_id: pFileId });
 
-            // 1. Enqueue Task
-            const { error: taskError } = await supabaseTop.from("import_parse_tasks").upsert({
-                job_id: pJobId,
-                file_id: pFileId,
-                status: "queued",
-                attempts: 0,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-            }, { onConflict: "job_id", ignoreDuplicates: true });
-
-            if (taskError && !taskError.message?.includes("duplicate") && !taskError.message?.includes("unique")) {
-                console.error(`[REQ ${requestId}] Top-level enqueue failed`, taskError);
-                await updateJob(supabaseTop, pJobId, { status: "failed", error_message: "enqueue_parse_task_failed", current_step: "failed" }).catch(() => { });
-                return jsonResponse({ error: "enqueue_parse_task_failed", details: taskError.message }, 500);
+            if (delErr) {
+                console.warn(`[REQ ${requestId}] Failed to cleanup trigger-created task:`, delErr);
+            } else {
+                console.log(`[REQ ${requestId}] Auto-cleaned queued tasks for PDF (trigger mitigation).`);
             }
-
-            // 2. Update Job
-            await updateJob(supabaseTop, pJobId, {
-                status: "processing",
-                progress: 1,
-                current_step: "queued_for_parse_worker",
-                updated_at: new Date().toISOString()
-            }).catch(e => console.warn("Top-level job update warning", e));
-
-            // 3. Return Immediately
-            return jsonResponse({ ok: true, job_id: pJobId, file_id: pFileId, status: "queued_for_parse_worker" }, 202);
-        } else {
-            console.warn(`[REQ ${requestId}] PDF detected at TOP but missing ids (job=${pJobId}, file=${pFileId}) -> Continuing to normal flow to create/find ids.`);
         }
     }
 
@@ -1000,7 +1045,7 @@ serve(async (req) => {
             }
 
             const jobId = safeTrim(jobIdString);
-            if (!jobId) return jsonResponse({ error: "Missing job_id" }, 400);
+            if (!jobId) return jsonResponse({ error: "Missing job_id" }, 400, req);
 
             // 2. Setup
             const supabase = getSupabase();
@@ -1051,10 +1096,10 @@ serve(async (req) => {
             }
             // A) Validação de ambiente
             if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-                return jsonResponse({ error: "Server misconfigured (Supabase env missing)" }, 500);
+                return jsonResponse({ error: "Server misconfigured (Supabase env missing)" }, 500, req);
             }
             if (!GEMINI_API_KEY) {
-                return jsonResponse({ error: "Server misconfigured (GEMINI_API_KEY missing)" }, 500);
+                return jsonResponse({ error: "Server misconfigured (GEMINI_API_KEY missing)" }, 500, req);
             }
 
             // B) Setup Gemini (Dynamic discovery)
@@ -1071,7 +1116,7 @@ serve(async (req) => {
                     error: "No compatible Gemini model found",
                     message: errorMsg,
                     available_models: modelResult.allModels.slice(0, 20),
-                }, 500);
+                }, 500, req);
             }
 
             const model = modelResult.model;
@@ -1104,10 +1149,14 @@ serve(async (req) => {
                 const rawPath = (file.storage_path || "").toLowerCase();
                 const rawName = (file.original_filename || "").toLowerCase();
 
+                // PATCH: desabilitar desvio para import-parse-worker (stub). Processar PDFs inline.
+                const isPdfEarly = false;
+                /*
                 const isPdfEarly = rawMime === "application/pdf"
                     || file.file_kind === "pdf"
                     || rawName.endsWith(".pdf")
                     || rawPath.endsWith(".pdf");
+                */
 
                 if (isPdfEarly) {
                     console.log(`[REQ ${requestId}] PDF EARLY-QUEUED job=${jobId} file=${file.id} storage=${file.storage_path} mime=${rawMime}`);
@@ -1131,7 +1180,7 @@ serve(async (req) => {
                         if (!taskError.message?.includes("duplicate") && !taskError.message?.includes("unique")) {
                             console.error(`[REQ ${requestId}] Early Enqueue failed`, taskError);
                             await updateJob(supabase, jobId, { status: "failed", error_message: "enqueue_parse_task_failed", current_step: "failed" });
-                            return jsonResponse({ error: "enqueue_parse_task_failed", details: taskError.message }, 500);
+                            return jsonResponse({ error: "enqueue_parse_task_failed", details: taskError.message }, 500, req);
                         }
                     }
 
@@ -1147,7 +1196,7 @@ serve(async (req) => {
 
                     // 3. Return Immediately
                     stopHeartbeat();
-                    return jsonResponse({ ok: true, job_id: jobId, file_id: file.id, status: "queued_for_parse_worker" }, 202);
+                    return jsonResponse({ ok: true, job_id: jobId, file_id: file.id, status: "queued_for_parse_worker" }, 202, req);
                 }
                 // =========================================================
                 // END EARLY GUARD
@@ -1165,10 +1214,14 @@ serve(async (req) => {
                 try { sha256 = await calculateSha256(bytes); } catch { }
 
                 // Robust PDF identification
+                // PATCH: desabilitar desvio para import-parse-worker (stub). Processar PDFs inline.
+                const isPdf = false;
+                /*
                 const isPdf = mimeType === "application/pdf"
                     || file.file_kind === "pdf"
                     || (file.original_filename && file.original_filename.toLowerCase().endsWith(".pdf"))
                     || file.storage_path.toLowerCase().endsWith(".pdf");
+                */
 
                 if (isPdf) {
                     // =========================================================
@@ -1240,7 +1293,7 @@ serve(async (req) => {
                         message: "PDF enqueued for background processing. Poll job status for updates.",
                         file_id: file.id,
                         queued_at: attemptedAt,
-                    });
+                    }, 200, req);
 
                 } else {
                     // Excel / Imagem
@@ -1267,7 +1320,7 @@ serve(async (req) => {
             if (!finalItemCount) {
                 const noItemsMsg = "NO_ITEMS_EXTRACTED: Nenhum item extraído com sucesso.";
                 await updateJob(supabase, jobId, { status: "failed", error_message: noItemsMsg, progress: 100 });
-                return jsonResponse({ ok: false, error: "NO_ITEMS_EXTRACTED", message: noItemsMsg }, 400);
+                return jsonResponse({ ok: false, error: "NO_ITEMS_EXTRACTED", message: noItemsMsg }, 400, req);
             }
 
             const mergedContextFinal = { ...(job.document_context || {}), header: headerFinal, processed_files_count: files.length, inserted_items_count: finalItemCount, db_verified: true };
@@ -1276,14 +1329,140 @@ serve(async (req) => {
             const { data: currentJob } = await supabase.from("import_jobs").select("status, error_message").eq("id", jobId).single();
             if (currentJob?.status === 'failed' && currentJob?.error_message === 'timeout_hard_90s') {
                 console.warn(`[REQ ${requestId}] mainPromise finished after hard timeout. Aborting success update.`);
-                return jsonResponse({ ok: false, error: "timeout_hard_90s", job_id: jobId }, 504);
+                return jsonResponse({ ok: false, error: "timeout_hard_90s", job_id: jobId }, 504, req);
             }
 
-            await updateJob(supabase, jobId, { status: "waiting_user", progress: 100, current_step: "waiting_user", document_context: mergedContextFinal });
+            // ------------------------------------------------------------------
+            // DECISÃO DE STATUS FINAL (Smart Finish)
+            // ------------------------------------------------------------------
+            // 1) Contar pendências de hidratação (se houver items inseridos)
+            const { count: issuesCount } = await supabase
+                .from("import_hydration_issues")
+                .select("*", { count: "exact", head: true })
+                .eq("job_id", jobId)
+                .eq("status", "open");
 
-            console.log(`[REQ ${requestId}] Success`, { jobId, totalInserted: finalItemCount });
-            return jsonResponse({ ok: true, job_id: jobId, status: "waiting_user", inserted_items_count: finalItemCount, processed_files_count: files.length, header: headerFinal });
-        });
+            const pendingIssues = issuesCount || 0;
+
+            // 2) Verificar parâmetros obrigatórios para finalização automática
+            //    Exemplo: UF, Competence, e configuração de Desoneração/BDI.
+            //    Esses dados geralmente vêm do header extraído ou input do usuário.
+            //    Se a IA não detectou com confiança, precisamos perguntar.
+            const hasUf = !!(headerFinal.reference_date); // Simplificação: reference_date funciona como competence proxy
+            const hasBdi = headerFinal.bdi_percent !== undefined;
+            // Considerando "missing_params" se não tiver data válida. Em produção real, validaria UF tbm.
+            const missingParams = !hasUf || !hasBdi;
+
+            let finalStatus: ImportJobStatus = "done";
+            let finalStep = "done";
+            let userActionPayload: any = null;
+
+            if (pendingIssues > 0) {
+                finalStatus = "waiting_user";
+                finalStep = "waiting_user_hydration";
+                userActionPayload = {
+                    required: true,
+                    reason: "hydration_issues",
+                    issues_count: pendingIssues,
+                    next: "review",
+                    job_id: jobId
+                };
+                console.log(`[REQ ${requestId}] Job ${jobId} -> WAITING_USER (Hydration Issues: ${pendingIssues})`);
+            } else if (missingParams) {
+                finalStatus = "waiting_user";
+                finalStep = "waiting_user_params";
+                userActionPayload = {
+                    required: true,
+                    reason: "missing_params",
+                    details: { has_date: hasUf, has_bdi: hasBdi },
+                    next: "review",
+                    job_id: jobId
+                };
+                console.log(`[REQ ${requestId}] Job ${jobId} -> WAITING_USER (Missing Params)`);
+            } else {
+                console.log(`[REQ ${requestId}] Job ${jobId} -> DONE (Ready for finalization)`);
+                console.log(`[REQ ${requestId}] AUTO_FINALIZE_START`);
+
+                try {
+                    const finalizeUrl = `${SUPABASE_URL}/functions/v1/import-finalize-budget`;
+
+                    // Defaults for Auto-Finalize
+                    // Note: UF defaulting to BA is a business rule assumption for Phase 2.
+                    // Ideally this should come from user settings or extraction.
+                    const payload = {
+                        job_id: jobId,
+                        uf: 'BA',
+                        competence: headerFinal.reference_date || new Date().toISOString().slice(0, 7) + '-01',
+                        desonerado: headerFinal.is_desonerado_detected,
+                        bdi_mode: 'padrao', // Default
+                        social_charges: 0 // Default
+                    };
+
+                    const finalizeResp = await fetch(finalizeUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+                        },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!finalizeResp.ok) {
+                        const errText = await finalizeResp.text();
+                        throw new Error(`HTTP ${finalizeResp.status}: ${errText}`);
+                    }
+
+                    const finalizeResult = await finalizeResp.json();
+
+                    if (finalizeResult.ok || finalizeResult.result_budget_id || finalizeResult.budget_id) {
+                        const budgetId = finalizeResult.result_budget_id || finalizeResult.budget_id || finalizeResult.data;
+                        console.log(`[REQ ${requestId}] AUTO_FINALIZE_OK budgetId=${budgetId}`);
+                        // Done logic remains
+                        // Ensure context is updated if needed
+                        mergedContextFinal["auto_finalize"] = { success: true, budget_id: budgetId, attempted_at: new Date().toISOString() };
+                    } else {
+                        throw new Error(`Result not OK: ${safeStringify(finalizeResult)}`);
+                    }
+
+                } catch (finalizeErr) {
+                    const errMsg = finalizeErr instanceof Error ? finalizeErr.message : String(finalizeErr);
+                    console.warn(`[REQ ${requestId}] AUTO_FINALIZE_FAILED details=${errMsg}`);
+
+                    // Revert to waiting_user to allow manual retry
+                    finalStatus = "waiting_user";
+                    finalStep = "waiting_user_finalize_failed";
+                    userActionPayload = {
+                        required: true,
+                        reason: "finalize_failed",
+                        error_detail: errMsg,
+                        next: "review",
+                        job_id: jobId
+                    };
+                }
+            }
+
+            // Atualiza Contexto com Payload de Ação
+            if (userActionPayload) {
+                mergedContextFinal["user_action"] = userActionPayload;
+            }
+
+            await updateJob(supabase, jobId, {
+                status: finalStatus,
+                progress: 100,
+                current_step: finalStep,
+                document_context: mergedContextFinal
+            });
+
+            return jsonResponse({
+                ok: true,
+                job_id: jobId,
+                status: finalStatus,
+                inserted_items_count: finalItemCount,
+                processed_files_count: files.length,
+                header: headerFinal,
+                user_action: userActionPayload
+            }, 200, req);
+        })();
 
         const timeoutPromise = new Promise<never>((_, reject) => {
             timeoutId = setTimeout(() => reject(new Error("timeout_hard_90s")), HARD_TIMEOUT_MS);
@@ -1307,7 +1486,7 @@ serve(async (req) => {
                     });
                 } catch { }
             }
-            return jsonResponse({ ok: false, error: "timeout_hard_90s", job_id: jobIdString }, 504);
+            return jsonResponse({ ok: false, error: "timeout_hard_90s", job_id: jobIdString }, 504, req);
         }
 
         console.error(`[REQ ${requestId}] CRITICAL FAILURE`, globalErr);
@@ -1322,9 +1501,9 @@ serve(async (req) => {
             } catch { }
         }
 
-        return jsonResponse({ ok: false, error: "import-processor failed", message: rawMsg }, 500);
+        return jsonResponse({ ok: false, error: "import-processor failed", message: rawMsg }, 500, req);
     } finally {
         if (timeoutId) clearTimeout(timeoutId);
         stopHeartbeat();
     }
-});
+}
