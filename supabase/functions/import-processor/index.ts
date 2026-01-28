@@ -1349,15 +1349,136 @@ async function handleRequest(req: Request): Promise<Response> {
             //    Esses dados geralmente vêm do header extraído ou input do usuário.
             //    Se a IA não detectou com confiança, precisamos perguntar.
             const hasUf = !!(headerFinal.reference_date); // Simplificação: reference_date funciona como competence proxy
-            const hasBdi = headerFinal.bdi_percent !== undefined;
-            // Considerando "missing_params" se não tiver data válida. Em produção real, validaria UF tbm.
-            const missingParams = !hasUf || !hasBdi;
 
             let finalStatus: ImportJobStatus = "done";
             let finalStep = "done";
             let userActionPayload: any = null;
 
-            if (pendingIssues > 0) {
+            let canAutoFinalize = finalItemCount > 0 && finalItemCount < 3000;
+
+            // SMART_FINISH CHECKS
+            // 1. Validar se a extração retornou itens reais ou apenas o fallback de erro
+            if (canAutoFinalize) {
+                // Checagem Determinística de Fallback (Extração Falhou mas gerou item placeholder)
+                const { count: failureCount } = await supabase
+                    .from("import_items")
+                    .select("id", { count: "exact", head: true })
+                    .eq("job_id", jobId)
+                    .eq("price_selected", 0)
+                    .eq("validation_status", "pending")
+                    .eq("detected_base", "ai_extraction")
+                    .or("description_normalized.ilike.%documento ilegível%,description_normalized.ilike.%sem itens%");
+
+                if (failureCount && failureCount > 0) {
+                    console.warn(`[REQ ${requestId}] SMART_FINISH: extraction_failed -> waiting_user (non-fatal)`);
+
+                    userActionPayload = {
+                        required: true,
+                        next: "review",
+                        reason: "extraction_failed",
+                        message: "Extração não identificou itens válidos. Verifique manualmente ou envie PDF com melhor qualidade.",
+                        items_count: finalItemCount,
+                        job_id: jobId
+                    };
+
+                    // Atualiza Contexto com Payload de Ação
+                    mergedContextFinal["user_action"] = userActionPayload;
+
+                    await updateJob(supabase, jobId, {
+                        status: "waiting_user",
+                        progress: 100,
+                        current_step: "waiting_user_extraction_failed",
+                        document_context: mergedContextFinal
+                    });
+
+                    // Retorno IMEDIATO 200 OK (Non-fatal)
+                    return jsonResponse({
+                        ok: true,
+                        job_id: jobId,
+                        status: "waiting_user",
+                        reason: "extraction_failed",
+                        user_action: userActionPayload
+                    }, 200, req);
+                }
+            }
+
+            // 2. Hydration Check (Legacy but kept for safety)
+            if (canAutoFinalize) {
+                const { count: pendingCount } = await supabase.from("import_items").select("*", { count: "exact", head: true }).eq("job_id", jobId).eq("validation_status", "pending");
+                if (pendingCount && pendingCount > 0) {
+                    canAutoFinalize = false;
+                    finalStatus = "waiting_user";
+                    finalStep = "waiting_user_hydration_pending";
+                    userActionPayload = { required: true, next: "review", reason: "hydration_pending", pending_items: pendingCount };
+                }
+            }
+
+            // 2. Missing Critical Params
+            if (canAutoFinalize) {
+                if (!headerFinal.bdi_percent) headerFinal.bdi_percent = 0;
+                if (!headerFinal.charges_percent) headerFinal.charges_percent = 0;
+            }
+
+            // TRIGGER AUTO-FINALIZE
+            if (canAutoFinalize) {
+                console.log(`[REQ ${requestId}] AUTO_FINALIZE Triggered for Job ${jobId}`);
+                try {
+                    const finalizeUrl = `${SUPABASE_URL}/functions/v1/import-finalize-budget`;
+
+                    // Defaults for Auto-Finalize
+                    // Note: UF defaulting to BA is a business rule assumption for Phase 2.
+                    // Ideally this should come from user settings or extraction.
+                    const payload = {
+                        job_id: jobId,
+                        uf: 'BA',
+                        competence: headerFinal.reference_date || new Date().toISOString().slice(0, 7) + '-01',
+                        desonerado: headerFinal.is_desonerado_detected,
+                        bdi_mode: 'padrao', // Default
+                        social_charges: 0 // Default
+                    };
+
+                    const finalizeResp = await fetch(finalizeUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+                        },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!finalizeResp.ok) {
+                        const errText = await finalizeResp.text();
+                        throw new Error(`HTTP ${finalizeResp.status}: ${errText}`);
+                    }
+
+                    const finalizeResult = await finalizeResp.json();
+
+                    if (finalizeResult.ok || finalizeResult.result_budget_id || finalizeResult.budget_id) {
+                        const budgetId = finalizeResult.result_budget_id || finalizeResult.budget_id || finalizeResult.data;
+                        console.log(`[REQ ${requestId}] AUTO_FINALIZE_OK budgetId=${budgetId}`);
+                        // Done logic remains
+                        // Ensure context is updated if needed
+                        mergedContextFinal["auto_finalize"] = { success: true, budget_id: budgetId, attempted_at: new Date().toISOString() };
+                    } else {
+                        throw new Error(`Result not OK: ${safeStringify(finalizeResult)}`);
+                    }
+
+                } catch (finalizeErr) {
+                    const errMsg = finalizeErr instanceof Error ? finalizeErr.message : String(finalizeErr);
+                    console.warn(`[REQ ${requestId}] AUTO_FINALIZE_FAILED details=${errMsg}`);
+
+                    // Revert to waiting_user to allow manual retry
+                    finalStatus = "waiting_user";
+                    finalStep = "waiting_user_finalize_failed";
+                    userActionPayload = {
+                        required: true,
+                        reason: "finalize_failed",
+                        error_detail: errMsg,
+                        next: "review",
+                        job_id: jobId
+                    };
+                }
+            } else if (pendingIssues > 0) {
                 finalStatus = "waiting_user";
                 finalStep = "waiting_user_hydration";
                 userActionPayload = {

@@ -19,7 +19,8 @@ type UIStatus =
     | 'failed'
     | 'review_ready'
     | 'retryable'
-    | 'unknown_but_renderable';
+    | 'unknown_but_renderable'
+    | 'extraction_failed_action';
 
 interface ExtendedImportFile {
     id: string;
@@ -129,7 +130,7 @@ export default function ImportStatus() {
     }, [id]);
 
     useEffect(() => {
-        const isFinal = ['ocr_success', 'ocr_success_with_warn', 'ocr_empty', 'review_ready', 'failed'].includes(uiStatus);
+        const isFinal = ['ocr_success', 'ocr_success_with_warn', 'ocr_empty', 'review_ready', 'failed', 'extraction_failed_action'].includes(uiStatus);
 
         if (isFinal && pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
@@ -155,19 +156,16 @@ export default function ImportStatus() {
         // If the backend created a budget, we don't care about job status failures.
         if ((j as any)?.result_budget_id) {
             console.log("[ImportStatus] Budget found, ignoring failed status.");
-            // Auto-redirect if needed, but for now show success UI
-            // Actually, the user requirement is "Navegar imediatamente para /budget/{budget_id}" in ImportReview?
-            // But ImportStatus redirects to ImportReviewPage if "review_ready".
-            // We'll let ImportReviewPage handle the final navigation or just go straight there?
-            // "Encerrar o modal de importação" -> This implies we should maybe just navigate away.
-            // But let's stick to "review_ready" to render ImportReviewPage which allows "Generate" (or "View"?)
-            // Wait, ImportReviewPage generates the budget.
-            // If result_budget_id is ALREADY set, that means it's ALREADY finalized?
-            // The user request says: "Se budget_id existir... Navegar imediatamente para /budget/{budget_id}"
-            // This implies we should redirect automatically.
-
-            // However, strictly inside deriveUiStatus, we should return a success state.
             return { status: "review_ready" };
+        }
+
+        // PRIORITY 2: Extraction Failed (User Action Required)
+        const userAction = (j as any)?.document_context?.user_action;
+        if (
+            (j?.status === 'waiting_user' && j?.current_step === 'waiting_user_extraction_failed') ||
+            (userAction?.reason === 'extraction_failed')
+        ) {
+            return { status: "extraction_failed_action" };
         }
 
         const textLen = f?.extracted_text?.length ?? 0;
@@ -221,6 +219,11 @@ export default function ImportStatus() {
         if (j?.status === "processing") return { status: "queued" };
         if (j?.status === "failed") {
             return { status: "failed", error: j?.last_error || "Falha no processamento" };
+        }
+
+        // Se status === 'waiting_user' mas não capturado acima, pode ser 'unknown_but_renderable' ou outro waiting
+        if (j?.status === "waiting_user") {
+            return { status: "unknown_but_renderable", warning: "Aguardando ação do usuário (estado genérico)." };
         }
 
         // FALLBACK DE SEGURANÇA (NUNCA LIMBO)
@@ -387,6 +390,47 @@ export default function ImportStatus() {
                             </div>
                         )}
 
+                        {uiStatus === 'extraction_failed_action' && (
+                            <div className="text-center py-8">
+                                <div className="max-w-md mx-auto bg-white p-6 rounded-xl shadow border border-slate-200">
+                                    <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
+                                    <h3 className="text-lg font-bold text-slate-800 mb-2">Atenção: Extração Limitada</h3>
+                                    <p className="text-slate-600 mb-6">
+                                        {(job as any)?.document_context?.user_action?.message || "O documento não contém itens identificáveis ou está desformatado."}
+                                    </p>
+
+                                    <div className="space-y-3">
+                                        <button
+                                            onClick={() => alert('Feature em desenvolvimento: Em breve usaremos OCR avançado para recuperar este documento!')}
+                                            className="w-full py-2 bg-blue-50 text-blue-700 font-medium rounded hover:bg-blue-100 border border-blue-200"
+                                        >
+                                            Tentar OCR Avançado (Em breve)
+                                        </button>
+                                        <button
+                                            // Se for pra enviar outro PDF, o ideal seria resetar ou reiniciar o processo.
+                                            // Por enquanto, apenas recarregamos ou voltamos.
+                                            onClick={() => window.location.reload()}
+                                            className="w-full py-2 bg-white text-slate-700 font-medium rounded hover:bg-slate-50 border border-slate-200"
+                                        >
+                                            Enviar outro arquivo
+                                        </button>
+                                        <div className="relative flex py-2 items-center">
+                                            <div className="flex-grow border-t border-gray-200"></div>
+                                            <span className="flex-shrink mx-4 text-gray-400 text-xs">OU</span>
+                                            <div className="flex-grow border-t border-gray-200"></div>
+                                        </div>
+                                        <button
+                                            // Permite continuar para a tela de revisão mesmo com 0 itens ou itens placeholder
+                                            onClick={() => setUiStatus('review_ready')}
+                                            className="w-full py-2 bg-blue-600 text-white font-medium rounded hover:bg-blue-700 shadow-sm"
+                                        >
+                                            Continuar Manualmente
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {['failed', 'ocr_empty', 'unknown_but_renderable'].includes(uiStatus) && (
                             <div className="text-center py-12">
                                 <h3 className="text-lg font-bold text-slate-700 mb-2">{uiStatus === 'failed' ? 'Falha' : 'Status Impreciso'}</h3>
@@ -406,6 +450,7 @@ function StatusIcon({ status }: { status: UIStatus }) {
     if (['ocr_success', 'ocr_success_with_warn', 'review_ready'].includes(status)) return <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center"><CheckCircle2 className="w-6 h-6" /></div>;
     if (['loading', 'queued', 'ocr_running', 'extracting'].includes(status)) return <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin" /></div>;
     if (status === 'failed') return <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center"><AlertCircle className="w-6 h-6" /></div>;
+    if (status === 'extraction_failed_action') return <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center"><AlertCircle className="w-6 h-6" /></div>;
     return <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center"><FileText className="w-6 h-6" /></div>;
 }
 
@@ -416,6 +461,7 @@ function StatusTitle({ status, isExtracting }: { status: UIStatus, isExtracting:
         case 'ocr_success': case 'ocr_success_with_warn': return 'Leitura Concluída';
         case 'ocr_running': return 'OCR em Andamento';
         case 'retryable': return 'Aguardando Retentativa';
+        case 'extraction_failed_action': return 'Atenção Necessária';
         case 'queued': return 'Iniciando...';
         case 'failed': return 'Falha na Importação';
         default: return 'Verificando Status...';
