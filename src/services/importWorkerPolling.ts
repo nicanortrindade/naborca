@@ -122,11 +122,13 @@ export async function runImportParseWorkerUntilDone(params: {
                 };
             }
 
-            if (job?.status === 'waiting_user') {
-                logTelemetry('info', 'polling_terminal', { jobId, result: 'waiting_user_terminal' });
+            if (job?.status === 'waiting_user' || job?.status === 'waiting_user_extraction_failed') {
+                logTelemetry('info', 'polling_terminal', { jobId, result: 'waiting_user_terminal', status: job.status });
                 return {
-                    finalStatus: 'success',
-                    message: "Aguardando revisão do usuário."
+                    finalStatus: 'success', // Treat as success to navigate to review
+                    message: job.status === 'waiting_user_extraction_failed'
+                        ? "Extração automática limitada. Redirecionando para manual..."
+                        : "Aguardando revisão do usuário."
                 };
             }
 

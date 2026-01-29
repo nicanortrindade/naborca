@@ -41,17 +41,16 @@ function jsonResponse(body: unknown, status = 200, req?: Request) {
 // -----------------------------
 // SCHEMA & PROMPT (Mirrors import-processor)
 // -----------------------------
+// -----------------------------
+// SCHEMA & PROMPT (Tolerant Extraction)
+// -----------------------------
 const ItemSchema = z.object({
-    code_raw: z.string().optional().default(""),
-    code: z.string().optional().default("SEM_CODIGO"),
-    source: z.string().optional().default("ocr_fallback"),
-    description: z.string().min(1),
-    unit: z.string().optional().default("UN"),
-    quantity: z.number().finite().nonnegative().optional().default(1),
-    unit_price: z.number().finite().nonnegative().optional().default(0),
-    price_type: z.enum(["desonerado", "nao_desonerado", "unico"]).optional().default("unico"),
-    confidence: z.number().finite().min(0).max(1).default(0.5),
-    needs_manual_review: z.boolean().optional().default(false),
+    code: z.string().optional().nullable().default(null),
+    description: z.string().min(1), // Unique mandatory field
+    unit: z.string().optional().nullable().default(null),
+    quantity: z.number().optional().nullable().default(null),
+    unit_price: z.number().optional().nullable().default(null),
+    confidence: z.number().finite().min(0).max(1).default(0.6),
 });
 
 const GeminiOutputSchema = z.object({
@@ -59,15 +58,36 @@ const GeminiOutputSchema = z.object({
 });
 
 const SYSTEM_PROMPT = `
-Você é um parser de engenharia. Sua entrada é um TEXTO CRU extraído via OCR de um orçamento de obras.
-Sua missão: Localizar e estruturar os itens de serviço/insumo.
+ATENÇÃO: MODO DE RECUPERAÇÃO DE DADOS (TOLERÂNCIA MÁXIMA).
+O usuário enviou texto de um orçamento que passou por OCR. O texto pode estar quebrado, sem colunas definidas, desalinhado ou 'sujo'.
 
-REGRAS:
-1. Ignore cabeçalhos, rodapés, paginação se não contiverem itens.
-2. Procure padrões como "Código Descrição Unid Qtd Unitário Total".
-3. Se o preço for zero ou não existir, extraia assim mesmo (unit_price=0).
-4. Se a descrição estiver quebrada em linhas, tente unir.
-5. Retorne APENAS JSON válido seguindo o schema.
+SUA MISSÃO CRÍTICA: Extrair o MÁXIMO de itens possível.
+REGRA DE OURO: SE HOUVER ARTEFATOS DE TEXTO DE OBRA, CRIE PELO MENOS 1 ITEM. JAMAIS RETORNE LISTA VAZIA.
+
+DIRETRIZES DE EXTRAÇÃO:
+1. CAPTURA DE ITENS:
+   - Identifique qualquer linha ou bloco que descreva um serviço, material ou equipamento (ex: "Concreto", "Servente", "Tubo PVC").
+   - Tranforme isso em um item IMEDIATAMENTE.
+   - "Concreto fck 25MPa" -> { description: "Concreto fck 25MPa" } (Mesmo sem preço/qtd).
+
+2. CAMPOS PARCIAIS (ACEITAR TUDO):
+   - unit: Se não encontrar, retorne null.
+   - quantity: Se não encontrar, retorne null.
+   - unit_price: Se não encontrar, retorne null.
+   - code: Se não encontrar, retorne null.
+   
+3. HEURÍSTICAS DE LIMPEZA:
+   - Reúna linhas quebradas: Se uma linha termina sem sentido e a próxima completa, junte-as na descrição.
+   - Ignore apenas: Cabeçalhos recorrentes (CNPJ, Página X de Y, Data) e Rodapés.
+   - Números soltos à direita da descrição geralmente são Quantidade ou Preço. Tente inferir.
+
+4. SE O TEXTO FOR MUITO RUIM:
+   - Não desista. Crie um item com a descrição contendo o trecho de texto mais relevante.
+   - É melhor ter um item "mal formatado" para o usuário editar do que NENHUM item.
+
+SAÍDA OBRIGATÓRIA:
+- JSON válido contendo array "items".
+- Array com pelo menos 1 objeto se houver texto de entrada.
 `;
 
 // -----------------------------
@@ -195,46 +215,74 @@ serve(async (req) => {
                 const result = await model.generateContent(`Extraia items deste texto:\n\n${safeText}`);
                 const responseText = result.response.text();
 
-                // Parse & Validate
-                let parsed: z.infer<typeof GeminiOutputSchema>;
+                // Parse & Validate (Robust Airbag)
+                let parsed: z.infer<typeof GeminiOutputSchema> = { items: [] };
+
                 try {
-                    parsed = JSON.parse(responseText);
-                } catch {
-                    // Try to fix simple json markdown
-                    const clean = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
-                    parsed = JSON.parse(clean);
+                    // Try standard parse
+                    try {
+                        parsed = JSON.parse(responseText);
+                    } catch {
+                        // Try to fix simple json markdown
+                        const clean = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+                        parsed = JSON.parse(clean);
+                    }
+                } catch (parseErr) {
+                    console.error(`[REQ ${requestId}] Gemini JSON Parse Failed:`, parseErr);
+                    // Do NOT abort. Fallback below.
                 }
 
-                if (parsed?.items && Array.isArray(parsed.items) && parsed.items.length > 0) {
-                    console.log(`[REQ ${requestId}] OCR_FALLBACK_GEMINI_OK. Items found: ${parsed.items.length}`);
+                // E. FORCE FALLBACK IF EMPTY OR FAILED
+                if (!parsed?.items || !Array.isArray(parsed.items) || parsed.items.length === 0) {
+                    console.warn(`[REQ ${requestId}] Gemini returned invalid/empty JSON. Applying FORCED FALLBACK item.`);
+
+                    // Create a single item containing a snippet of the raw OCR text to help the user
+                    const safeSnippet = ocrText.slice(0, 200).replace(/\n/g, " ").trim();
+
+                    parsed = {
+                        items: [{
+                            description: `Item recuperado do OCR (Revisar): ${safeSnippet}...`,
+                            unit: null,
+                            quantity: null,
+                            unit_price: null,
+                            confidence: 0.5,
+                            code: null
+                        }]
+                    };
+                }
+
+                // Now we GUARANTEE parsed.items has something (unless logic above is broken)
+                if (parsed.items.length > 0) {
+                    console.log(`[REQ ${requestId}] OCR_FALLBACK_GEMINI_OK. Items found (or forced): ${parsed.items.length}`);
                     totalItemsFound += parsed.items.length;
 
-                    // D. Replace Items in DB
-                    // D.1 Delete old fallbacks for this file/job
-                    await supabase.from("import_items").delete()
+                    // D. Replace Items in DB (Target: import_ai_items)
+                    // D.1 Delete old items
+                    await supabase.from("import_ai_items").delete()
                         .eq("job_id", job_id)
-                        .eq("file_id", file.id)
-                        .or("description_normalized.ilike.%documento ilegível%,description_normalized.ilike.%sem itens%");
+                        .eq("import_file_id", file.id);
 
-                    // D.2 Insert new
-                    const rows = parsed.items.map(it => ({
+                    // D.2 Insert new items
+                    const rows = parsed.items.map((it, idx) => ({
                         job_id,
-                        file_id: file.id,
-                        user_id: job.user_id,
-                        description_normalized: it.description,
-                        code: it.code || 'SEM_CODIGO',
-                        quantity: it.quantity,
+                        import_file_id: file.id,
+                        idx: idx,
+                        description: it.description || "Item sem descrição",
                         unit: it.unit,
+                        quantity: it.quantity,
                         unit_price: it.unit_price,
-                        price_selected: it.unit_price,
-                        detected_base: 'ocr_fallback',
-                        validation_status: 'pending',
-                        confidence_score: it.confidence || 0.7
+                        total: (it.quantity || 0) * (it.unit_price || 0),
+                        confidence: it.confidence || 0.6,
+                        category: null,
+                        raw_line: null
                     }));
 
-                    await supabase.from("import_items").insert(rows);
-                } else {
-                    console.warn(`[REQ ${requestId}] Gemini found no items in OCR text.`);
+                    const { error: insertError } = await supabase.from("import_ai_items").insert(rows);
+
+                    if (insertError) {
+                        console.error(`[REQ ${requestId}] Failed to insert items into import_ai_items:`, insertError);
+                        // This is a DB error, we can't do much but log.
+                    }
                 }
             }
         }

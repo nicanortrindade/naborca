@@ -1593,36 +1593,65 @@ async function handleRequest(req: Request): Promise<Response> {
 
     } catch (globalErr) {
         const rawMsg = globalErr instanceof Error ? globalErr.message : String(globalErr);
+        console.error(`[REQ ${requestId}] ERROR CAUGHT: ${rawMsg}`);
 
-        if (rawMsg === "timeout_hard_90s") {
-            console.error(`[REQ ${requestId}] HARD TIMEOUT (90s)`);
-            if (jobIdString) {
-                try {
-                    const supabase = supabaseForError || getSupabase();
-                    await updateJob(supabase, jobIdString, {
-                        status: "failed",
-                        progress: 100,
-                        current_step: "failed",
-                        error_message: "timeout_hard_90s",
-                    });
-                } catch { }
-            }
-            return jsonResponse({ ok: false, error: "timeout_hard_90s", job_id: jobIdString }, 504, req);
+        let finalStatus: ImportJobStatus = "failed";
+        let finalStep = "failed";
+        let userAction = null;
+
+        // TIMEOUT OR GENERIC ERROR -> RECOVER TO MANUAL
+        // Phase 3 Requirement: Never show 500 for extraction failures.
+        // Always allow manual fallback.
+
+        if (rawMsg === "timeout_hard_90s" || rawMsg.includes("timeout")) {
+            console.log(`[REQ ${requestId}] Converting TIMEOUT to MANUAL FALLBACK`);
+            finalStatus = "waiting_user";
+            finalStep = "waiting_user_extraction_failed";
+            userAction = {
+                required: true,
+                reason: "timeout_extraction",
+                message: "O processamento demorou muito. Verifique os itens extraídos ou adicione manualmente."
+            };
+        } else {
+            // Other errors (Parsing, OCR, Storage)
+            console.log(`[REQ ${requestId}] Converting EXCEPTION to MANUAL FALLBACK`);
+            finalStatus = "waiting_user";
+            finalStep = "waiting_user_extraction_failed";
+            userAction = {
+                required: true,
+                reason: "extraction_error",
+                message: `Falha técnica na extração: ${rawMsg.slice(0, 100)}. Tente o modo manual.`
+            };
         }
 
-        console.error(`[REQ ${requestId}] CRITICAL FAILURE`, globalErr);
-        // FASE 1 GUARANTEE (Requirement)
         if (jobIdString) {
             try {
                 const supabase = supabaseForError || getSupabase();
-                const { data: job } = await supabase.from("import_jobs").select("status").eq("id", jobIdString).single();
-                if (job?.status === "processing") {
-                    await updateJob(supabase, jobIdString, { status: "failed", progress: 100, current_step: "failed", error_message: rawMsg.slice(0, 800) });
-                }
-            } catch { }
+                // Ensure we update job to searchable state
+                await updateJob(supabase, jobIdString, {
+                    status: finalStatus,
+                    progress: 100,
+                    current_step: finalStep,
+                    error_message: null, // Clear error message so UI doesn't show Red Alert
+                    document_context: {
+                        user_action: userAction,
+                        last_error_recovered: rawMsg
+                    }
+                });
+            } catch (dbErr) {
+                console.error("[REQ] Failed to save error recovery state", dbErr);
+            }
         }
 
-        return jsonResponse({ ok: false, error: "import-processor failed", message: rawMsg }, 500, req);
+        // RETURN 200 OK (Recovered)
+        return jsonResponse({
+            ok: false,
+            recovered: true,
+            status: finalStatus,
+            job_id: jobIdString,
+            message: "Processamento finalizado com recuperação de erro (Manual mode enabled)"
+        }, 200, req);
+
     } finally {
         if (timeoutId) clearTimeout(timeoutId);
         stopHeartbeat();
