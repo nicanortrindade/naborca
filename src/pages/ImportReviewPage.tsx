@@ -111,6 +111,63 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         }
     };
 
+    const [isAddingManual, setIsAddingManual] = useState(false);
+    const [manualItem, setManualItem] = useState({
+        description: '',
+        unit: 'UN',
+        quantity: 1,
+        unit_price: 0
+    });
+
+    const handleSaveManualItem = async () => {
+        if (!manualItem.description) {
+            alert("A descrição é obrigatória.");
+            return;
+        }
+
+        try {
+            setGenerating(true); // Reuse spinner state for saving
+
+            // Authenticated user check not strictly needed if RLS allows based on policy, 
+            // but good practice to ensure we have context. 
+            // We'll rely on Supabase client auth context.
+
+            const row = {
+                job_id: jobId,
+                description_normalized: manualItem.description,
+                unit: manualItem.unit,
+                quantity: manualItem.quantity,
+                unit_price: manualItem.unit_price,
+                total_price: manualItem.quantity * manualItem.unit_price,
+                price_selected: manualItem.unit_price,
+                detected_base: 'manual',
+                validation_status: 'ok',
+                code: 'MANUAL',
+                // Default required fields
+                confidence_score: 1.0,
+            };
+
+            const { error: insertError } = await (supabase
+                .from('import_items' as any) as any)
+                .insert(row);
+
+            if (insertError) throw insertError;
+
+            // Refresh items
+            await fetchItems();
+
+            // Reset and close
+            setIsAddingManual(false);
+            setManualItem({ description: '', unit: 'UN', quantity: 1, unit_price: 0 });
+
+        } catch (e: any) {
+            console.error("Manual Insert Error:", e);
+            alert("Erro ao salvar item: " + e.message);
+        } finally {
+            setGenerating(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="flex flex-col justify-center items-center h-screen bg-slate-50 gap-3">
@@ -163,6 +220,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                         <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
                             <FileSpreadsheet size={20} className="text-blue-600" /> Parâmetros do Orçamento
                         </h3>
+                        {/* Params inputs kept same as before */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Estado (UF)</label>
@@ -285,13 +343,25 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                             <FileSpreadsheet size={48} className="opacity-20" />
                         </div>
                         <p className="text-lg font-medium text-slate-600">Nenhum item processado</p>
-                        <p className="text-sm max-w-xs text-center">A extração via IA não retornou itens. Verifique se o arquivo original contém tabelas legíveis.</p>
+                        <p className="text-sm max-w-xs text-center">A extração via IA não retornou itens. Você pode adicionar itens manualmente para prosseguir.</p>
+
+                        <button
+                            onClick={() => setIsAddingManual(true)}
+                            className="mt-2 px-6 py-2 bg-blue-50 text-blue-700 font-bold rounded-lg hover:bg-blue-100 transition-colors border border-blue-200"
+                        >
+                            + Adicionar item manual
+                        </button>
                     </div>
                 ) : (
                     <>
                         <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
                             <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wide">Itens Extraídos ({items.length})</h3>
-                            <div className="text-xs text-slate-400">Estes itens serão convertidos em orçamento</div>
+                            <button
+                                onClick={() => setIsAddingManual(true)}
+                                className="text-xs bg-white border border-slate-200 px-3 py-1.5 rounded font-medium text-slate-600 hover:bg-slate-50"
+                            >
+                                + Adicionar Item
+                            </button>
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse">
@@ -311,7 +381,8 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                         <tr key={item.id || idx} className="hover:bg-slate-50/80 transition-colors group">
                                             <td className="px-6 py-3 text-center text-slate-400 text-xs font-mono">{idx + 1}</td>
                                             <td className="px-6 py-3 text-slate-800 font-medium text-sm group-hover:text-blue-700 transition-colors">
-                                                {item.description || <span className="text-slate-300 italic">Sem descrição</span>}
+                                                {item.description_normalized || item.description || <span className="text-slate-300 italic">Sem descrição</span>}
+                                                {item.detected_base === 'manual' && <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[10px] rounded border border-slate-200">MANUAL</span>}
                                             </td>
                                             <td className="px-6 py-3 text-center text-slate-500 text-xs uppercase bg-slate-50/50 rounded m-2">
                                                 {item.unit || '-'}
@@ -323,19 +394,21 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                                 {(item.unit_price || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                             </td>
                                             <td className="px-6 py-3 text-right text-slate-900 font-semibold text-sm tabular-nums font-mono">
-                                                {(item.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                {(item.quantity * item.unit_price || item.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                                             </td>
                                             <td className="px-6 py-3 text-center">
-                                                {item.confidence !== null ? (
+                                                {item.confidence_score !== null && item.confidence_score !== undefined ? (
                                                     <div className="flex items-center justify-center">
                                                         <div className={`
                                                                 w-1.5 h-1.5 rounded-full mr-1.5
-                                                                ${(item.confidence || 0) > 0.8 ? 'bg-green-500' : (item.confidence || 0) > 0.5 ? 'bg-amber-400' : 'bg-red-500'}
+                                                                ${(item.confidence_score || 0) > 0.8 ? 'bg-green-500' : (item.confidence_score || 0) > 0.5 ? 'bg-amber-400' : 'bg-red-500'}
                                                             `}></div>
-                                                        <span className={`text-xs font-medium ${(item.confidence || 0) > 0.8 ? 'text-green-700' : (item.confidence || 0) > 0.5 ? 'text-amber-700' : 'text-red-700'}`}>
-                                                            {Math.round((item.confidence || 0) * 100)}%
+                                                        <span className={`text-xs font-medium ${(item.confidence_score || 0) > 0.8 ? 'text-green-700' : (item.confidence_score || 0) > 0.5 ? 'text-amber-700' : 'text-red-700'}`}>
+                                                            {Math.round((item.confidence_score || 0) * 100)}%
                                                         </span>
                                                     </div>
+                                                ) : item.detected_base === 'manual' ? (
+                                                    <span className="text-xs text-slate-400">Manual</span>
                                                 ) : (
                                                     <span className="text-slate-300">-</span>
                                                 )}
@@ -348,8 +421,82 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                     </>
                 )}
             </div>
-        </div>
 
+            {/* Modal Manual Item */}
+            {isAddingManual && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 animate-in zoom-in-95 duration-200">
+                        <h3 className="text-lg font-bold text-slate-800 mb-4">Adicionar Item Manual</h3>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Descrição</label>
+                                <input
+                                    type="text"
+                                    className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                    placeholder="Ex: Concreto Armado fck=25MPa"
+                                    value={manualItem.description}
+                                    onChange={e => setManualItem({ ...manualItem, description: e.target.value })}
+                                    autoFocus
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Unidade</label>
+                                    <input
+                                        type="text"
+                                        className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none uppercase"
+                                        placeholder="UN"
+                                        value={manualItem.unit}
+                                        onChange={e => setManualItem({ ...manualItem, unit: e.target.value })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Qtd</label>
+                                    <input
+                                        type="number"
+                                        className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                        value={manualItem.quantity}
+                                        onChange={e => setManualItem({ ...manualItem, quantity: parseFloat(e.target.value) || 0 })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Preço Unit.</label>
+                                    <input
+                                        type="number"
+                                        className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                        value={manualItem.unit_price}
+                                        onChange={e => setManualItem({ ...manualItem, unit_price: parseFloat(e.target.value) || 0 })}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-50 p-3 rounded text-sm text-slate-600 flex justify-between font-medium">
+                                <span>Total Estimado:</span>
+                                <span>{(manualItem.quantity * manualItem.unit_price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button
+                                onClick={() => setIsAddingManual(false)}
+                                className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded font-medium"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleSaveManualItem}
+                                disabled={generating}
+                                className="px-4 py-2 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 disabled:opacity-50"
+                            >
+                                {generating ? 'Adicionando...' : 'Adicionar Item'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
     );
 }
 
