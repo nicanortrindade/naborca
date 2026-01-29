@@ -126,29 +126,37 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         }
 
         try {
-            setGenerating(true); // Reuse spinner state for saving
+            setGenerating(true);
 
-            // Authenticated user check not strictly needed if RLS allows based on policy, 
-            // but good practice to ensure we have context. 
-            // We'll rely on Supabase client auth context.
+            // 1. Get correct file ID (required FK)
+            const { data: fileData, error: fileError } = await (supabase
+                .from('import_files' as any) as any)
+                .select('id')
+                .eq('job_id', jobId)
+                .limit(1)
+                .single();
 
+            if (fileError || !fileData) throw new Error("Não foi possivel vincular ao arquivo da importação.");
+
+            const nextIdx = (items.length || 0) + 1;
+
+            // 2. Insert into import_ai_items (Correct Table)
+            // Schema: job_id, import_file_id, idx, description, unit, quantity, unit_price, total, confidence
             const row = {
                 job_id: jobId,
-                description_normalized: manualItem.description,
+                import_file_id: fileData.id,
+                idx: nextIdx,
+                description: manualItem.description,
                 unit: manualItem.unit,
                 quantity: manualItem.quantity,
                 unit_price: manualItem.unit_price,
-                total_price: manualItem.quantity * manualItem.unit_price,
-                price_selected: manualItem.unit_price,
-                detected_base: 'manual',
-                validation_status: 'ok',
-                code: 'MANUAL',
-                // Default required fields
-                confidence_score: 1.0,
+                total: manualItem.quantity * manualItem.unit_price,
+                confidence: 1.0,
+                // raw_line not needed/optional
             };
 
             const { error: insertError } = await (supabase
-                .from('import_items' as any) as any)
+                .from('import_ai_items' as any) as any)
                 .insert(row);
 
             if (insertError) throw insertError;
