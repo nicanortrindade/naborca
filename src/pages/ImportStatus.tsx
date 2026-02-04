@@ -20,7 +20,9 @@ type UIStatus =
     | 'review_ready'
     | 'retryable'
     | 'unknown_but_renderable'
-    | 'extraction_failed_action';
+    | 'extraction_failed_action'
+    | 'applying'
+    | 'finalizing';
 
 interface ExtendedImportFile {
     id: string;
@@ -132,7 +134,10 @@ export default function ImportStatus() {
     useEffect(() => {
         const isFinal = ['ocr_success', 'ocr_success_with_warn', 'ocr_empty', 'review_ready', 'failed', 'extraction_failed_action'].includes(uiStatus);
 
-        if (isFinal && pollIntervalRef.current) {
+        // Keep polling if we are in transient states like applying or prioritizing
+        const isTransient = ['applying', 'finalizing', 'queued', 'ocr_running'].includes(uiStatus);
+
+        if (isFinal && !isTransient && pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
             pollIntervalRef.current = null;
         }
@@ -163,6 +168,7 @@ export default function ImportStatus() {
         const userAction = (j as any)?.document_context?.user_action;
         if (
             (j?.status === 'waiting_user' && j?.current_step === 'waiting_user_extraction_failed') ||
+            (j?.status === 'waiting_user_extraction_failed') ||
             (userAction?.reason === 'extraction_failed')
         ) {
             return { status: "extraction_failed_action" };
@@ -215,18 +221,41 @@ export default function ImportStatus() {
             return { status: "ocr_empty" };
         }
 
-        // FALLBACK POR JOB
+        // STATUS DE PROGRESSO/FILA (Queued, Applying, Finalizing)
         if (j?.status === "processing") return { status: "queued" };
-        if (j?.status === "failed") {
-            return { status: "failed", error: j?.last_error || "Falha no processamento" };
+        if (j?.status === "queued") return { status: "queued" };
+        if (j?.status === "applying") return { status: "applying" };
+
+        // Done but no Budget ID yet -> Finalizing
+        if (j?.status === "done" && !(j as any)?.result_budget_id) {
+            return { status: "finalizing" };
         }
 
-        // Se status === 'waiting_user' mas não capturado acima, pode ser 'unknown_but_renderable' ou outro waiting
-        if (j?.status === "waiting_user") {
-            return { status: "unknown_but_renderable", warning: "Aguardando ação do usuário (estado genérico)." };
+        // CRITICAL FIX: Treat 'failed' as recoverable manual entry
+        if (j?.status === "failed") {
+            // Check if it's a hard technical error we can't recover from (rare)
+            // For now, we assume ALL processing failures are recoverable via manual entry
+            return {
+                status: "extraction_failed_action",
+                warning: j?.last_error || "Processamento automático falhou."
+            };
+        }
+
+        // NEW: Specific handle for rate limiting (Terminal but waiting)
+        if (j?.status === 'waiting_user_rate_limited') {
+            return {
+                status: "retryable",
+                warning: "Limite de IA atingido. O processamento será retomado automaticamente."
+            };
+        }
+
+        // Se status === 'waiting_user' ou subtipos não capturados, trata como ação necessária
+        if (typeof j?.status === 'string' && j.status.startsWith("waiting_user")) {
+            return { status: "extraction_failed_action" };
         }
 
         // FALLBACK DE SEGURANÇA (NUNCA LIMBO)
+        console.warn("[ImportStatus] Estado inconsistente detectado:", j?.status);
         return {
             status: "unknown_but_renderable",
             warning: "Estado inconsistente. Recarregue a página."
@@ -313,6 +342,46 @@ export default function ImportStatus() {
 
         } catch (e: any) {
             console.error(e);
+
+            // DEFENSIVE ERROR HANDLING FOR WORKER LIMIT (546)
+            let isWorkerLimit = false;
+
+            try {
+                // 1. Check Status Code directly if standard HttpError
+                if (e?.status === 546 || e?.context?.response?.status === 546) {
+                    isWorkerLimit = true;
+                }
+
+                // 2. Check Error Body/Message
+                if (!isWorkerLimit) {
+                    const msg = JSON.stringify(e || "").toLowerCase();
+                    if (msg.includes("worker_limit") || msg.includes("546")) {
+                        isWorkerLimit = true;
+                    }
+                }
+
+                // 3. Deep inspection of Supabase Error context (if available)
+                if (!isWorkerLimit && e?.context?.response) {
+                    // Try to inspect response body if not already consumed
+                    // This is risky if stream is locked, so we wrap in try/catch specifically
+                    try {
+                        const body = await e.context.response.clone().json();
+                        if (body?.code === 'WORKER_LIMIT') {
+                            isWorkerLimit = true;
+                        }
+                    } catch (ignore) { /* Body likely already consumed or not JSON */ }
+                }
+            } catch (inspectionErr) {
+                console.warn("Failed to inspect error details:", inspectionErr);
+            }
+
+            if (isWorkerLimit) {
+                // SILENCE THE ERROR: Do NOT call setErrorMessage.
+                // The UI is already in "Extração Limitada" state, so we just let the user try again or continue manually.
+                console.warn("OCR limit reached (546), suppressing UI error.");
+                return;
+            }
+
             setErrorMessage(e.message || "Erro no OCR Avançado.");
         } finally {
             setIsExtracting(false);
@@ -345,7 +414,7 @@ export default function ImportStatus() {
                             </h1>
                             <p className="text-slate-500 text-sm">Job: <span className="font-mono bg-slate-100 px-1">{id}</span></p>
 
-                            {['queued', 'ocr_running'].includes(uiStatus) && (
+                            {['queued', 'ocr_running', 'applying', 'finalizing'].includes(uiStatus) && (
                                 <div className="mt-4 w-full bg-slate-100 rounded-full h-2 overflow-hidden">
                                     <div className="h-full bg-blue-600 rounded-full w-1/3 animate-indeterminate-bar"></div>
                                 </div>
@@ -356,10 +425,12 @@ export default function ImportStatus() {
                     </div>
 
                     <div className="p-8 bg-slate-50/50 min-h-[300px]">
-                        {['queued', 'ocr_running'].includes(uiStatus) && (
+                        {['queued', 'ocr_running', 'applying', 'finalizing'].includes(uiStatus) && (
                             <div className="text-center py-12 text-slate-600">
                                 <p>O arquivo está sendo processado. Aguarde...</p>
                                 {uiStatus === 'ocr_running' && <div className="text-xs text-slate-400 mt-2 font-mono">OCR Provider Active</div>}
+                                {uiStatus === 'applying' && <div className="text-xs text-slate-400 mt-2 font-mono">Applying Results</div>}
+                                {uiStatus === 'finalizing' && <div className="text-xs text-slate-400 mt-2 font-mono">Finalizing Budget</div>}
                             </div>
                         )}
 
@@ -426,7 +497,9 @@ export default function ImportStatus() {
                                     <AlertCircle className="w-12 h-12 text-amber-500 mx-auto mb-4" />
                                     <h3 className="text-lg font-bold text-slate-800 mb-2">Atenção: Extração Limitada</h3>
                                     <p className="text-slate-600 mb-6">
-                                        {(job as any)?.document_context?.user_action?.message || "O documento não contém itens identificáveis ou está desformatado."}
+                                        {(job as any)?.document_context?.user_action?.message ||
+                                            ((job as any)?.status === 'failed' ? "Não foi possível extrair os itens automaticamente (falha no processamento)." :
+                                                "O documento não contém itens identificáveis ou está desformatado.")}
                                     </p>
 
                                     <div className="space-y-3">
@@ -463,7 +536,7 @@ export default function ImportStatus() {
                             </div>
                         )}
 
-                        {['failed', 'ocr_empty', 'unknown_but_renderable'].includes(uiStatus) && (
+                        {['failed', 'ocr_empty', 'unknown_but_renderable'].includes(uiStatus) && uiStatus !== 'extraction_failed_action' && (
                             <div className="text-center py-12">
                                 <h3 className="text-lg font-bold text-slate-700 mb-2">{uiStatus === 'failed' ? 'Falha' : 'Status Impreciso'}</h3>
                                 {errorMessage && <p className="text-red-500 mb-4">{errorMessage}</p>}
@@ -480,7 +553,7 @@ export default function ImportStatus() {
 
 function StatusIcon({ status }: { status: UIStatus }) {
     if (['ocr_success', 'ocr_success_with_warn', 'review_ready'].includes(status)) return <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center"><CheckCircle2 className="w-6 h-6" /></div>;
-    if (['loading', 'queued', 'ocr_running', 'extracting'].includes(status)) return <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin" /></div>;
+    if (['loading', 'queued', 'ocr_running', 'extracting', 'applying', 'finalizing'].includes(status)) return <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin" /></div>;
     if (status === 'failed') return <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center"><AlertCircle className="w-6 h-6" /></div>;
     if (status === 'extraction_failed_action') return <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center"><AlertCircle className="w-6 h-6" /></div>;
     return <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center"><FileText className="w-6 h-6" /></div>;
@@ -495,7 +568,10 @@ function StatusTitle({ status, isExtracting }: { status: UIStatus, isExtracting:
         case 'retryable': return 'Aguardando Retentativa';
         case 'extraction_failed_action': return 'Atenção Necessária';
         case 'queued': return 'Iniciando...';
+        case 'applying': return 'Aplicando resultados no orçamento...';
+        case 'finalizing': return 'Finalizando...';
         case 'failed': return 'Falha na Importação';
         default: return 'Verificando Status...';
     }
 }
+```
