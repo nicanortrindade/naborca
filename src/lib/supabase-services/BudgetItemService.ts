@@ -192,15 +192,71 @@ function toInsert(item: Partial<BudgetItem>): Omit<BudgetItemInsert, 'user_id' |
 }
 
 export const BudgetItemService = {
-    async getByBudgetId(budgetId: string): Promise<BudgetItem[]> {
-        const { data, error } = await supabase
-            .from('budget_items')
-            .select('*')
-            .eq('budget_id', budgetId)
-            .order('order_index', { ascending: true });
+    async getByBudgetId(
+        budgetId: string,
+        opts?: { pageSize?: number; onProgress?: (loaded: number, total: number) => void }
+    ): Promise<BudgetItem[]> {
+        const pageSize = opts?.pageSize || 1000;
+        let currentSize = pageSize;
+        let offset = 0;
+        let allItems: any[] = [];
+        let totalCount = 0;
 
-        if (error) throw error;
-        return data.map(toDomain);
+        // Explicit column selection to prevent 502s on large payloads (select *)
+        // Includes all columns used by toDomain and the Editor
+        const columns = `
+            id, budget_id, parent_id, order_index, level, item_number, code, description,
+            unit, quantity, unit_price, final_price, total_price, type, source, item_type,
+            composition_id, insumo_id, calculation_memory, calculation_steps, custom_bdi,
+            cost_center, is_locked, notes, is_desonerated, updated_at
+        `.replace(/\s+/g, '');
+
+        while (true) {
+            try {
+                // Request count only on first page to allow progress tracking
+                const countOpt = (offset === 0) ? { count: 'exact' as const } : undefined;
+
+                const { data, error, count } = await supabase
+                    .from('budget_items')
+                    .select(columns, countOpt)
+                    .eq('budget_id', budgetId)
+                    .order('order_index', { ascending: true })
+                    .range(offset, offset + currentSize - 1);
+
+                if (error) throw error;
+
+                if (offset === 0 && count !== null) {
+                    totalCount = count;
+                }
+
+                if (data) {
+                    allItems = allItems.concat(data);
+                    offset += data.length;
+
+                    if (opts?.onProgress) {
+                        opts.onProgress(allItems.length, totalCount || allItems.length);
+                    }
+
+                    // Stop if we reached end of list
+                    if (data.length < currentSize) break;
+                } else {
+                    break;
+                }
+            } catch (err) {
+                console.warn(`[BudgetItemService] Fetch failed at offset ${offset} (size ${currentSize}).`, err);
+
+                // Fallback: Retry once with smaller page size if we haven't already
+                if (currentSize === pageSize && currentSize > 200) {
+                    console.log(`[BudgetItemService] Retrying with half page size...`);
+                    currentSize = Math.floor(currentSize / 2);
+                    continue; // Retry same offset with smaller batch
+                }
+
+                throw err; // Give up if already reduced or too small
+            }
+        }
+
+        return allItems.map(toDomain);
     },
 
     async create(item: Partial<BudgetItem>): Promise<BudgetItem> {

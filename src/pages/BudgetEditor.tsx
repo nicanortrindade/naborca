@@ -1,6 +1,6 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { BudgetService } from '../lib/supabase-services/BudgetService';
 import { BudgetItemService } from '../lib/supabase-services/BudgetItemService'; // Removed prepareItemsForDisplay
 import { calculateBudget, repairHierarchy } from '../utils/calculationEngine';
@@ -34,6 +34,7 @@ import type {
     GlobalAdjustmentType,
     AdjustmentContext
 } from '../utils/globalAdjustment';
+import type { ImportJob } from '../features/importer/types';
 
 /**
  * Normalizador único de recursos (insumos e composições)
@@ -168,6 +169,132 @@ const BudgetEditor = () => {
     const [settings, setSettings] = useState<any>(null);
     const [loading, setLoading] = useState(false);
 
+    // UX Improvements: Partial Extraction Banner
+    const [sourceJob, setSourceJob] = useState<ImportJob | null>(null);
+    const [showPartialBanner, setShowPartialBanner] = useState(false);
+
+    useEffect(() => {
+        if (!budgetId) return;
+
+        const checkJobLink = async () => {
+            // A. Try strong link via result_budget_id (Primary)
+            const { data: jobByLink } = await supabase.from('import_jobs' as any)
+                .select('id, status, last_error, document_context, result_budget_id')
+                .eq('result_budget_id', budgetId)
+                .maybeSingle();
+
+            if (jobByLink) {
+                setSourceJob(jobByLink);
+                // checkPartialStatus will be called by the Effect dependent on [sourceJob, items]
+                return;
+            }
+
+            // B. Fallback: Try regex on name (Legacy/Weak link)
+            if (budget?.name) {
+                const match = budget.name.match(/Importação IA - ([0-9a-fA-F-]{36})/);
+                if (match && match[1]) {
+                    const jobId = match[1];
+                    const { data: jobByName } = await supabase.from('import_jobs' as any)
+                        .select('id, status, last_error, document_context, result_budget_id')
+                        .eq('id', jobId)
+                        .maybeSingle();
+
+                    if (jobByName) {
+                        setSourceJob(jobByName);
+                    }
+                }
+            }
+        };
+
+        checkJobLink();
+    }, [budgetId, budget?.name]);
+
+    // Re-evaluate Banner when Job OR Items change
+    useEffect(() => {
+        if (sourceJob) {
+            checkPartialStatus(sourceJob, items);
+        }
+    }, [sourceJob, items]);
+
+    const checkPartialStatus = (job: any, currentItems: any[] = []) => {
+        // Verifica se usuário já dispensou este aviso
+        const dismissKey = job.id
+            ? `naborca_dismiss_partial_${job.id}`
+            : `naborca_dismiss_partial_budget_${budgetId}`;
+
+        const dismissed = localStorage.getItem(dismissKey);
+        if (dismissed) {
+            if (showPartialBanner) setShowPartialBanner(false);
+            return;
+        }
+
+        // Lógica ROBUSTA de "Looks Incomplete"
+
+        // 1. Status explícitos de falha parcial ou espera
+        const partialStatuses = [
+            'waiting_user_extraction_failed',
+            'waiting_user_rate_limited',
+            'failed'
+        ];
+        const isPartialStatus = partialStatuses.includes(job.status);
+
+        // 2. Erros explícitos
+        const hasError = !!job.last_error;
+
+        // 3. Razões internas de incompleteza (document_context)
+        const reason = job.document_context?.debug_info?.reason;
+        const incompleteReasons = ['no_items_after_tasks_done', 'timeout', 'worker_limit', 'low_completeness'];
+        const hasReason = reason && incompleteReasons.includes(reason);
+
+        // 4. HEURÍSTICA DE ITENS (Para Jobs DONE mas parciais)
+        let looksIncompleteByHeuristic = false;
+
+        if (currentItems && currentItems.length > 0) {
+            // Filter "AI Items" (source AI or [VINCULAR])
+            const aiItems = currentItems.filter(i => {
+                const desc = (i.description || i.descricao || "").toUpperCase();
+                const src = (i.source || i.bank || "").toUpperCase();
+                return (src === 'AI_EXTRACTION' || src === 'AI') || desc.includes('[VINCULAR]');
+            });
+
+            // Filter "Pending Link" (no code or [VINCULAR])
+            const pendingLink = aiItems.filter(i => {
+                const desc = (i.description || i.descricao || "").toUpperCase();
+                const code = (i.code || i.codigo || "").trim();
+                const invalidCode = !code || code === '?' || code === '-';
+                return invalidCode || desc.includes('[VINCULAR]');
+            });
+
+            // Ratio
+            if (aiItems.length >= 10) {
+                const ratio = pendingLink.length / aiItems.length;
+                // Threshold 15% pending
+                if (ratio >= 0.15) {
+                    looksIncompleteByHeuristic = true;
+                    // Optional Dev Log
+                    if (import.meta.env.DEV) {
+                        console.info("[PartialHeuristic] Triggered:", { total: aiItems.length, pending: pendingLink.length, ratio });
+                    }
+                }
+            }
+        }
+
+        // Se parece incompleto, ativamos o banner
+        const shouldShow = (isPartialStatus || hasError || hasReason || looksIncompleteByHeuristic) && currentItems.length > 0;
+        if (shouldShow !== showPartialBanner) {
+            setShowPartialBanner(shouldShow);
+        }
+    };
+
+    const handleDismissPartialBanner = () => {
+        if (sourceJob?.id) {
+            localStorage.setItem(`naborca_dismiss_partial_${sourceJob.id}`, 'true');
+        } else {
+            localStorage.setItem(`naborca_dismiss_partial_budget_${budgetId}`, 'true');
+        }
+        setShowPartialBanner(false);
+    };
+
     useEffect(() => {
         if (!budgetId) return;
         loadBudget();
@@ -182,7 +309,16 @@ const BudgetEditor = () => {
             setLoading(true);
             const b = await BudgetService.getById(budgetId);
             setBudget(b);
-            const viewItems = await BudgetItemService.getByBudgetId(budgetId);
+
+            // Fetch items with pagination to prevent 502 on large budgets
+            const viewItems = await BudgetItemService.getByBudgetId(budgetId, {
+                pageSize: 1000,
+                onProgress: (loaded, total) => {
+                    if (import.meta.env.DEV) {
+                        console.debug(`[BudgetEditor] Loaded ${loaded}/${total} items...`);
+                    }
+                }
+            });
 
             // 1. REPARAR HIERARQUIA (Garante parentIds corretos para agregação)
             const repairedItems = repairHierarchy(viewItems || []);
@@ -2017,6 +2153,42 @@ const BudgetEditor = () => {
                     <p className="text-xs text-amber-700">
                         <span className="font-semibold">Modo visualização.</span> Para edição completa, utilize um dispositivo maior.
                     </p>
+                </div>
+            )}
+
+            {/* Warning de Extração Parcial (UX Importação) */}
+            {showPartialBanner && items && items.length > 0 && (
+                <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-3 shrink-0 animate-in slide-in-from-top-2 relative z-30">
+                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 max-w-7xl mx-auto">
+                        <div className="flex items-start gap-3">
+                            <div className="p-2 bg-yellow-100 rounded-lg text-yellow-700 shrink-0 mt-0.5 md:mt-0">
+                                <AlertTriangle size={18} />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-bold text-yellow-800">Extração parcial do documento</h3>
+                                <p className="text-xs text-yellow-700 mt-0.5 leading-relaxed max-w-2xl">
+                                    Este orçamento foi gerado automaticamente, mas nem todos os itens do arquivo foram identificados com 100% de precisão.
+                                    Os valores podem estar subestimados.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 w-full md:w-auto pl-11 md:pl-0">
+                            <button
+                                onClick={handleDismissPartialBanner}
+                                className="px-3 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 hover:bg-yellow-100/50 rounded-lg transition-colors"
+                            >
+                                Revisar manualmente
+                            </button>
+                            {sourceJob?.id && (
+                                <Link
+                                    to={`/importacoes/${sourceJob.id}`}
+                                    className="px-4 py-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 text-xs font-black rounded-lg transition-colors shadow-sm flex items-center gap-2 whitespace-nowrap"
+                                >
+                                    Melhorar extração (OCR)
+                                </Link>
+                            )}
+                        </div>
+                    </div>
                 </div>
             )}
 
