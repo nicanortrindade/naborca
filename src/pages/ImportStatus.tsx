@@ -574,4 +574,3 @@ function StatusTitle({ status, isExtracting }: { status: UIStatus, isExtracting:
         default: return 'Verificando Status...';
     }
 }
-```
