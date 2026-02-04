@@ -196,14 +196,14 @@ export const BudgetItemService = {
         budgetId: string,
         opts?: { pageSize?: number; onProgress?: (loaded: number, total: number) => void }
     ): Promise<BudgetItem[]> {
-        const pageSize = opts?.pageSize || 1000;
-        let currentSize = pageSize;
+        // Initial setup
+        const INITIAL_PAGE_SIZE = opts?.pageSize || 1000;
+        let currentSize = INITIAL_PAGE_SIZE;
         let offset = 0;
         let allItems: any[] = [];
-        let totalCount = 0;
 
-        // Explicit column selection to prevent 502s on large payloads (select *)
-        // Includes all columns used by toDomain and the Editor
+        // Remove heavy server operations: NO COUNT, NO SERVER SORT
+        // Use explicit columns to minimize payload
         const columns = `
             id, budget_id, parent_id, order_index, level, item_number, code, description,
             unit, quantity, unit_price, final_price, total_price, type, source, item_type,
@@ -213,48 +213,57 @@ export const BudgetItemService = {
 
         while (true) {
             try {
-                // Request count only on first page to allow progress tracking
-                const countOpt = (offset === 0) ? { count: 'exact' as const } : undefined;
-
-                const { data, error, count } = await supabase
+                // Fetch next batch
+                // No order(), No count()
+                const { data, error } = await supabase
                     .from('budget_items')
-                    .select(columns, countOpt)
+                    .select(columns)
                     .eq('budget_id', budgetId)
-                    .order('order_index', { ascending: true })
                     .range(offset, offset + currentSize - 1);
 
                 if (error) throw error;
 
-                if (offset === 0 && count !== null) {
-                    totalCount = count;
-                }
-
-                if (data) {
+                if (data && data.length > 0) {
                     allItems = allItems.concat(data);
                     offset += data.length;
 
+                    // Progress update (Total is unknown since we removed count)
                     if (opts?.onProgress) {
-                        opts.onProgress(allItems.length, totalCount || allItems.length);
+                        opts.onProgress(allItems.length, 0); // 0 indicates unknown total
                     }
 
-                    // Stop if we reached end of list
+                    // Stop if we got less than requested, meaning end of list
                     if (data.length < currentSize) break;
                 } else {
+                    // Empty data/null means done
                     break;
                 }
-            } catch (err) {
+
+                // If success, try to restore page size slightly if it was reduced?
+                // For safety/simplicity, we keep currentSize stable or let it stay reduced to be safe.
+
+            } catch (err: any) {
                 console.warn(`[BudgetItemService] Fetch failed at offset ${offset} (size ${currentSize}).`, err);
 
-                // Fallback: Retry once with smaller page size if we haven't already
-                if (currentSize === pageSize && currentSize > 200) {
-                    console.log(`[BudgetItemService] Retrying with half page size...`);
-                    currentSize = Math.floor(currentSize / 2);
-                    continue; // Retry same offset with smaller batch
+                // ADAPTIVE RETRY LOGIC
+                // Reduce page size by half
+                const newSize = Math.floor(currentSize / 2);
+
+                if (newSize >= 100) {
+                    console.log(`[BudgetItemService] Retrying with size ${newSize}...`);
+                    currentSize = newSize;
+                    continue; // Retry SAME offset with smaller batch
                 }
 
-                throw err; // Give up if already reduced or too small
+                // If already at minimum size, allow failure to propagate
+                console.error(`[BudgetItemService] Failed even with min size. Aborting.`);
+                throw err;
             }
         }
+
+        // CLIENT-SIDE SORT (Critical since we removed server sort)
+        // Must maintain order_index stability
+        allItems.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
 
         return allItems.map(toDomain);
     },
