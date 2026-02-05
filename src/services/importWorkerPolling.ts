@@ -70,6 +70,12 @@ function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
     });
 }
 
+// Helper to define SUCCESS clearly
+export function isTerminalSuccessStatus(status: string | null | undefined): boolean {
+    if (!status) return false;
+    return ['done', 'waiting_user', 'waiting_user_extraction_failed'].includes(status);
+}
+
 // NEW IMPLEMENTATION: DB Polling
 export async function runImportParseWorkerUntilDone(params: {
     jobId: string;
@@ -112,7 +118,6 @@ export async function runImportParseWorkerUntilDone(params: {
             const job = jobRaw as any;
 
             // --- CRITICAL FIX: RESULT BUDGET ID TAKES PRECEDENCE OVER ANY STATUS ---
-            // If we have a result, WE ARE DONE. Ignore "failed" or any other status.
             if (job?.result_budget_id) {
                 logTelemetry('info', 'polling_terminal', { jobId, result: 'success_budget_ready_priority' });
                 return {
@@ -122,23 +127,29 @@ export async function runImportParseWorkerUntilDone(params: {
                 };
             }
 
-            if (job?.status === 'waiting_user' || job?.status === 'waiting_user_extraction_failed') {
-                logTelemetry('info', 'polling_terminal', { jobId, result: 'waiting_user_terminal', status: job.status });
+            // ROBUST SUCCESS CHECK
+            if (isTerminalSuccessStatus(job?.status)) {
+                logTelemetry('info', 'polling_terminal', { jobId, result: 'terminal_success', status: job.status });
                 return {
-                    finalStatus: 'success', // Treat as success to navigate to review
+                    finalStatus: 'success',
                     message: job.status === 'waiting_user_extraction_failed'
-                        ? "Extração automática limitada. Redirecionando para manual..."
-                        : "Aguardando revisão do usuário."
+                        ? "Extração limitada. Redirecionando..."
+                        : "Aguardando revisão."
                 };
             }
 
             if (jobError) {
-                // Ignore transient errors, log warning
                 console.warn("[IMPORT-POLL] Error fetching job:", jobError);
             } else if (job?.status === 'failed') {
-                const msg = job.last_error || "O Job falhou durante o processamento.";
+                // SAFETY NET: If backend failed to recover timeout, we do it here
+                const msg = job.last_error || "";
+                if (msg.includes("timeout") || msg.includes("Processamento não concluído")) {
+                    logTelemetry('info', 'polling_terminal', { jobId, result: 'failed_recovered_to_manual', msg });
+                    return { finalStatus: 'success', message: "Redirecionando para manual (fallback)." };
+                }
+
                 logTelemetry('error', 'polling_terminal', { jobId, reason: 'job_failed', msg });
-                return { finalStatus: 'failed', message: msg };
+                return { finalStatus: 'failed', message: msg || "Falha no processamento." };
             }
 
             // 2. Fetch Tasks Status (Progress)
@@ -151,11 +162,22 @@ export async function runImportParseWorkerUntilDone(params: {
                 console.warn("[IMPORT-POLL] Error fetching tasks:", tasksError);
             }
 
-            // 3. Fetch Items Count (Feedback)
+            // 3. Fetch Items Count (Feedback & Absolute Rule)
+            // Alterado para 'import_items' conforme solicitação (fonte final do editor)
             const { count: itemsCount, error: itemsError } = await supabase
-                .from('import_ai_items' as any)
+                .from('import_items' as any)
                 .select('*', { count: 'exact', head: true })
                 .eq('job_id', jobId);
+
+            // --- REGRA ABSOLUTA: Se existem itens, o job está pronto para revisão ---
+            if ((itemsCount || 0) > 0) {
+                logTelemetry('info', 'polling_terminal', { jobId, result: 'success_items_exist_priority', items: itemsCount });
+                return {
+                    finalStatus: 'success',
+                    extractedTextLen: itemsCount || 0,
+                    message: `Concluído! ${itemsCount} itens encontrados.`
+                };
+            }
 
             // Logic
             if (tasks && tasks.length > 0) {

@@ -93,8 +93,15 @@ export default function ImportStatus() {
 
             if (fileError) console.warn("[ImportStatus] Error fetching file:", fileError);
 
+            // B.1 Fetch Item Count (REGRA ABSOLUTA)
+            // Alterado para 'import_items' conforme solicitação (fonte final do editor)
+            const { count: itemsCount } = await (supabase
+                .from('import_items' as any)
+                .select('*', { count: 'exact', head: true })
+                .eq('job_id', id) as any);
+
             // C. Derive Status
-            const derived = deriveUiStatus(jobData, fileData);
+            const derived = deriveUiStatus(jobData, fileData, itemsCount || 0);
 
             // State Updates
             setJob(jobData);
@@ -152,16 +159,27 @@ export default function ImportStatus() {
 
 
     // --- 3. STATUS DERIVATION (MATCHING BACKEND LOGIC) ---
-    const deriveUiStatus = (j: ImportJob, f: ExtendedImportFile | null): {
+    const deriveUiStatus = (j: ImportJob, f: ExtendedImportFile | null, itemsCount: number = 0): {
         status: UIStatus,
         error?: string,
         warning?: string
     } => {
+        // REGRA ABSOLUTA: Se existir pelo menos 1 item, o job está pronto para revisão
+        // Isso resolve o bug onde o status do job ou do OCR pode estar atrasado/preso
+        if (itemsCount > 0) {
+            return { status: "review_ready" };
+        }
+
         // PRIORITY 1: Budget Already Created (Success)
         // If the backend created a budget, we don't care about job status failures.
         if ((j as any)?.result_budget_id) {
-            console.log("[ImportStatus] Budget found, ignoring failed status.");
+            console.log("[ImportStatus] Budget found, ignoring status variants.");
             return { status: "review_ready" };
+        }
+
+        // PRIORITY 1.1: Explicit DONE but missing link (Finalizing state)
+        if (j?.status === 'done' && !(j as any)?.result_budget_id) {
+            return { status: "finalizing" };
         }
 
         // PRIORITY 2: Extraction Failed (User Action Required)
@@ -337,6 +355,18 @@ export default function ImportStatus() {
                 setWarningMessage("OCR Avançado finalizado! Recarregando dados...");
                 fetchData();
             } else {
+                // SPECIAL HANDLER: Background Processing (Not an error)
+                // If the worker decided to run in background (202 Accepted equivalent), it returns ok:false but with a specific message.
+                const isBackground =
+                    data?.message?.includes("Processamento iniciado em background") ||
+                    data?.started_in_background === true;
+
+                if (isBackground) {
+                    setWarningMessage("Solicitação enviada. Processamento em segundo plano...");
+                    setUiStatus('queued'); // This triggers the polling UI
+                    return; // Stop here, do not throw
+                }
+
                 throw new Error(data?.message || "O OCR não retornou sucesso.");
             }
 
