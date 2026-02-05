@@ -1,5 +1,35 @@
 
+
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+// --- CLOSEOUT HELPERS ---
+async function getTaskStats(supabase: any, jobId: string) {
+    const { data, error } = await supabase
+        .from('import_parse_tasks')
+        .select('status')
+        .eq('job_id', jobId)
+
+    if (error) {
+        console.error('[WORKER] getTaskStats error', error)
+        return { total: 0, running: 1, done: 0, failed: 0 }
+    }
+    const tasks = data || []
+    const total = tasks.length
+    const done = tasks.filter((t: any) => t.status === 'done').length
+    const failed = tasks.filter((t: any) => t.status === 'failed').length
+    // Start with running/queued/dispatched as "running"
+    const running = tasks.filter((t: any) => !['done', 'failed'].includes(t.status)).length
+    return { total, running, done, failed }
+}
+
+async function countAiItemsWorker(supabase: any, jobId: string) {
+    const { count } = await supabase
+        .from('import_ai_items')
+        .select('*', { count: 'exact', head: true })
+        .eq('job_id', jobId)
+    return count || 0
+}
+
 
 Deno.serve(async (_req) => {
     const headers = { 'Content-Type': 'application/json' }
@@ -132,39 +162,82 @@ Deno.serve(async (_req) => {
             return json(500, { error: 'invalid_task_state_missing_file_id', db_fingerprint: dbFingerprint })
         }
 
-        // 4) PROCESSAMENTO
-        const itemToInsert = {
-            job_id: task.job_id,
-            import_file_id: task.file_id,
-            idx: 0,
-            description: 'Falha na extração automática',
-            unit: 'UN',
-            quantity: 1,
-            unit_price: 0,
-            total: 0,
-            category: 'IMPORT_ERROR',
-            raw_line: 'Falha ao processar arquivo ou arquivo vazio (Placeholder gerado pelo Worker).',
-            confidence: 0.1,
+        // 4) PROCESSAMENTO / FINALIZAÇÃO (Fixed Logic)
+        console.log(`[WORKER] Iniciando finalização para Job ${task.job_id} (File ${task.file_id})`)
+
+        // A) Obter User ID (Necessário para RPC)
+        const { data: jobData, error: jobError } = await supabase
+            .from('import_jobs')
+            .select('user_id')
+            .eq('id', task.job_id)
+            .single()
+
+        if (jobError || !jobData) {
+            console.error('[WORKER] Falha ao obter user_id do job:', jobError)
+            return json(500, { error: 'job_user_not_found', details: jobError?.message, db_fingerprint: dbFingerprint })
         }
 
-        const { error: insertError } = await supabase
+        // B) Check Real Items Count
+        const { count, error: countError } = await supabase
             .from('import_ai_items')
-            .insert(itemToInsert)
+            .select('*', { count: 'exact', head: true })
+            .eq('job_id', task.job_id)
 
-        if (insertError) {
-            console.error('[WORKER] Insert falhou:', insertError)
-            await supabase
-                .from('import_parse_tasks')
-                .update({
-                    status: 'failed',
-                    last_error: `Insert Fail: ${insertError.message}`,
-                    locked_at: null,
-                    locked_by: null
-                })
-                .eq('id', task.id)
-
-            return json(500, { error: 'insert_failed', details: insertError.message, db_fingerprint: dbFingerprint })
+        if (countError) {
+            console.error('[WORKER] Falha ao contar items:', countError)
+            return json(500, { error: 'count_items_failed', details: countError.message, db_fingerprint: dbFingerprint })
         }
+
+        const itemsCount = count || 0
+        console.log(`[WORKER] Items encontrados para job ${task.job_id}: ${itemsCount}`)
+
+        let actionTaken = '';
+
+        if (itemsCount > 0) {
+            // C) Tem itens -> CHAMAR RPC DE FINALIZAÇÃO
+            console.log(`[WORKER] FINALIZE_RPC_CALL_START {job_id: ${task.job_id}}`)
+
+            const { data: rpcData, error: rpcError } = await supabase.rpc('finalize_import_to_budget', {
+                p_job_id: task.job_id,
+                p_user_id: jobData.user_id,
+                p_params: {} // Parâmetros default/vazios, RPC usa defaults ou tabelas auxiliares
+            })
+
+            if (rpcError) {
+                console.error(`[WORKER] FINALIZE_RPC_CALL_FAIL`, rpcError)
+                await supabase
+                    .from('import_parse_tasks')
+                    .update({ status: 'failed', last_error: `RPC Fail: ${rpcError.message}` })
+                    .eq('id', task.id)
+                return json(500, { error: 'finalize_rpc_failed', details: rpcError.message, db_fingerprint: dbFingerprint })
+            }
+
+            console.log(`[WORKER] FINALIZE_RPC_CALL_OK {budget_id: ${rpcData?.budget_id}}`)
+            actionTaken = 'finalized_via_rpc';
+
+        } else {
+            // D) Não tem itens -> FALHA CONTROLADA (Sem fake items!)
+            console.warn(`[WORKER] Nenhum item encontrado. Marcando job como waiting_user_extraction_failed.`)
+
+            // Update Job Status
+            const { error: jobUpdateError } = await supabase
+                .from('import_jobs')
+                .update({
+                    status: 'waiting_user_extraction_failed',
+                    current_step: 'waiting_user_extraction_failed',
+                    // Adicionar ao document_context sem apagar o resto seria ideal, mas aqui é update simples.
+                    // Vamos assumir que document_context já tem info da extração falha.
+                    // Se quisermos ser gentis, podemos fazer um rpc patch, mas um update status é o crítico.
+                })
+                .eq('id', task.job_id)
+
+            if (jobUpdateError) {
+                console.error('[WORKER] Falha ao atualizar status do job vazio:', jobUpdateError)
+            }
+
+            actionTaken = 'marked_low_completeness_no_fake_items';
+        }
+
 
         // 5) FINALIZAÇÃO
         const { error: doneError } = await supabase
@@ -181,12 +254,64 @@ Deno.serve(async (_req) => {
             return json(500, { error: doneError.message, db_fingerprint: dbFingerprint })
         }
 
+        // --- 6) IDEMPOTENT CLOSEOUT CHECK ---
+        console.log(`[WORKER] CLOSEOUT_CHECK_START {jobId: ${task.job_id}, taskId: ${task.id}}`)
+
+        try {
+            const stats = await getTaskStats(supabase, task.job_id)
+            console.log(`[WORKER] CLOSEOUT_TASKS_STATS`, stats)
+
+            if (stats.total > 0 && stats.running === 0) {
+                const aiCountFinal = await countAiItemsWorker(supabase, task.job_id)
+                console.log(`[WORKER] CLOSEOUT_AI_ITEMS_COUNT {aiCount: ${aiCountFinal}}`)
+
+                if (aiCountFinal === 0) {
+                    // Check current job status to avoid overwriting a valid state if it changed concurrently
+                    const { data: currentJob, error: jobCheckErr } = await supabase
+                        .from('import_jobs')
+                        .select('status, document_context')
+                        .eq('id', task.job_id)
+                        .single()
+
+                    if (!jobCheckErr && currentJob && currentJob.status === 'processing') {
+                        console.log(`[WORKER] CLOSEOUT_APPLIED_NO_ITEMS {jobId: ${task.job_id}}`)
+
+                        const newDebugInfo = {
+                            ...((currentJob.document_context as any)?.debug_info || {}),
+                            stage: 'waiting_user_extraction_failed',
+                            last_checkpoint: 'waiting_user_extraction_failed',
+                            reason: 'no_items_after_tasks_done',
+                            tasks_summary: stats,
+                            ai_items_count: 0
+                        }
+
+                        await supabase.from('import_jobs').update({
+                            status: 'failed',
+                            current_step: 'waiting_user_extraction_failed',
+                            document_context: {
+                                ...(currentJob.document_context || {}),
+                                debug_info: newDebugInfo
+                            },
+                            updated_at: new Date().toISOString()
+                        }).eq('id', task.job_id)
+
+                    } else {
+                        console.log(`[WORKER] CLOSEOUT_SKIPPED_ALREADY_TERMINAL (Status: ${currentJob?.status})`)
+                    }
+                } else {
+                    console.log(`[WORKER] CLOSEOUT_SKIPPED_ITEMS_PRESENT (Count: ${aiCountFinal})`)
+                }
+            }
+        } catch (closeoutErr) {
+            console.error('[WORKER] CLOSEOUT_FAIL', closeoutErr)
+        }
+
         return json(200, {
             success: true,
             taskId: task.id,
             fileId: task.file_id,
-            items_inserted: 1,
-            action: 'item_inserted_and_task_done',
+            items_inserted: itemsCount, // Real items count
+            action: actionTaken,
             db_fingerprint: dbFingerprint
         })
 

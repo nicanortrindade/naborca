@@ -85,7 +85,7 @@ export interface ImportSessionState {
 
 // === NEW AI IMPORT TYPES ===
 
-export type ImportJobStatus = 'queued' | 'processing' | 'waiting_user' | 'applying' | 'done' | 'failed';
+export type ImportJobStatus = 'queued' | 'processing' | 'waiting_user' | 'applying' | 'done' | 'failed' | 'waiting_user_extraction_failed' | 'waiting_user_rate_limited';
 
 export interface ImportJob {
     id: string;

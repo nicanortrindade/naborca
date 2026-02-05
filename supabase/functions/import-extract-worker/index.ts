@@ -72,6 +72,113 @@ interface ChunkResult {
 
 // --- HELPER FUNCTIONS ---
 
+function normalizeAiItemFields(input: { description?: string | null, raw_line?: string | null, category?: string | null }): { description: string | null, category: string | null, extracted_code?: string | null, extracted_base?: string | null } {
+    let desc = (input.description || input.raw_line || "").trim();
+    const originalCategory = input.category || "";
+    if (!desc) return { description: null, category: originalCategory || null };
+
+    let extractedBase: string | null = null;
+    let extractedCode: string | null = null;
+
+    // 1. Detect Base/Source (Case Insensitive) at START
+    // Regex matches common bases followed by optional separators
+    const baseRegex = /^(SINAPI|ORSE|PR[ÓO]PRI[OA]|CPU|SBC|SEINFRA|DER)(?:\s+|[-–:|]|\d)/i;
+    const baseMatch = desc.match(baseRegex);
+
+    if (baseMatch) {
+        // CPU is special case: implicit base PROPRIO, code prefix CPU
+        if (baseMatch[1].toUpperCase() === 'CPU') {
+            extractedBase = 'PROPRIO';
+            // Don't strip "CPU" yet, it might be part of code "CPU1234" logic below
+        } else {
+            extractedBase = baseMatch[1].toUpperCase();
+            // Normalize variations
+            if (extractedBase.startsWith('PR')) extractedBase = 'PROPRIO';
+
+            // Strip the base matched (only if it's not part of the code logic next, but usually base comes first or is separate)
+            // Actually, safe to strip the captured TEXT from start, but careful with boundaries.
+            // Let's refine: matched string length
+            // If match was "SINAPI " (len 7), substring(7).
+            // But wait, if input is "SINAPI 1234", match is "SINAPI ".
+            // If input is "SINAPI1234", match is "SINAPI1". (Matches \d)
+            // We want to capture the WORD.
+
+            // Simpler approach: split by separator or look for boundary
+            // Re-match strictly the word
+            const exactBaseWord = desc.match(/^(SINAPI|ORSE|PR[ÓO]PRI[OA]|SBC|SEINFRA|DER)(\s+|[-–:|]|$)/i);
+            if (exactBaseWord) {
+                desc = desc.substring(exactBaseWord[0].length).trim();
+            } else {
+                // Maybe connected to number: "SINAPI1234"
+                const connectedBase = desc.match(/^(SINAPI|ORSE|PR[ÓO]PRI[OA]|SBC|SEINFRA|DER)/i);
+                if (connectedBase) {
+                    desc = desc.substring(connectedBase[0].length).trim();
+                }
+            }
+        }
+    }
+
+    // 2. Detect Code at START (after base removal)
+    // Preference: "CPU"+"digits" OR 4+ digits OR "CÓDIGO/ITEM" pattern
+    // Examples: "CPU2527", "46540/001", "10.2.3" (composition items often have dot notation, but careful not to kill "1.2 m2")
+
+    // Pattern A: Alphanumeric specific (CPU, COMP, INSUMO) + Digits
+    const alphaCode = desc.match(/^(CPU|COMP|INSUMO|C[ÓO]D)\s*([0-9]+[0-9.-]*)/i);
+    if (alphaCode) {
+        extractedCode = alphaCode[1].toUpperCase() + alphaCode[2];
+        desc = desc.substring(alphaCode[0].length).trim();
+    } else {
+        // Pattern B: Pure numeric/dot code, but distinct from quantity.
+        // Needs to look like a code: 4+ digits, OR digits with dots/slash.
+        // e.g. "73922/001", "93.565".
+        // AVOID: "1.000,00" (money), "100 m2".
+
+        // Strategy: Match start, must be followed by separator or space.
+        // NOT followed by unit-like text immediately?
+        const digitCode = desc.match(/^(\d{3,}[./-]?\d{0,4}(?:\/\d+)?)(?=\s+|[-–:|]|$)/);
+
+        // Must be careful with "1000 UN". "1000" matches \d{3,}.
+        // Common composition codes: 5-digits (SINAPI).
+        if (digitCode) {
+            const candidate = digitCode[1];
+            // Heuristic: Code usually has no decimals like ",00"
+            if (!candidate.includes(',')) {
+                extractedCode = candidate;
+                desc = desc.substring(digitCode[0].length).trim();
+            }
+        }
+    }
+
+    // 3. Final Cleanup of separators at start
+    desc = desc.replace(/^[-–:|.]+\s*/, "").trim();
+
+    // 4. Construct Category
+    let finalCategory = originalCategory ? originalCategory.trim() : "";
+
+    // Append tags if extracted
+    const tags = [];
+    if (extractedCode) tags.push(`CODE=${extractedCode}`);
+    if (extractedBase) tags.push(`BASE=${extractedBase}`);
+
+    if (tags.length > 0) {
+        const tagStr = tags.join(';');
+        if (finalCategory) {
+            finalCategory = `${finalCategory} | ${tagStr}`;
+        } else {
+            finalCategory = tagStr;
+        }
+    }
+
+    return {
+        description: desc || null, // If became empty, null
+        category: finalCategory || null,
+        extracted_code: extractedCode,
+        extracted_base: extractedBase
+    };
+}
+
+
+
 function getRetryBackoffMinutes(attempt: number): number {
     if (attempt <= 1) return 2;
     if (attempt === 2) return 5;
@@ -488,84 +595,61 @@ Deno.serve(async (req) => {
             // USER DEFINED SYSTEM PROMPT (STRICT)
             const prompt = `
 ${systemPrompt}
-Você é um sistema de extração orçamentária para engenharia de custos.
+# CONTEXTO
+Você é um sistema de extração estruturada de itens orçamentários a partir de TEXTO OCR de PDFs de orçamento/planilha de obra.
 
-OBJETIVO PRINCIPAL (OBRIGATÓRIO):
-Gerar UMA LISTA DE ITENS ORÇAMENTÁRIOS SINTÉTICOS A PARTIR DO TEXTO ABAIXO (TRECHO DE DOCUMENTO),
-MESMO QUE O DOCUMENTO SEJA IMPERFEITO, INCOMPLETO OU MAL FORMATADO.
+O texto abaixo corresponde a linhas OCR (linha a linha) de um orçamento.
+Cada linha pode ou não conter:
+- descrição do item
+- unidade (UN, M, M2, M3, KG, H, VB, etc.)
+- quantidade
+- valor unitário
+- valor total
 
-REGRA ABSOLUTA:
-❗ É PROIBIDO retornar uma lista vazia de itens (exceto se o trecho for absolutamente irrelevante).
-❗ É PROIBIDO abortar a extração por falta de dados.
-❗ É PROIBIDO usar mensagens genéricas como “Falha na extração automática” como resultado final.
+IMPORTANTE:
+- Nem toda linha terá todos os campos.
+- Quando um valor NÃO estiver explícito, você NÃO deve inventar.
+- Zero NUNCA é um default silencioso.
+- Ausência deve ser representada como null.
 
----
+Seu output será usado para popular diretamente a tabela \`import_ai_items\`.
 
-PROCESSO DE EXTRAÇÃO (SEMPRE EXECUTAR):
+# OBJETIVO
+Extrair CADA ITEM como uma linha independente, preenchendo:
+- description (obrigatório)
+- unit (string curta, ex: "UN", "M2", "M3", "VB") ou null
+- quantity (numérico) ou null
+- unit_price (numérico) ou null
+- total (numérico) ou null
+- raw_line (linha original OCR, sem alteração)
+- confidence (0 a 1, confiança da extração numérica)
 
-1. Analise O TEXTO DISPONÍVEL NO TRECHO.
-2. Identifique qualquer coisa que represente:
-   - serviços
-   - etapas
-   - atividades
-   - materiais
-   - descrições técnicas
-   - títulos, subtítulos ou listas
-3. Cada conceito identificado DEVE virar um item orçamentário.
+# REGRAS CRÍTICAS (NÃO VIOLAR)
+1) NUNCA preencha quantity, unit_price ou total com 0 se o valor não estiver explícito.
+2) Se um número existir na linha, mas você não tiver certeza do campo correto:
+   - Prefira preencher total
+   - Marque confidence < 0.6
+3) Se quantity e unit_price existirem, calcule total SOMENTE se o total não estiver explícito.
+4) NÃO normalize preços, NÃO aplique impostos, NÃO arredonde.
+5) NÃO consolide linhas.
+6) NÃO elimine linhas aparentemente “descritivas” — extraia mesmo assim.
+7) NÃO invente unidade.
+8) Use ponto como separador decimal (ex: 1234.56).
 
----
+# HEURÍSTICAS PERMITIDAS
+- Padrões comuns:
+  - "1,00 UN 350,00 350,00"
+  - "M2 120,50 3.200,00"
+  - "QTDE: 2 VALOR UNIT: 500 TOTAL: 1000"
+- Se houver apenas UM valor monetário:
+  - Preencha total
+- Se houver dois valores:
+  - O menor tende a ser unit_price
+  - O maior tende a ser total
+- Quantidade normalmente é o menor número não monetário > 0
 
-ESTRUTURA DE CADA ITEM (OBRIGATÓRIA):
-
-Para CADA item, gere:
-
-- description (string clara e editável)
-- unit: (use a unidade encontrada ou "UN")
-- quantity: (use o valor encontrado ou 1)
-- unit_price: (SEMPRE 0)
-- total: (SEMPRE 0)
-- level:
-  - 1 = Etapa
-  - 2 = Subetapa
-  - 3 = Item
-- confidence:
-  - 0.9 → extração clara
-  - 0.5 → inferido
-  - 0.2 → altamente incerto
-
----
-
-HIERARQUIA:
-
-- Sempre que possível:
-  - Crie uma Etapa (level 1)
-  - Dentro dela Subetapas (level 2)
-  - Dentro delas Itens (level 3)
-- Se não houver hierarquia clara:
-  - Crie tudo como level 3
-
----
-
-FALLBACK OBRIGATÓRIO (CRÍTICO):
-
-Se o texto NÃO contiver itens claramente estruturados:
-- Gere itens sintéticos a partir de:
-  - títulos
-  - seções
-  - frases técnicas
-  - qualquer texto relevante
-- Use descrições genéricas porém úteis, por exemplo:
-  - “Serviços preliminares conforme documento”
-  - “Execução de etapas descritas no memorial”
-  - “Fornecimento de materiais conforme especificação”
-
-⚠️ Mesmo nesse cenário, gere NO MÍNIMO 3 itens (se houver texto legível).
-
----
-
-SAÍDA FINAL:
-
-Retorne EXCLUSIVAMENTE um JSON válido no formato:
+# FORMATO DE SAÍDA (OBRIGATÓRIO)
+Retorne APENAS um JSON válido no formato:
 
 {
   "items": [
@@ -573,18 +657,18 @@ Retorne EXCLUSIVAMENTE um JSON válido no formato:
       "description": "...",
       "unit": "UN",
       "quantity": 1,
-      "unit_price": 0,
-      "total": 0,
-      "level": 3,
-      "confidence": 0.5
+      "unit_price": 350.00,
+      "total": 350.00,
+      "raw_line": "...",
+      "confidence": 0.92
     }
   ],
   "summary": "Resumo do que foi encontrado neste trecho."
 }
 
-Não inclua comentários.
-Não inclua explicações.
-Não inclua texto fora do JSON.
+- NÃO inclua comentários
+- NÃO inclua texto fora do JSON
+- Use null explicitamente quando o campo não existir
 
 TEXT CHUNK:
 """
@@ -671,15 +755,17 @@ ${chunk}
             chunkResults.forEach(r => { if (r) currentItems += r.items.length; });
 
             // Update file progress
-            await safeUpdateImportFile(job_id, {
-                extraction_chunks_done: doneCount,
-                extraction_items_inserted: currentItems
-            });
+            if (job_id) {
+                await safeUpdateImportFile(job_id, {
+                    extraction_chunks_done: doneCount,
+                    extraction_items_inserted: currentItems
+                });
 
-            // Heartbeat for watchdog
-            await supabase.from('import_jobs').update({
-                heartbeat_at: new Date().toISOString()
-            }).eq('id', job_id);
+                // Heartbeat for watchdog
+                await supabase.from('import_jobs').update({
+                    heartbeat_at: new Date().toISOString()
+                }).eq('id', job_id);
+            }
         };
 
         // Execution Logic
@@ -853,7 +939,7 @@ ${chunk}
             const finalCheckOk = chunkResults.some(r => r && r.success);
             if (!finalCheckOk) {
                 const errStr = "all_chunks_failed_technical";
-                await safeUpdateImportFile(job_id, {
+                await safeUpdateImportFile(job_id!, {
                     extraction_status: 'failed',
                     extraction_reason: errStr,
                     extraction_last_error: errStr,
@@ -861,13 +947,13 @@ ${chunk}
                     extraction_duration_ms: durationMs,
                     extraction_chunks_done: chunks.length
                 });
-                await supabase.from('import_jobs').update({ stage: 'failed', last_error: errStr }).eq('id', job_id);
+                await supabase.from('import_jobs').update({ stage: 'failed', last_error: errStr }).eq('id', job_id!);
                 return new Response(JSON.stringify({ ok: false, reason: errStr, job_id }), {
                     status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
                 });
             }
             reason = "no_budget_items_found";
-            await safeUpdateImportFile(job_id, {
+            await safeUpdateImportFile(job_id!, {
                 extraction_status: 'success_no_items',
                 extraction_reason: reason,
                 extraction_items_inserted: 0,
@@ -880,20 +966,61 @@ ${chunk}
         }
 
         // 11. PERSIST PROCESSED ITEMS
-        const normalizedRows = allItems.map((item, idx) => ({
-            job_id,
-            import_file_id: file.id,
-            idx: idx + 1,
-            description: (item.description || "").trim(),
-            unit: (item.unit || "").trim() || null,
-            quantity: parseBRNumber(item.quantity) || 0,
-            unit_price: parseBRNumber(item.unit_price) || 0,
-            confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
-            level: item.level || 3,
-            total: (parseBRNumber(item.quantity) || 0) * (parseBRNumber(item.unit_price) || 0)
-        })).filter(r => r.description.length > 0);
+        const normalizedRows = allItems.map((item, idx) => {
+            // NORMALIZATION STEP
+            const norm = normalizeAiItemFields({
+                description: item.description,
+                raw_line: item.raw_line, // fallback to raw
+                category: item.category
+            });
+
+            // LOGGING FOR AUDIT (One-line compact)
+            if (norm.extracted_code || norm.extracted_base) {
+                console.log(`[ExtractWorker] AI_ITEM_NORMALIZED idx=${idx + 1} code=${norm.extracted_code} base=${norm.extracted_base} old_desc="${(item.description || "").substring(0, 20)}..." new_desc="${(norm.description || "").substring(0, 20)}..."`);
+            }
+
+            return {
+                job_id,
+                import_file_id: file!.id,
+                idx: idx + 1,
+                description: (norm.description || "").trim(),
+                unit: (item.unit || "").trim() || null,
+                quantity: parseBRNumber(item.quantity) ?? null,
+                unit_price: parseBRNumber(item.unit_price) ?? null,
+                confidence: typeof item.confidence === 'number' ? item.confidence : 0.5,
+                level: item.level || 3,
+                total: (item.total !== undefined && item.total !== null) ? parseBRNumber(item.total) : null,
+                // Persist the enriched category (containing CODE=...;BASE=...)
+                category: norm.category
+            };
+        }).filter(r => {
+            const desc = r.description;
+            if (!desc || desc.length === 0) return false;
+
+            // Block very short descriptions
+            if (desc.length < 4) {
+                console.log(`[ExtractWorker] AI_ITEM_BLOCKED job=${job_id} reason=short_description desc="${desc}"`);
+                return false;
+            }
+
+            // Block generic placeholders
+            const GENERIC_REGEX = /^(total|resumo|valor total|subtotal|sum[aá]rio)$/i;
+            if (GENERIC_REGEX.test(desc)) {
+                console.log(`[ExtractWorker] AI_ITEM_BLOCKED job=${job_id} reason=generic_description desc="${desc}"`);
+                return false;
+            }
+
+            return true;
+        });
 
         console.log(`[ExtractWorker] Persisting ${normalizedRows.length} items...`);
+
+        // LOGGING: NULL NUMBERS
+        normalizedRows.forEach(r => {
+            if (r.quantity === null || r.unit_price === null || r.total === null) {
+                console.log(`[ExtractWorker] AI_ITEM_ACCEPTED_WITH_NULL_NUMBERS job=${job_id} idx=${r.idx} desc="${r.description?.substring(0, 30)}"`);
+            }
+        });
 
         // --- BATCH INSERT ---
         const dbStart = Date.now();
@@ -940,8 +1067,8 @@ ${chunk}
 
         // 12. SUMMARY & AUDIT & PERF METRICS
         const summaryData = {
-            job_id,
-            import_file_id: file.id,
+            job_id: job_id!,
+            import_file_id: file!.id,
             notes: consolidatedSummary.trim(),
             items_count: normalizedRows.length,
             model_used: finalModelUsed,

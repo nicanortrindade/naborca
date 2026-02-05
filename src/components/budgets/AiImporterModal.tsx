@@ -131,17 +131,29 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                     }
                 }
             } else {
+                // FAILURE / THRESHOLD REACHED
+                // Instead of throwing, we redirect to review so user can see what happened or do manual entry.
+                console.warn('[UI-IMPORT] Polling ended with non-success status. Redirecting to review.', result);
                 clearImportSession();
-                throw new Error(result.message || 'Falha no processamento do arquivo.');
+
+                // Soft Fail -> Review
+                navigate(toRelativePath(`/importacoes/${jobId}`));
+                onClose();
+                return;
             }
         } catch (error: any) {
             if (error.message === 'Polling cancelled' || error.message?.includes('aborted')) {
                 setUploadStep('Cancelado.');
+                if (isRunningRef.current) setIsUploading(false);
             } else {
-                console.error('Falha na importação:', error);
-                alert(error.message || 'Ocorreu um erro desconhecido.');
+                // SOFT FAIL STRATEGY
+                console.warn('[UI-IMPORT] Polling exception caught. Redirecting to review...', error);
+
+                // We have a Job ID, so we fail forward.
+                clearImportSession();
+                navigate(toRelativePath(`/importacoes/${jobId}`));
+                onClose();
             }
-            if (isRunningRef.current) setIsUploading(false);
         } finally {
             isRunningRef.current = false;
             setCancelMode(false);
@@ -224,9 +236,26 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
             await executePolling(jobData.id, synId, syntheticFile.name);
 
         } catch (error: any) {
-            alert(error.message);
-            setIsUploading(false);
-            setCurrentJobId(null);
+            // SOFT FAIL STRATEGY:
+            // If we have a Job ID, we must recover to the Review Page regardless of the error.
+            const targetJobId = currentJobId;
+
+            if (targetJobId) {
+                console.warn("[UI-IMPORT] Recoverable error caught. Redirecting to review...", error);
+
+                // Ensure session is cleared so we don't resume a broken loop
+                clearImportSession();
+
+                // Redirect user to manage the job manually
+                navigate(toRelativePath(`/importacoes/${targetJobId}`));
+                onClose();
+            } else {
+                // Fatal error (DB insert failed, no Job ID)
+                console.error('Falha fatal na importação:', error);
+                alert(error.message || 'Ocorreu um erro ao criar o job de importação.');
+                setIsUploading(false);
+                setCurrentJobId(null);
+            }
         }
     };
 

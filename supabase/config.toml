@@ -1,0 +1,5 @@
+[functions.import-ocr-fallback]
+verify_jwt = false
+
+[functions.import-processor]
+verify_jwt = false
