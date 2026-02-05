@@ -163,9 +163,9 @@ export async function runImportParseWorkerUntilDone(params: {
             }
 
             // 3. Fetch Items Count (Feedback & Absolute Rule)
-            // Alterado para 'import_items' conforme solicitação (fonte final do editor)
+            // Alterado para 'import_ai_items' (Source of Truth do Worker)
             const { count: itemsCount, error: itemsError } = await supabase
-                .from('import_items' as any)
+                .from('import_ai_items' as any)
                 .select('*', { count: 'exact', head: true })
                 .eq('job_id', jobId);
 
