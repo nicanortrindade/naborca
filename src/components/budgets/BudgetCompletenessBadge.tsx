@@ -1,7 +1,7 @@
-
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { AlertTriangle, CheckCircle, Loader2, Database, FileText } from 'lucide-react';
+import { BUDGET_ITEMS_SELECT } from '../../lib/supabase-services/BudgetItemService';
+import { AlertTriangle, CheckCircle, Database, FileText } from 'lucide-react';
 
 interface Stats {
     total: number;
@@ -14,12 +14,12 @@ export const BudgetCompletenessBadge = ({ budgetId }: { budgetId: string }) => {
     const [stats, setStats] = useState<Stats | null>(null);
     const [loading, setLoading] = useState(true);
 
-    const fetchStats = async () => {
+    const fetchStats = useCallback(async () => {
         try {
-            // Fetch item stats
+            // Fetch item stats - Use SSOT to avoid schema errors
             const { data: items, error } = await supabase
                 .from('budget_items')
-                .select('hydration_status')
+                .select(BUDGET_ITEMS_SELECT)
                 .eq('budget_id', budgetId);
 
             if (error) throw error;
@@ -33,12 +33,12 @@ export const BudgetCompletenessBadge = ({ budgetId }: { budgetId: string }) => {
 
             if (pendingError) throw pendingError;
 
-            const total = items?.length || 0;
-            const base = items?.filter(i => i.hydration_status === 'source_db').length || 0;
-            const pdf = items?.filter(i => i.hydration_status === 'imported_text').length || 0;
+            const totalItems = items?.length || 0;
+            const base = (items as any[])?.filter(i => i.hydration_status === 'base').length || 0;
+            const pdf = (items as any[])?.filter(i => i.hydration_status === 'pdf').length || 0;
 
             setStats({
-                total,
+                total: totalItems,
                 base,
                 pdf,
                 pending: pendingCount || 0
@@ -48,7 +48,7 @@ export const BudgetCompletenessBadge = ({ budgetId }: { budgetId: string }) => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [budgetId]);
 
     useEffect(() => {
         fetchStats();
@@ -60,7 +60,7 @@ export const BudgetCompletenessBadge = ({ budgetId }: { budgetId: string }) => {
             .subscribe();
 
         return () => { supabase.removeChannel(ch); };
-    }, [budgetId]);
+    }, [budgetId, fetchStats]);
 
     if (loading) return <span className="bg-slate-100 text-slate-400 text-xs px-2 py-1 rounded animate-pulse">Carregando status...</span>;
     if (!stats) return null;

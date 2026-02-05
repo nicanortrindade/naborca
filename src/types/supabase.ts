@@ -171,19 +171,20 @@ export interface Database {
                     unit: string | null
                     quantity: number
                     unit_price: number
-                    final_price: number
                     total_price: number
+                    final_price: number
                     type: string | null
                     source: string | null
                     item_type: string | null
                     composition_id: string | null
                     insumo_id: string | null
-                    calculation_memory: string | null
-                    calculation_steps: string[] | null
                     custom_bdi: number | null
                     cost_center: string | null
-                    is_locked: boolean | null
                     notes: string | null
+                    hydration_status: string | null
+                    calculation_memory: string | null
+                    calculation_steps: string[] | null
+                    is_locked: boolean | null
                     is_desonerated: boolean | null
                     created_at: string
                     updated_at: string
@@ -201,19 +202,20 @@ export interface Database {
                     unit?: string | null
                     quantity?: number
                     unit_price?: number
-                    final_price?: number
                     total_price?: number
+                    final_price?: number
                     type?: string | null
                     source?: string | null
                     item_type?: string | null
                     composition_id?: string | null
                     insumo_id?: string | null
-                    calculation_memory?: string | null
-                    calculation_steps?: string[] | null
                     custom_bdi?: number | null
                     cost_center?: string | null
-                    is_locked?: boolean | null
                     notes?: string | null
+                    hydration_status?: string | null
+                    calculation_memory?: string | null
+                    calculation_steps?: string[] | null
+                    is_locked?: boolean | null
                     is_desonerated?: boolean | null
                     created_at?: string
                     updated_at?: string
@@ -231,19 +233,20 @@ export interface Database {
                     unit?: string | null
                     quantity?: number
                     unit_price?: number
-                    final_price?: number
                     total_price?: number
+                    final_price?: number
                     type?: string | null
                     source?: string | null
                     item_type?: string | null
                     composition_id?: string | null
                     insumo_id?: string | null
-                    calculation_memory?: string | null
-                    calculation_steps?: string[] | null
                     custom_bdi?: number | null
                     cost_center?: string | null
-                    is_locked?: boolean | null
                     notes?: string | null
+                    hydration_status?: string | null
+                    calculation_memory?: string | null
+                    calculation_steps?: string[] | null
+                    is_locked?: boolean | null
                     is_desonerated?: boolean | null
                     created_at?: string
                     updated_at?: string

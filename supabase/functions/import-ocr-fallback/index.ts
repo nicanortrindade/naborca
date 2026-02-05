@@ -2524,26 +2524,37 @@ RETORNE JSON: { "items": [...] }
 
             // Handle Missing Budget ID -> Force Waiting User
             if (finalCount > 0 && !resolvedBudgetId) {
-                await supabase.from("import_jobs").update({
-                    status: "waiting_user",
-                    current_step: "waiting_user_budget_id_missing",
-                    last_error: "Could not resolve budget_id",
-                    document_context: {
-                        ...(jobData.document_context || {}),
-                        ocr_fallback_executed: true,
-                        inserted_items_count: finalCount,
-                        debug_info: createSafeDebugInfo(debugSummary),
-                        user_action: {
-                            required: true,
-                            reason: "budget_id_missing",
-                            message: "Não foi possível vincular este processamento a um orçamento existente. Por favor, entre em contato com o suporte ou tente novamente.",
-                            items_count: finalCount
-                        }
-                    }
-                }).eq("id", currentJobId || job_id);
+                // LAST DITCH CHECK: Check if DB has it (Race condition or missed update)
+                const { data: latestJob } = await supabase.from('import_jobs').select('result_budget_id, status').eq('id', currentJobId || job_id).single();
 
-                console.log(`[REQ ${requestId}] JOB_MARKED_WAITING_USER_BUDGET_ID_MISSING`);
-                return jsonResponse({ ok: false, status: "waiting_user", error: "budget_id_missing" }, 200, req);
+                if (latestJob?.result_budget_id) {
+                    console.log(`[REQ ${requestId}] RECOVERED: resolvedBudgetId was null, but DB has ${latestJob.result_budget_id}. Proceeding.`);
+                    resolvedBudgetId = latestJob.result_budget_id;
+
+                    // If status is still processing, we might need to fix it, but let flow continue to "Done" logic below
+                } else {
+                    // GENUINE MISSING BUDGET
+                    await supabase.from("import_jobs").update({
+                        status: "waiting_user",
+                        current_step: "waiting_user_budget_id_missing",
+                        last_error: "Could not resolve budget_id",
+                        document_context: {
+                            ...(jobData.document_context || {}),
+                            ocr_fallback_executed: true,
+                            inserted_items_count: finalCount,
+                            debug_info: createSafeDebugInfo(debugSummary),
+                            user_action: {
+                                required: true,
+                                reason: "budget_id_missing",
+                                message: "Não foi possível vincular este processamento a um orçamento existente. Por favor, entre em contato com o suporte ou tente novamente.",
+                                items_count: finalCount
+                            }
+                        }
+                    }).eq("id", currentJobId || job_id);
+
+                    console.log(`[REQ ${requestId}] JOB_MARKED_WAITING_USER_BUDGET_ID_MISSING`);
+                    return jsonResponse({ ok: false, status: "waiting_user", error: "budget_id_missing" }, 200, req);
+                }
             }
 
             // Logic for Done vs Partial

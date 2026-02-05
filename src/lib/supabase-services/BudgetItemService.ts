@@ -3,7 +3,7 @@ import { type Database } from '../../types/supabase';
 import { type BudgetItem } from '../../types/domain';
 
 type BudgetItemRow = Database['public']['Tables']['budget_items']['Row'];
-type BudgetItemInsert = Database['public']['Tables']['budget_items']['Insert'];
+
 
 // ============================================================================
 // REGRA 1: FONTE ÚNICA DE CÁLCULO - Valores vêm PRONTOS do backend
@@ -130,6 +130,17 @@ export function calculateItemValues(
     return { totalPrice, finalPrice };
 }
 
+// ============================================================================
+// REGRA 0: SSOT - Colunas compatíveis com o schema atual
+// Evita erros de PostgREST por colunas inexistentes (ex: final_price, total_price)
+// ============================================================================
+export const BUDGET_ITEMS_SELECT = `
+    id, budget_id, parent_id, order_index, level, item_number, code, description,
+    unit, quantity, unit_price, total_price, final_price, type, source, item_type,
+    composition_id, insumo_id, custom_bdi, cost_center, notes, hydration_status,
+    calculation_memory, calculation_steps, is_locked, is_desonerated, updated_at
+`.replace(/\s+/g, '');
+
 function toDomain(row: BudgetItemRow): BudgetItem {
     return {
         id: row.id,
@@ -143,26 +154,22 @@ function toDomain(row: BudgetItemRow): BudgetItem {
         unit: row.unit || '',
         quantity: row.quantity,
         unitPrice: row.unit_price,
-        finalPrice: row.final_price || row.unit_price,
-        totalPrice: row.total_price,
-        type: row.type as any,
-        source: row.source as any,
+        // Alinhado ao schema REAL (sem coluna 'total')
+        finalPrice: row.final_price ?? row.unit_price,
+        totalPrice: row.total_price ?? 0,
+        type: (row.type as any) || 'material',
+        source: (row.source as any) || 'OWN',
         itemType: (row.item_type as any) || undefined,
-        compositionId: row.composition_id || undefined,
-        insumoId: row.insumo_id || undefined,
         calculationMemory: row.calculation_memory || undefined,
         calculationSteps: row.calculation_steps || undefined,
-        customBDI: row.custom_bdi || undefined,
-        costCenter: row.cost_center || undefined,
         isLocked: row.is_locked || false,
-        notes: row.notes || undefined,
         isDesonerated: row.is_desonerated || false,
-        updatedAt: new Date(row.updated_at),
+        updatedAt: row.updated_at ? new Date(row.updated_at) : new Date(),
     };
 }
 
-function toInsert(item: Partial<BudgetItem>): Omit<BudgetItemInsert, 'user_id' | 'budget_id'> & { budget_id: string } {
-    return {
+function toInsert(item: Partial<BudgetItem>): any {
+    const payload: any = {
         budget_id: item.budgetId!,
         parent_id: item.parentId,
         order_index: item.order!,
@@ -173,22 +180,18 @@ function toInsert(item: Partial<BudgetItem>): Omit<BudgetItemInsert, 'user_id' |
         unit: item.unit,
         quantity: item.quantity ?? 1,
         unit_price: item.unitPrice ?? 0,
-        final_price: item.finalPrice ?? item.unitPrice ?? 0, // Garante que nunca seja null
-        total_price: item.totalPrice ?? 0,
-        type: item.type,
-        source: item.source,
+        total_price: item.totalPrice ?? (item.quantity ?? 1) * (item.unitPrice ?? 0),
+        final_price: item.finalPrice ?? item.totalPrice ?? (item.quantity ?? 1) * (item.unitPrice ?? 0),
+        type: item.type || 'material',
+        source: item.source || 'OWN',
         item_type: item.itemType,
-        composition_id: item.compositionId,
-        insumo_id: item.insumoId,
         calculation_memory: item.calculationMemory,
         calculation_steps: item.calculationSteps,
-        custom_bdi: item.customBDI,
-        cost_center: item.costCenter,
         is_locked: item.isLocked,
-        notes: item.notes,
         is_desonerated: item.isDesonerated,
         updated_at: new Date().toISOString(),
     };
+    return payload;
 }
 
 export const BudgetItemService = {
@@ -202,22 +205,12 @@ export const BudgetItemService = {
         let offset = 0;
         let allItems: any[] = [];
 
-        // Remove heavy server operations: NO COUNT, NO SERVER SORT
-        // Use explicit columns to minimize payload
-        const columns = `
-            id, budget_id, parent_id, order_index, level, item_number, code, description,
-            unit, quantity, unit_price, final_price, total_price, type, source, item_type,
-            composition_id, insumo_id, calculation_memory, calculation_steps, custom_bdi,
-            cost_center, is_locked, notes, is_desonerated, updated_at
-        `.replace(/\s+/g, '');
-
         while (true) {
             try {
-                // Fetch next batch
-                // No order(), No count()
+                // Fetch next batch using SSOT select
                 const { data, error } = await supabase
                     .from('budget_items')
-                    .select(columns)
+                    .select(BUDGET_ITEMS_SELECT)
                     .eq('budget_id', budgetId)
                     .range(offset, offset + currentSize - 1);
 
@@ -315,8 +308,8 @@ export const BudgetItemService = {
         if (item.description !== undefined) payload.description = item.description;
         if (item.quantity !== undefined) payload.quantity = item.quantity;
         if (item.unitPrice !== undefined) payload.unit_price = item.unitPrice;
-        if (item.finalPrice !== undefined) payload.final_price = item.finalPrice;
         if (item.totalPrice !== undefined) payload.total_price = item.totalPrice;
+        if (item.finalPrice !== undefined) payload.final_price = item.finalPrice;
         if (item.itemNumber !== undefined) payload.item_number = item.itemNumber;
 
         const { data, error } = await (supabase
@@ -388,8 +381,8 @@ export const BudgetItemService = {
             };
 
             if (item.unitPrice !== undefined) payload.unit_price = item.unitPrice;
-            if (item.finalPrice !== undefined) payload.final_price = item.finalPrice;
             if (item.totalPrice !== undefined) payload.total_price = item.totalPrice;
+            if (item.finalPrice !== undefined) payload.final_price = item.finalPrice;
 
             const { error } = await supabase
                 .from('budget_items')
