@@ -30,6 +30,21 @@ async function countAiItemsWorker(supabase: any, jobId: string) {
     return count || 0
 }
 
+async function writeTaskResult(supabase: any, taskId: string, payload: any) {
+    console.log(`[PARSE-WORKER] checkpoint=write_task_result task_id=${taskId}`)
+    const { error } = await supabase
+        .from('import_parse_tasks')
+        .update({
+            result: payload,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', taskId)
+
+    if (error) {
+        console.error(`[PARSE-WORKER] Failed to write task result:`, error)
+    }
+}
+
 
 Deno.serve(async (_req) => {
     const headers = { 'Content-Type': 'application/json' }
@@ -193,18 +208,91 @@ Deno.serve(async (_req) => {
 
         let actionTaken = '';
 
-        if (itemsCount > 0) {
-            // C) Tem itens -> CHAMAR RPC DE FINALIZAÇÃO
-            console.log(`[WORKER] FINALIZE_RPC_CALL_START {job_id: ${task.job_id}}`)
+        // B1) GATING: Check if extraction has completed for ALL files in this job
+        console.log(`[PARSE-WORKER] checkpoint=gating_check job_id=${task.job_id}`)
+
+        const { data: filesStatus, error: filesError } = await supabase
+            .from('import_files')
+            .select('id, extraction_status, extracted_started_at, extracted_completed_at, extraction_last_error')
+            .eq('job_id', task.job_id)
+
+        if (filesError) {
+            console.error('[PARSE-WORKER] Failed to fetch files status:', filesError)
+            await writeTaskResult(supabase, task.id, {
+                action: 'error_checking_extraction_status',
+                error: filesError.message,
+                timestamp: new Date().toISOString()
+            })
+            return json(500, { error: 'files_status_check_failed', details: filesError.message, db_fingerprint: dbFingerprint })
+        }
+
+        const files = filesStatus || []
+        const extraction_done = files.every(f =>
+            f.extracted_completed_at !== null ||
+            ['done', 'failed', 'skipped'].includes(f.extraction_status)
+        )
+
+        console.log(`[PARSE-WORKER] checkpoint=gating_result extraction_done=${extraction_done} files_count=${files.length} items_count=${itemsCount}`)
+
+        // GATING DECISION TREE
+        if (!extraction_done) {
+            // CASE 1: Extraction still in progress → REQUEUE
+            console.log(`[PARSE-WORKER] checkpoint=requeue_waiting_for_extraction job_id=${task.job_id}`)
+
+            await writeTaskResult(supabase, task.id, {
+                action: 'requeue_waiting_for_extraction',
+                worker_id: workerId,
+                job_id: task.job_id,
+                file_id: task.file_id,
+                has_ai_items: itemsCount > 0,
+                extraction_done: false,
+                files: files.map(f => ({
+                    file_id: f.id,
+                    extraction_status: f.extraction_status,
+                    extracted_started_at: f.extracted_started_at,
+                    extracted_completed_at: f.extracted_completed_at,
+                    extraction_last_error: f.extraction_last_error
+                })),
+                timestamp: new Date().toISOString()
+            })
+
+            // Requeue without wasting attempts (undo the lock increment)
+            await supabase
+                .from('import_parse_tasks')
+                .update({
+                    status: 'queued',
+                    locked_at: null,
+                    locked_by: null,
+                    last_error: 'waiting_for_extraction',
+                    attempts: candidate.attempts  // Reset to original value before lock
+                })
+                .eq('id', task.id)
+
+            return json(202, {
+                success: true,
+                action: 'waiting_for_extraction',
+                taskId: task.id,
+                extraction_done: false,
+                db_fingerprint: dbFingerprint
+            })
+
+        } else if (itemsCount > 0) {
+            // CASE 2: Extraction done + items exist → FINALIZE
+            console.log(`[PARSE-WORKER] checkpoint=finalize_rpc_call_start job_id=${task.job_id}`)
 
             const { data: rpcData, error: rpcError } = await supabase.rpc('finalize_import_to_budget', {
                 p_job_id: task.job_id,
                 p_user_id: jobData.user_id,
-                p_params: {} // Parâmetros default/vazios, RPC usa defaults ou tabelas auxiliares
+                p_params: {}
             })
 
             if (rpcError) {
-                console.error(`[WORKER] FINALIZE_RPC_CALL_FAIL`, rpcError)
+                console.error(`[PARSE-WORKER] checkpoint=finalize_rpc_call_fail`, rpcError)
+                await writeTaskResult(supabase, task.id, {
+                    action: 'finalize_rpc_failed',
+                    error: rpcError.message,
+                    timestamp: new Date().toISOString()
+                })
                 await supabase
                     .from('import_parse_tasks')
                     .update({ status: 'failed', last_error: `RPC Fail: ${rpcError.message}` })
@@ -212,46 +300,121 @@ Deno.serve(async (_req) => {
                 return json(500, { error: 'finalize_rpc_failed', details: rpcError.message, db_fingerprint: dbFingerprint })
             }
 
-            console.log(`[WORKER] FINALIZE_RPC_CALL_OK {budget_id: ${rpcData?.budget_id}}`)
+            console.log(`[PARSE-WORKER] checkpoint=finalize_rpc_call_ok budget_id=${rpcData?.budget_id}`)
+
+            await writeTaskResult(supabase, task.id, {
+                action: 'finalized',
+                budget_id: rpcData?.budget_id,
+                items_count: itemsCount,
+                timestamp: new Date().toISOString()
+            })
+
             actionTaken = 'finalized_via_rpc';
 
         } else {
-            // D) Não tem itens -> FALHA CONTROLADA (Sem fake items!)
-            console.warn(`[WORKER] Nenhum item encontrado. Marcando job como waiting_user_extraction_failed.`)
+            // CASE 3: Extraction done + NO items → Diagnose via StageB metadata
+            console.warn(`[PARSE-WORKER] checkpoint=zero_items_diagnosing job_id=${task.job_id}`)
 
-            // Update Job Status
-            const { error: jobUpdateError } = await supabase
+            // Query stageB metadata to differentiate real failure from legitimate zero
+            const { data: filesWithMeta } = await supabase
+                .from('import_files')
+                .select('metadata')
+                .eq('job_id', task.job_id)
+
+            const stageBMeta = filesWithMeta?.[0]?.metadata?.stageB
+            const hasStageACandidate = filesWithMeta?.some((f: any) => (f.metadata?.stageA?.candidate_count || 0) > 0)
+            const stageBCompleted = stageBMeta?.generated_at != null
+            const stageBRejected = stageBMeta?.debug?.parse?.stats?.rejected_count || 0
+
+            // Determine reason code
+            let zeroItemsReason = 'unknown_zero_items'
+            if (!hasStageACandidate) {
+                zeroItemsReason = 'no_stage_a_candidates'
+            } else if (stageBCompleted && stageBRejected > 0) {
+                zeroItemsReason = 'all_rejected_by_schema'
+            } else if (stageBCompleted) {
+                zeroItemsReason = 'model_returned_empty'
+            } else if (stageBMeta?.error) {
+                zeroItemsReason = 'stage_b_execution_error'
+            }
+
+            console.log(`[PARSE-WORKER] zero_items_reason=${zeroItemsReason} stageBCompleted=${stageBCompleted} rejected=${stageBRejected}`)
+
+            const { data: currentJob } = await supabase
+                .from('import_jobs')
+                .select('document_context')
+                .eq('id', task.job_id)
+                .single()
+
+            const nowIso = new Date().toISOString()
+
+            const finalStep = stageBCompleted
+                ? 'waiting_user_zero_items'
+                : 'waiting_user_extraction_failed'
+            const finalStage = stageBCompleted ? 'extraction_complete' : 'ocr_failed'
+            const finalErrorMsg = stageBCompleted
+                ? `ZERO_ITEMS: ${zeroItemsReason}. Rejected: ${stageBRejected}.`
+                : 'NO_ITEMS_EXTRACTED: Extraction failed.'
+
+            await supabase
                 .from('import_jobs')
                 .update({
-                    status: 'waiting_user_extraction_failed',
-                    current_step: 'waiting_user_extraction_failed',
-                    // Adicionar ao document_context sem apagar o resto seria ideal, mas aqui é update simples.
-                    // Vamos assumir que document_context já tem info da extração falha.
-                    // Se quisermos ser gentis, podemos fazer um rpc patch, mas um update status é o crítico.
+                    status: 'done',
+                    stage: finalStage,
+                    current_step: finalStep,
+                    error_message: finalErrorMsg,
+                    last_error: `${zeroItemsReason}: ${finalErrorMsg}`,
+                    stage_updated_at: nowIso,
+                    updated_at: nowIso,
+                    document_context: {
+                        ...(currentJob?.document_context || {}),
+                        debug_info: {
+                            ...((currentJob?.document_context as any)?.debug_info || {}),
+                            stage: finalStep,
+                            last_checkpoint: 'zero_items_diagnosed',
+                            reason: zeroItemsReason,
+                            stage_b_completed: stageBCompleted,
+                            stage_b_rejected_count: stageBRejected,
+                            ai_items_count: 0,
+                            extraction_completed: true
+                        }
+                    }
                 })
                 .eq('id', task.job_id)
 
-            if (jobUpdateError) {
-                console.error('[WORKER] Falha ao atualizar status do job vazio:', jobUpdateError)
-            }
+            await writeTaskResult(supabase, task.id, {
+                action: 'zero_items_diagnosed',
+                reason: zeroItemsReason,
+                stage_b_completed: stageBCompleted,
+                stage_b_rejected_count: stageBRejected,
+                items_count: 0,
+                extraction_done: true,
+                files: files.map(f => ({
+                    file_id: f.id,
+                    extraction_status: f.extraction_status
+                })),
+                timestamp: new Date().toISOString()
+            })
 
-            actionTaken = 'marked_low_completeness_no_fake_items';
+            actionTaken = 'zero_items_diagnosed';
         }
 
 
-        // 5) FINALIZAÇÃO
-        const { error: doneError } = await supabase
-            .from('import_parse_tasks')
-            .update({
-                status: 'done',
-                last_error: null,
-                locked_at: null,
-                locked_by: null
-            })
-            .eq('id', task.id)
+        // 5) FINALIZAÇÃO - Only mark as 'done' for finalize/ocr_failed, not for requeue
+        if (actionTaken !== '' && actionTaken !== 'waiting_for_extraction') {
+            const { error: doneError } = await supabase
+                .from('import_parse_tasks')
+                .update({
+                    status: 'done',
+                    last_error: null,
+                    locked_at: null,
+                    locked_by: null
+                })
+                .eq('id', task.id)
 
-        if (doneError) {
-            return json(500, { error: doneError.message, db_fingerprint: dbFingerprint })
+            if (doneError) {
+                return json(500, { error: doneError.message, db_fingerprint: dbFingerprint })
+            }
         }
 
         // --- 6) IDEMPOTENT CLOSEOUT CHECK ---
@@ -266,6 +429,58 @@ Deno.serve(async (_req) => {
                 console.log(`[WORKER] CLOSEOUT_AI_ITEMS_COUNT {aiCount: ${aiCountFinal}}`)
 
                 if (aiCountFinal === 0) {
+                    // --- PATCH: Gating logic for closeout to prevent premature failure ---
+                    console.log(`[PARSE-WORKER] checkpoint=closeout_check job_id=${task.job_id}`)
+
+                    const { data: closeoutFiles, error: closeoutFilesErr } = await supabase
+                        .from('import_files')
+                        .select('id, extraction_status, extracted_completed_at')
+                        .eq('job_id', task.job_id)
+
+                    if (closeoutFilesErr) {
+                        console.error('[PARSE-WORKER] Closeout file fetch failed', closeoutFilesErr)
+                        // Fail safe: don't close out if we can't verify
+                        return json(200, {
+                            success: true,
+                            taskId: task.id,
+                            action: actionTaken,
+                            closeout_status: 'skipped_error_fetching_files',
+                            db_fingerprint: dbFingerprint
+                        })
+                    }
+
+                    const safeFiles = closeoutFiles || []
+                    const isExtractionTrulyDone = safeFiles.length > 0 && safeFiles.every(f =>
+                        f.extracted_completed_at !== null ||
+                        ['done', 'failed', 'skipped'].includes(f.extraction_status)
+                    )
+
+                    if (!isExtractionTrulyDone) {
+                        console.log(`[PARSE-WORKER] checkpoint=closeout_skipped_waiting_for_extraction job_id=${task.job_id}`)
+                        await writeTaskResult(supabase, task.id, {
+                            action: 'closeout_skipped_waiting_for_extraction',
+                            reason: 'extraction_not_finished',
+                            files_summary: {
+                                total: safeFiles.length,
+                                done: safeFiles.filter(f => f.extracted_completed_at !== null).length,
+                                status_counts: safeFiles.reduce((acc: any, f) => {
+                                    acc[f.extraction_status || 'null'] = (acc[f.extraction_status || 'null'] || 0) + 1;
+                                    return acc;
+                                }, {})
+                            },
+                            timestamp: new Date().toISOString()
+                        })
+                        // ABORT CLOSEOUT - Do not mark as failed
+                        return json(200, {
+                            success: true,
+                            taskId: task.id,
+                            action: actionTaken,
+                            closeout_status: 'skipped_waiting_extraction',
+                            db_fingerprint: dbFingerprint
+                        })
+                    }
+                    // --- PATCH END ---
+
                     // Check current job status to avoid overwriting a valid state if it changed concurrently
                     const { data: currentJob, error: jobCheckErr } = await supabase
                         .from('import_jobs')
@@ -276,24 +491,40 @@ Deno.serve(async (_req) => {
                     if (!jobCheckErr && currentJob && currentJob.status === 'processing') {
                         console.log(`[WORKER] CLOSEOUT_APPLIED_NO_ITEMS {jobId: ${task.job_id}}`)
 
+                        const nowIso = new Date().toISOString()
+
                         const newDebugInfo = {
                             ...((currentJob.document_context as any)?.debug_info || {}),
                             stage: 'waiting_user_extraction_failed',
                             last_checkpoint: 'waiting_user_extraction_failed',
                             reason: 'no_items_after_tasks_done',
+                            failure_kind: 'no_items',
                             tasks_summary: stats,
-                            ai_items_count: 0
+                            ai_items_count: 0,
+                            closeout_extraction_verified: true
                         }
 
                         await supabase.from('import_jobs').update({
-                            status: 'failed',
+                            status: 'done',
+                            stage: 'ocr_failed',
                             current_step: 'waiting_user_extraction_failed',
+                            error_message: 'NO_ITEMS_EXTRACTED: Nenhum item foi extraído ou inserido com sucesso. Verifique o arquivo.',
+                            last_error: 'NO_ITEMS_EXTRACTED: no_items_after_tasks_done',
+                            stage_updated_at: nowIso,
+                            updated_at: nowIso,
                             document_context: {
                                 ...(currentJob.document_context || {}),
                                 debug_info: newDebugInfo
-                            },
-                            updated_at: new Date().toISOString()
+                            }
                         }).eq('id', task.job_id)
+
+                        // Audit the failure decision
+                        await writeTaskResult(supabase, task.id, {
+                            action: 'closeout_marked_ocr_failed',
+                            reason: 'no_items_and_extraction_done',
+                            items_count: 0,
+                            timestamp: new Date().toISOString()
+                        })
 
                     } else {
                         console.log(`[WORKER] CLOSEOUT_SKIPPED_ALREADY_TERMINAL (Status: ${currentJob?.status})`)
@@ -310,7 +541,7 @@ Deno.serve(async (_req) => {
             success: true,
             taskId: task.id,
             fileId: task.file_id,
-            items_inserted: itemsCount, // Real items count
+            items_inserted: itemsCount,
             action: actionTaken,
             db_fingerprint: dbFingerprint
         })

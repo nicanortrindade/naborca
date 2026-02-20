@@ -1,5 +1,6 @@
 -- Migration: Fix Import Job Status Consistency
 -- Objective: Ensure finalize_import_to_budget sets status = 'done', clears errors, and handles idempotency.
+DROP FUNCTION IF EXISTS public.finalize_import_to_budget(uuid, uuid, jsonb, jsonb);
 create or replace function finalize_import_to_budget(
         p_job_id uuid,
         p_user_id uuid,

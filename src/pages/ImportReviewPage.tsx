@@ -75,7 +75,8 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                     social_charges: {
                         horista: params.encargo_horista_percent,
                         mensalista: params.encargo_mensalista_percent
-                    }
+                    },
+                    enable_structure_parser_v1: true
                 }
             });
 

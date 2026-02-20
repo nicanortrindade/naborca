@@ -92,7 +92,7 @@ serve(async (req) => {
                     target_file_id: resolvedImportFileId,
                     mode: 'worker_chunk_process', // Instruction: Run specific chunk range
                     start_chunk_index: job.next_chunk_index,
-                    max_chunks: 3, // Process up to 3 chunks per run
+                    max_chunks: 1, // Process 1 chunk per run (Avoid 502)
                     ocr_job_id: job.id // Pass ID to update progress
                 };
 

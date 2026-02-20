@@ -677,7 +677,14 @@ interface DelegationOpts {
     fileId: string;
 }
 
-async function fireAndForgetDelegate(opts: DelegationOpts): Promise<boolean> {
+interface DelegationResult {
+    success: boolean;
+    status: number;
+    error?: string;
+    bodySample?: string;
+}
+
+async function fireAndForgetDelegate(opts: DelegationOpts): Promise<DelegationResult> {
     const { url, headers, payload, requestId, fileId } = opts;
     const controller = new AbortController();
     // Short timeout just to get ACK
@@ -694,26 +701,32 @@ async function fireAndForgetDelegate(opts: DelegationOpts): Promise<boolean> {
             signal: controller.signal
         });
 
-        // We don't read body, we just check status
+        // We don't read body fully, just a sample if error
+        let bodySample: string | undefined;
+        if (resp.status >= 400) {
+            try {
+                bodySample = await resp.text();
+                bodySample = bodySample.substring(0, 300);
+            } catch { /* ignore */ }
+        }
+
         if (resp.status >= 400) {
             console.error(`[REQ ${requestId}] [DELEGATE_ACK_ERROR] File ${fileId}: Status ${resp.status} (Not OK)`);
-            return false;
+            return { success: false, status: resp.status, error: `HTTP ${resp.status}`, bodySample };
         } else {
             console.log(`[REQ ${requestId}] [DELEGATE_ACK_OK] File ${fileId}: Status ${resp.status}`);
-            return true;
+            return { success: true, status: resp.status };
         }
 
     } catch (err: any) {
         if (err.name === 'AbortError') {
             // Expected behavior if worker takes > 1.5s to start sending specific headers
-            // But usually Deno functions send headers quickly?
-            // Actually, if it's processing inside, it might not send headers until return.
-            // So this TIMEOUT is actually SUCCESS for our fire-and-forget purpose.
+            // TIMEOUT is actually SUCCESS for our fire-and-forget purpose (request sent)
             console.warn(`[REQ ${requestId}] [DELEGATE_ACK_TIMEOUT] File ${fileId}: Request likely sent, moving on.`);
-            return true;
+            return { success: true, status: 202, error: 'timout_ack_assumed_ok' };
         }
         console.warn(`[REQ ${requestId}] [DELEGATE_NET_ERROR] File ${fileId}: ${err.message}`);
-        return false;
+        return { success: false, status: 0, error: err.message };
     } finally {
         clearTimeout(timeoutId);
     }
@@ -959,6 +972,11 @@ async function handleRequest(req: Request): Promise<Response> {
             const supabase = getSupabase();
             supabaseForError = supabase;
 
+            // [NEW] Service Client for Global Watchdog (bypass RLS/Auth context)
+            const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+                auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+            });
+
             const startHeartbeat = () => {
                 if (hbTimer) return;
                 hbTimer = setInterval(async () => {
@@ -973,6 +991,109 @@ async function handleRequest(req: Request): Promise<Response> {
                     }
                 }, 30_000);
             };
+
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            // GLOBAL WATCHDOG: STAGE B ZERO-ITEMS SWEEP
+            // Runs on EVERY invocation to clean up stuck jobs.
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            try {
+                // 1. Fetch processing jobs (Limit 20 for perf)
+                const { data: stuckCandidates, error: fetchErr } = await serviceClient
+                    .from('import_jobs')
+                    .select('id, document_context')
+                    .eq('status', 'processing')
+                    .order('updated_at', { ascending: true }) // Oldest first
+                    .limit(20);
+
+                if (fetchErr) {
+                    console.error('[GLOBAL_WATCHDOG][FATAL] Failed to fetch candidates', fetchErr);
+                } else if (stuckCandidates && stuckCandidates.length > 0) {
+                    console.log(`[GLOBAL_WATCHDOG] Checking ${stuckCandidates.length} jobs for Stage B stall:Ids=${stuckCandidates.map(j => j.id.substring(0, 8)).join(',')}`);
+
+                    for (const candJob of stuckCandidates) {
+                        // Skip if it's the current job (will be handled by main logic)
+                        if (candJob.id === jobId) continue;
+
+                        // 2. Fetch files
+                        const { data: cFiles } = await serviceClient
+                            .from('import_files')
+                            .select('id, metadata')
+                            .eq('job_id', candJob.id);
+
+                        if (!cFiles || cFiles.length === 0) continue;
+
+                        // 3. Evaluate Condition
+                        const allV1 = cFiles.every((f: any) => {
+                            const meta = f.metadata || {};
+                            // If Stage A found candidates, Stage B MUST have version "v1"
+                            const hasCandidates = (meta.stageA?.candidate_count || 0) > 0;
+                            if (!hasCandidates) return true;
+                            return meta.stageB?.version === 'v1' || meta.stageB?.skipped === true || meta.stageB?.error;
+                        });
+
+                        const allZero = cFiles.every((f: any) => {
+                            const meta = f.metadata || {};
+                            const count = meta.stageB?.item_count;
+                            return (count === undefined || count === null || count === 0);
+                        });
+
+                        const anyCandidates = cFiles.some((f: any) => {
+                            const meta = f.metadata || {};
+                            return (meta.stageA?.candidate_count || 0) > 0;
+                        });
+
+                        if (allV1 && allZero && anyCandidates) {
+                            console.log(`[GLOBAL_WATCHDOG] ATTEMPTING FINALIZE STUCK JOB ${candJob.id} (Stage B 0 items)`);
+
+                            const nowIso = new Date().toISOString();
+                            const failureReason = "NO_ITEMS_EXTRACTED: stageB_no_items";
+                            const failureUserMsg = "IA analisou os candidatos mas não conseguiu estruturar itens válidos.";
+
+                            const updatePayload = {
+                                status: "done",
+                                stage: "ocr_failed", // Explicit override
+                                last_error: failureReason,
+                                error_message: failureUserMsg,
+                                result_budget_id: null, // Explicit null
+                                finalized_at: nowIso,
+                                stage_updated_at: nowIso,
+                                updated_at: nowIso,
+                                current_step: "waiting_user_extraction_failed", // Explicit override
+                                document_context: {
+                                    ...candJob.document_context,
+                                    debug_info: {
+                                        ...(candJob.document_context?.debug_info || {}),
+                                        stage: "waiting_user_extraction_failed",
+                                        last_checkpoint: "global_watchdog_stageb",
+                                        reason: failureReason,
+                                        ai_items_count: 0,
+                                        extraction_done: true
+                                    }
+                                }
+                            };
+
+                            console.log(`[GLOBAL_WATCHDOG] Finalizing ${candJob.id} with payload:`, JSON.stringify(updatePayload));
+
+                            const { data: updData, error: updErr } = await serviceClient
+                                .from("import_jobs")
+                                .update(updatePayload)
+                                .eq("id", candJob.id)
+                                .eq("status", "processing") // Ensuring only processing jobs are updated
+                                .select('id, status, last_error');
+
+                            if (updErr) {
+                                console.error('[FINALIZE][STAGE-B-0][FATAL] Update failed:', updErr);
+                            } else {
+                                console.log('[FINALIZE][STAGE-B-0][SUCCESS]', { jobId: candJob.id, updated: updData?.length, data: updData });
+                            }
+                        }
+                    }
+                }
+            } catch (wdErr) {
+                console.warn("[GLOBAL_WATCHDOG] Error during sweep:", wdErr);
+                // Non-blocking
+            }
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
             // MINI-HEARTBEAT MANUAL (Checkpoint)
             let lastCheckpointAt = Date.now();
@@ -1021,6 +1142,80 @@ async function handleRequest(req: Request): Promise<Response> {
                 "load_files"
             );
 
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            // [NEW] STAGE B TERMINAL CHECK (EARLY & UNCONDITIONAL)
+            // Fix for "Stalled Jobs": If Stage B finished (v1) but found 0 items,
+            // we MUST finalize the job regardless of parse_tasks status.
+            // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            const stageB_done = files.every((f: any) => {
+                const meta = f.metadata || {};
+                // If Stage A found candidates, Stage B MUST have version "v1"
+                const hasCandidates = (meta.stageA?.candidate_count || 0) > 0;
+                if (!hasCandidates) return true; // Not a Stage B candidate file
+                return meta.stageB?.version === 'v1' || meta.stageB?.skipped === true || meta.stageB?.error;
+            });
+
+            const stageB_zero_items = files.every((f: any) => {
+                const meta = f.metadata || {};
+                return (meta.stageB?.item_count || 0) === 0;
+            });
+
+            const stageA_had_candidates = files.some((f: any) => {
+                const meta = f.metadata || {};
+                return (meta.stageA?.candidate_count || 0) > 0;
+            });
+
+            if (stageB_done && stageB_zero_items && stageA_had_candidates && job.status !== 'done') {
+                const stageBItemsSum = files.reduce((acc, f) => acc + (((f.metadata as any)?.stageB?.item_count) || 0), 0);
+                // [REQ] Log explícito
+                console.log(`[FINALIZE][STAGE-B-0] job=${jobId} files=${files.length} stageA_sum=N/A stageB_sum=${stageBItemsSum} => marking done waiting_user_extraction_failed`);
+
+                const nowIso = new Date().toISOString();
+                const failureReason = "NO_ITEMS_EXTRACTED: stageB_no_items";
+                const failureUserMsg = "IA analisou os candidatos mas não conseguiu estruturar itens válidos.";
+
+                // Only update if not already terminal to ensure idempotency
+                // [FIX] Use serviceClient to guarantee permissions
+                const { error: termErr } = await serviceClient
+                    .from("import_jobs")
+                    .update({
+                        status: "done",
+                        stage: "ocr_failed", // Explicit override
+                        current_step: "waiting_user_extraction_failed", // Explicit override
+                        error_message: failureUserMsg,
+                        last_error: failureReason,
+                        result_budget_id: null, // Explicit null
+                        finalized_at: nowIso,
+                        stage_updated_at: nowIso,
+                        updated_at: nowIso,
+                        document_context: {
+                            ...job.document_context,
+                            debug_info: {
+                                ...(job.document_context?.debug_info || {}),
+                                stage: "waiting_user_extraction_failed",
+                                last_checkpoint: "waiting_user_extraction_failed_early_stageb",
+                                reason: failureReason,
+                                ai_items_count: 0,
+                                extraction_done: true
+                            }
+                        }
+                    })
+                    .eq("id", jobId)
+                    .neq("status", "done");
+
+                if (termErr) {
+                    console.error('[FINALIZE][STAGE-B-0][FATAL] Update failed:', termErr);
+                } else {
+                    return jsonResponse({
+                        message: "Job finalized early (Stage B 0 items)",
+                        status: "done",
+                        stage: "ocr_failed"
+                    }, 200, req);
+                }
+            }
+
+
+
             // --- SAFETY GUARD: RATE LIMIT ACTIVE ---
             if (job.document_context?.rate_limited === true) {
                 console.warn(`[REQ ${requestId}] SKIPPING: Job is in RATE_LIMITED state.`);
@@ -1067,96 +1262,184 @@ async function handleRequest(req: Request): Promise<Response> {
             await setCheckpoint(supabase, jobId, "before_file_loop");
 
             for (let i = 0; i < files.length; i++) {
-                // checkSoftTimeout(processStartMs, "before_file_loop_entry"); // Less relevant now as we are fast
                 const file = files[i];
-                if (file.user_id !== job.user_id) throw new Error("Security check failed");
 
-                await updateJob(supabase, jobId, {
-                    progress: Math.min(10 + i * 10, 80),
-                    current_step: `delegating_file_${i + 1}_of_${files.length}`,
-                });
+                // Per-file try-catch: Ensure one file's failure doesn't block others
+                try {
+                    // Security check (should throw to block entire job if violated)
+                    if (file.user_id !== job.user_id) throw new Error("Security check failed");
 
-                // 🚨 Checkpoint: ensure_task_persistence
-                // ensureParseTaskForFile handles the logic: SELECT check -> INSERT if missing (idempotent)
-                const task = await ensureParseTaskForFile(supabase, jobId, file.id, requestId);
+                    await updateJob(supabase, jobId, {
+                        progress: Math.min(10 + i * 10, 80),
+                        current_step: `delegating_file_${i + 1}_of_${files.length}`,
+                    });
 
-                // Update metadata with task_id if relevant (defensive merge)
-                if (task && task.id) {
-                    await supabase.from("import_files").update({
+                    // 🚨 Checkpoint: ensure_task_persistence
+                    // ensureParseTaskForFile handles the logic: SELECT check -> INSERT if missing (idempotent)
+                    const task = await ensureParseTaskForFile(supabase, jobId, file.id, requestId);
+
+                    // Update metadata with task_id if relevant (defensive merge)
+                    if (task && task.id) {
+                        await supabase.from("import_files").update({
+                            metadata: {
+                                ...(file.metadata || {}),
+                                routing: {
+                                    ...((file.metadata as any)?.routing || {}),
+                                    task_id: task.id,
+                                    task_ensured_at: new Date().toISOString()
+                                }
+                            }
+                        }).eq("id", file.id);
+                    }
+
+                    // 🚨 Checkpoint: delegating_to_worker (KICK)
+                    await setCheckpoint(supabase, jobId, `delegating_file_${file.id}`);
+
+                    console.log(`[REQ ${requestId}] Delegating file ${file.id} (${file.storage_path}) to import-ocr-fallback (KICK)`);
+
+                    // --- PATCH: OBSERVABILITY --
+                    // 1. Mark started BEFORE call
+                    const nowIso = new Date().toISOString();
+                    console.log(`[IMPORT-PROCESSOR] checkpoint=delegate_mark_started file_id=${file.id} job_id=${jobId}`);
+
+
+                    // --- RE-FETCH METADATA TO AVOID RACE CONDITION ---
+                    const { data: latestFile, error: refreshErr } = await supabase
+                        .from("import_files")
+                        .select("metadata")
+                        .eq("id", file.id)
+                        .single();
+
+                    const currentMetadata = latestFile?.metadata || file.metadata || {};
+
+                    const { error: updateErr } = await supabase.from("import_files").update({
+                        extraction_status: 'queued',
+                        extracted_started_at: nowIso,
+                        // extraction_method: 'edge_import_ocr_fallback', // REMOVED: Column does not exist
                         metadata: {
-                            ...(file.metadata || {}),
+                            ...currentMetadata,
                             routing: {
-                                ...((file.metadata as any)?.routing || {}),
-                                task_id: task.id,
-                                task_ensured_at: new Date().toISOString()
+                                ...(currentMetadata.routing || {}),
+                                task_id: task?.id || null,
+                                delegated_at: nowIso,
+                                delegate_attempt: 1,
+                                delegate_target: "import-ocr-fallback"
                             }
                         }
                     }).eq("id", file.id);
+
+                    if (updateErr) {
+                        console.error(`[IMPORT-PROCESSOR] Failed to mark file ${file.id} as queued: ${updateErr.message}`);
+                        // We continue anyway to attempt delegation, but log loudly
+                    }
+
+
+                    // =========================================================
+                    // DELEGATION: Call import-ocr-fallback (Fire-and-Forget KICK)
+                    // =========================================================
+                    const ocrFallbackUrl = `${SUPABASE_URL}/functions/v1/import-ocr-fallback`;
+
+                    // Use new helper
+                    const delegateResult = await fireAndForgetDelegate({
+                        url: ocrFallbackUrl,
+                        headers: {
+                            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                            'x-internal-call': '1',
+                            'x-ocr-enqueue-only': '1',
+                            'x-user-id': authenticatedUserId,
+                            'x-job-id': jobId
+                        },
+                        payload: {
+                            job_id: jobId,
+                            file_id: file.id,
+                            storage_path: file.storage_path,
+                            content_type: file.content_type
+                        },
+                        requestId,
+                        fileId: file.id
+                    });
+
+                    // --- PATCH: RESULT HANDLING (Step A & B & C) ---
+                    console.log(`[IMPORT-PROCESSOR] checkpoint=delegate_ack ok=${delegateResult.success} status=${delegateResult.status} file_id=${file.id}`);
+
+                    if (delegateResult.success) {
+                        // SUCCESS - HTTP OK
+                        // We DO NOT check import_ocr_jobs here anymore (Race Condition Fix)
+                        // We trust the HTTP 200 means "Request Received".
+                        // The Watchdog (later) will catch if it never appears in the queue.
+
+                        await supabase.from("import_files").update({
+                            // Status remains 'queued' (set before call)
+                            metadata: {
+                                ...(file.metadata || {}),
+                                routing: {
+                                    ...((file.metadata as any)?.routing || {}),
+                                    delegate_ok: true,
+                                    delegate_http_status: delegateResult.status,
+                                    delegate_attempted_at: new Date().toISOString()
+                                }
+                            }
+                        }).eq("id", file.id);
+
+                    } else {
+                        // FAILURE - HTTP Error
+                        console.error(`[REQ ${requestId}] Delegation FAILED: ${delegateResult.error}`);
+                        await supabase.from("import_files").update({
+                            extraction_status: 'failed', // CP2: Fail immediately on HTTP error
+                            extraction_last_error: `ocr_delegation_http_${delegateResult.status}_${delegateResult.error}`,
+                            extracted_completed_at: new Date().toISOString(),
+                            metadata: {
+                                ...(file.metadata || {}),
+                                routing: {
+                                    ...((file.metadata as any)?.routing || {}),
+                                    delegate_ok: false,
+                                    delegate_http_status: delegateResult.status,
+                                    delegate_error: delegateResult.error,
+                                    delegate_response_sample: delegateResult.bodySample
+                                }
+                            }
+                        }).eq("id", file.id);
+                    }
+
+                    // 🚨 Checkpoint: delegated_file
+                    await setCheckpoint(supabase, jobId, `delegated_file_${file.id}`);
+
+                } catch (fileErr: any) {
+                    // =========================================================
+                    // PER-FILE ERROR HANDLING: Mark failed but CONTINUE loop
+                    // =========================================================
+                    const errMsg = fileErr instanceof Error ? fileErr.message : String(fileErr);
+                    console.error(`[REQ ${requestId}] Delegation loop error for file ${file.id}: ${errMsg}`);
+
+                    // Security check failure should propagate (special case)
+                    if (errMsg === "Security check failed") {
+                        throw fileErr;
+                    }
+
+                    // Mark this specific file as failed, but continue to next file
+                    try {
+                        await supabase.from("import_files").update({
+                            extraction_status: 'failed',
+                            extraction_last_error: `delegation_loop_error: ${errMsg}`.substring(0, 500),
+                            extracted_completed_at: new Date().toISOString(),
+                            metadata: {
+                                ...(file.metadata || {}),
+                                routing: {
+                                    ...((file.metadata as any)?.routing || {}),
+                                    delegate_ok: false,
+                                    delegate_error: errMsg,
+                                    delegate_attempted_at: new Date().toISOString()
+                                }
+                            }
+                        }).eq("id", file.id);
+                    } catch (updateErr) {
+                        console.error(`[REQ ${requestId}] Failed to update file ${file.id} with error status:`, updateErr);
+                    }
+
+                    // CONTINUE to next file (no throw)
                 }
-
-                // 🚨 Checkpoint: delegating_to_worker (KICK)
-                await setCheckpoint(supabase, jobId, `delegating_file_${file.id}`);
-
-                console.log(`[REQ ${requestId}] Delegating file ${file.id} (${file.storage_path}) to import-ocr-fallback (KICK)`);
-
-                // =========================================================
-                // DELEGATION: Call import-ocr-fallback (Fire-and-Forget KICK)
-                // =========================================================
-                const ocrFallbackUrl = `${SUPABASE_URL}/functions/v1/import-ocr-fallback`;
-
-                // Use new helper
-                const delegated = await fireAndForgetDelegate({
-                    url: ocrFallbackUrl,
-                    headers: {
-                        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-                        'x-internal-call': '1',
-                        'x-user-id': authenticatedUserId,
-                        'x-job-id': jobId
-                    },
-                    payload: {
-                        job_id: jobId,
-                        file_id: file.id,
-                        storage_path: file.storage_path,
-                        content_type: file.content_type
-                    },
-                    requestId,
-                    fileId: file.id
-                });
-
-                if (delegated) {
-                    // Update metadata to show it was delegated (KICK OK)
-                    // Note: import_parse_task is the REAL truth now.
-                    await supabase.from("import_files").update({
-                        extraction_method: "delegated_to_ocr_fallback_kick",
-                        metadata: {
-                            ...(file.metadata || {}), // preserve update from ensureTask
-                            routing: {
-                                ...((file.metadata as any)?.routing || {}),
-                                delegated_at: new Date().toISOString(),
-                                target: "import-ocr-fallback",
-                                mode: "kick_and_queue" // updated mode
-                            }
-                        }
-                    }).eq("id", file.id);
-                } else {
-                    // Task exists anyway, so dispatcher will pick it up eventually.
-                    // Just log that the 'kick' failed.
-                    console.warn(`[REQ ${requestId}] Delegation kick failed, but task persisted.`);
-                    await supabase.from("import_files").update({
-                        extraction_method: "delegation_kick_failed_queued",
-                        metadata: {
-                            ...(file.metadata || {}),
-                            extraction: {
-                                error: `Delegation KICK failed (Task queued)`,
-                                attempted_at: new Date().toISOString()
-                            }
-                        }
-                    }).eq("id", file.id);
-                }
-
-                // 🚨 Checkpoint: delegated_file
-                await setCheckpoint(supabase, jobId, `delegated_file_${file.id}`);
             }
+
 
             // 🛡️ CONSISTENCY CHECK: Verify tasks created
             const { count: taskCount, error: countDescErr } = await supabase
@@ -1185,6 +1468,27 @@ async function handleRequest(req: Request): Promise<Response> {
             // 🚨 Checkpoint: PARSE_TASK_ENSURE_DONE
             console.log(`[REQ ${requestId}] PARSE_TASK_ENSURE_DONE {job_id: ${jobId}, files_processed: ${files.length}, tasks_found: ${taskCount}}`);
 
+            // 🛡️ INVARIANT CHECK: Verify all files received delegation attempts
+            try {
+                const { data: filesCheck } = await supabase
+                    .from('import_files')
+                    .select('id, metadata')
+                    .eq('job_id', jobId);
+
+                const undelegated = (filesCheck || []).filter((f: any) =>
+                    !f.metadata?.routing?.delegated_at &&
+                    !f.metadata?.routing?.delegate_error
+                );
+
+                if (undelegated.length > 0) {
+                    console.error(`[INVARIANT_VIOLATION] ${undelegated.length} files never received delegation attempt: ${undelegated.map((f: any) => f.id).join(', ')}`);
+                    // Log but don't fail - the watchdog will catch these
+                }
+            } catch (invErr) {
+                console.warn(`[INVARIANT_CHECK] Failed to verify delegations:`, invErr);
+            }
+
+
             // 🚨 Checkpoint: delegation_done
             await setCheckpoint(supabase, jobId, "delegation_done");
 
@@ -1206,33 +1510,140 @@ async function handleRequest(req: Request): Promise<Response> {
             console.log(`[REQ ${requestId}] CLOSEOUT_START`);
             const taskStats = await waitForParseTasksToSettle(supabase, jobId, requestId);
 
-            if (taskStats.settled) {
+            // Fetch files to check for STUCK jobs (Legacy strategy)
+            const { data: watchdogFiles, error: wdFilesErr } = await supabase
+                .from('import_files')
+                .select('id, extraction_status, extracted_completed_at, extracted_started_at, metadata')
+                .eq('job_id', jobId);
+
+            // Stage B Terminal Check was MOVED to the beginning of handleRequest.
+            // We now focus on parse_tasks settlement and stuck job detection.
+            let forceStageBTerminal = false; // Legacy flag if needed downstream, but usually MOVED logic returns early.
+
+            if (taskStats.settled || forceStageBTerminal) {
                 const aiCount = await countAiItems(supabase, jobId);
 
-                if (aiCount === 0) {
-                    console.log(`[REQ ${requestId}] CLOSEOUT_NO_ITEMS: All tasks done/failed, but 0 items found. Terminating job.`);
+                if (aiCount === 0 || forceStageBTerminal) {
+                    // If forced by Stage B logic, ensure we define specific reason
+                    const isStageBStall = forceStageBTerminal;
 
-                    // 3. Mark job as FAILED (terminal state) but with specific reason
+                    // --- PATCH START: Search for pending files (EXTRACTION GATING) ---
+                    console.log(`[IMPORT-PROCESSOR] checkpoint=watchdog_check job_id=${jobId} forceStageB=${forceStageBTerminal}`);
+
+                    let extraction_done = false;
+
+                    if (wdFilesErr) {
+                        console.error('[IMPORT-PROCESSOR] Watchdog file fetch failed, assuming NOT done', wdFilesErr);
+                        extraction_done = false;
+                    } else {
+                        const safeFiles = watchdogFiles || [];
+
+                        // 1. Stuck Job Detection (Step D)
+                        const GRACE_PERIOD_MS = 4 * 60 * 1000; // 4 minutes
+                        const nowMs = Date.now();
+
+                        for (const f of safeFiles) {
+                            if (['queued', 'processing'].includes(f.extraction_status)) {
+                                if (f.extracted_started_at) {
+                                    const startedMs = new Date(f.extracted_started_at).getTime();
+                                    const elapsed = nowMs - startedMs;
+
+                                    if (elapsed > GRACE_PERIOD_MS) {
+                                        // Check for worker entry (Metadata from Step E)
+                                        const workerEntered = f.metadata?.debug?.worker_entered_at || f.metadata?.ocr?.worker_entered_at;
+
+                                        if (!workerEntered) {
+                                            // Check for Queue Row (Async) - ROBUST CHECK
+                                            // We use limit(1) instead of maybeSingle() to handle multiple rows without error
+                                            const { data: qRows, error: qErr } = await supabase
+                                                .from('import_ocr_jobs')
+                                                .select('id')
+                                                .eq('import_file_id', f.id)
+                                                .limit(1);
+
+                                            // Explicit boolean derivation
+                                            const hasQueue = Array.isArray(qRows) && qRows.length > 0;
+
+                                            // If no queue row AND query was successful -> STUCK
+                                            if (!hasQueue && !qErr) {
+                                                console.error(`[WATCHDOG] STUCK JOB DETECTED: File ${f.id} elapsed=${elapsed}ms. marking failed.`);
+
+                                                await supabase.from('import_files').update({
+                                                    extraction_status: 'failed',
+                                                    extraction_last_error: 'ocr_delegation_stuck_no_worker_no_queue',
+                                                    extracted_completed_at: new Date().toISOString()
+                                                }).eq('id', f.id);
+
+                                                // Update local state for immediate "done" check
+                                                f.extraction_status = 'failed';
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 2. Final Done Check
+                        // Logic must match worker: all files either completed OR in terminal status
+                        extraction_done = safeFiles.length > 0 && safeFiles.every((f: any) =>
+                            f.extracted_completed_at !== null ||
+                            ['done', 'failed', 'skipped'].includes(f.extraction_status)
+                        );
+
+                        // Override if Stage B forced it
+                        if (forceStageBTerminal) extraction_done = true;
+
+                        console.log(`[IMPORT-PROCESSOR] checkpoint=watchdog_result extraction_done=${extraction_done} total_files=${safeFiles.length} forceStageB=${forceStageBTerminal}`);
+                    }
+
+                    if (!extraction_done) {
+                        console.log(`[IMPORT-PROCESSOR] checkpoint=watchdog_skipped_waiting_extraction job_id=${jobId}`);
+                        // DO NOT MARK FAILED. Just checkpoint and exit.
+                        // The background worker/cron will pick it up later.
+                        await setCheckpoint(supabase, jobId, "watchdog_skipped_waiting_extraction");
+
+                        return jsonResponse({
+                            ok: true,
+                            job_id: jobId,
+                            status: "processing",
+                            message: "Files delegated, watchdog skipped (extraction pending)"
+                        }, 200, req);
+                    }
+                    // --- PATCH END ---
+
+                    console.log(`[REQ ${requestId}] CLOSEOUT_NO_ITEMS: All tasks done/failed (or forced), but 0 items found. Terminating job.`);
+
+                    const nowIso = new Date().toISOString();
+
+                    const failureReason = isStageBStall ? "NO_ITEMS_EXTRACTED: stageB_no_items" : "NO_ITEMS_EXTRACTED: zombie_watchdog_no_items";
+                    const failureUserMsg = isStageBStall ? "IA analisou os candidatos mas não conseguiu estruturar itens válidos." : "NO_ITEMS_EXTRACTED: Nenhum item foi extraído ou inserido com sucesso. Verifique o arquivo.";
+
+                    // 3. Mark job as DONE (terminal state) with specific reason
                     // This prevents it from being picked up again by the watchdog loop
                     const { error: updateJobErr } = await supabase
                         .from("import_jobs")
                         .update({
-                            status: "failed", // Use 'failed' (terminal) instead of 'processing'
+                            status: "done",
+                            stage: "ocr_failed",
                             current_step: "waiting_user_extraction_failed",
-                            last_error: `Zombie job detected: 0 items found after parsing tasks finalized.`, // Adjusted message for 0 items
+                            error_message: failureUserMsg,
+                            last_error: failureReason,
+                            stage_updated_at: nowIso,
+                            updated_at: nowIso,
                             document_context: {
                                 ...job.document_context,
                                 debug_info: {
                                     ...(job.document_context?.debug_info || {}),
                                     stage: "waiting_user_extraction_failed",
                                     last_checkpoint: "waiting_user_extraction_failed",
-                                    reason: "zombie_watchdog_no_items",
+                                    reason: failureReason,
                                     tasks_summary: taskStats,
-                                    ai_items_count: 0 // Explicitly 0 here
+                                    ai_items_count: 0,
+                                    extraction_done: true // Confirm we checked
                                 }
                             }
                         })
-                        .eq("id", jobId); // Use jobId from context
+                        .eq("id", jobId);
                 } else {
                     console.log(`[REQ ${requestId}] CLOSEOUT_OK_AI_ITEMS_PRESENT count=${aiCount}`);
                 }

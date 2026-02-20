@@ -137,7 +137,8 @@ export function calculateItemValues(
 export const BUDGET_ITEMS_SELECT = `
     id, budget_id, parent_id, order_index, level, item_number, code, description,
     unit, quantity, unit_price, total_price, final_price, type, source, item_type,
-    composition_id, insumo_id, custom_bdi, cost_center, notes, hydration_status,
+    composition_id, insumo_id, custom_bdi, cost_center, notes,
+    hydration_status, hydration_details,
     calculation_memory, calculation_steps, is_locked, is_desonerated, updated_at
 `.replace(/\s+/g, '');
 
@@ -164,6 +165,8 @@ function toDomain(row: BudgetItemRow): BudgetItem {
         calculationSteps: row.calculation_steps || undefined,
         isLocked: row.is_locked || false,
         isDesonerated: row.is_desonerated || false,
+        hydrationStatus: (row as any).hydration_status,
+        hydrationDetails: (row as any).hydration_details,
         updatedAt: row.updated_at ? new Date(row.updated_at) : new Date(),
     };
 }
@@ -335,6 +338,35 @@ export const BudgetItemService = {
             .eq('user_id', user.id);
 
         if (error) throw error;
+    },
+
+
+    async getHydrationIssue(budgetItemId: string): Promise<{ id: string; status: string } | null> {
+        const { data, error } = await supabase
+            .from('import_hydration_issues')
+            .select('id, status')
+            .eq('budget_item_id', budgetItemId)
+            .neq('status', 'resolved') // Only open issues
+            .maybeSingle();
+
+        if (error) {
+            console.error('[BudgetItemService] Error fetching issue:', error);
+            // Don't throw, just return null to allow fallback or UI handling
+            return null;
+        }
+        return data;
+    },
+
+    async resolveHydrationIssue(issueId: string, payload: { source_type: 'internal_db' | 'manual', code?: string, items?: any[] }): Promise<void> {
+        const { data, error } = await (supabase.rpc as any)('resolve_import_hydration_issue', {
+            p_issue_id: issueId,
+            p_selected_composition: payload
+        });
+
+        if (error) throw error;
+        if (data && data.ok === false) {
+            throw new Error(data.reason || 'Falha ao resolver pendência');
+        }
     },
 
     async batchCreate(items: Partial<BudgetItem>[]): Promise<BudgetItem[]> {

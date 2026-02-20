@@ -72,13 +72,16 @@ interface ChunkResult {
 
 // --- HELPER FUNCTIONS ---
 
-function normalizeAiItemFields(input: { description?: string | null, raw_line?: string | null, category?: string | null }): { description: string | null, category: string | null, extracted_code?: string | null, extracted_base?: string | null } {
+function normalizeAiItemFields(input: { composition_code?: string | null, description?: string | null, raw_line?: string | null, category?: string | null }): { description: string | null, category: string | null, extracted_code?: string | null, extracted_base?: string | null, composition_code?: string | null } {
     let desc = (input.description || input.raw_line || "").trim();
     const originalCategory = input.category || "";
     if (!desc) return { description: null, category: originalCategory || null };
 
     let extractedBase: string | null = null;
     let extractedCode: string | null = null;
+
+    // Explicit Composition Code (AI provided) - Pass through
+    const explicitCode = input.composition_code ? input.composition_code.trim() : null;
 
     // 1. Detect Base/Source (Case Insensitive) at START
     // Regex matches common bases followed by optional separators
@@ -158,6 +161,7 @@ function normalizeAiItemFields(input: { description?: string | null, raw_line?: 
     // Append tags if extracted
     const tags = [];
     if (extractedCode) tags.push(`CODE=${extractedCode}`);
+    if (explicitCode) tags.push(`EXPLICIT_CODE=${explicitCode}`);
     if (extractedBase) tags.push(`BASE=${extractedBase}`);
 
     if (tags.length > 0) {
@@ -173,7 +177,8 @@ function normalizeAiItemFields(input: { description?: string | null, raw_line?: 
         description: desc || null, // If became empty, null
         category: finalCategory || null,
         extracted_code: extractedCode,
-        extracted_base: extractedBase
+        extracted_base: extractedBase,
+        composition_code: explicitCode || null
     };
 }
 
@@ -600,6 +605,7 @@ Você é um sistema de extração estruturada de itens orçamentários a partir 
 
 O texto abaixo corresponde a linhas OCR (linha a linha) de um orçamento.
 Cada linha pode ou não conter:
+- código da composição (CPU / SINAPI)
 - descrição do item
 - unidade (UN, M, M2, M3, KG, H, VB, etc.)
 - quantidade
@@ -616,13 +622,21 @@ Seu output será usado para popular diretamente a tabela \`import_ai_items\`.
 
 # OBJETIVO
 Extrair CADA ITEM como uma linha independente, preenchendo:
-- description (obrigatório)
+- composition_code (string ou null) -> PRIORIDADE ABSOLUTA se existir (ex: "93215", "7.1.020")
+- description (obrigatório) -> texto limpo
 - unit (string curta, ex: "UN", "M2", "M3", "VB") ou null
 - quantity (numérico) ou null
 - unit_price (numérico) ou null
 - total (numérico) ou null
 - raw_line (linha original OCR, sem alteração)
 - confidence (0 a 1, confiança da extração numérica)
+
+# LOGICA DO CAMPO composition_code
+- Preencher SOMENTE se:
+  - houver código explícito no texto, OU
+  - a descrição corresponder claramente a uma CPU padrão amplamente conhecida (SINAPI explícito)
+- Exemplos válidos: "93215", "7.1.020.001", "02.01.001"
+- Exemplos inválidos (retornar null): serviços genéricos sem CPU clara, insumos, encargos, texto ambíguo.
 
 # REGRAS CRÍTICAS (NÃO VIOLAR)
 1) NUNCA preencha quantity, unit_price ou total com 0 se o valor não estiver explícito.
@@ -638,6 +652,7 @@ Extrair CADA ITEM como uma linha independente, preenchendo:
 
 # HEURÍSTICAS PERMITIDAS
 - Padrões comuns:
+  - "93215 ALVENARIA..." -> code="93215"
   - "1,00 UN 350,00 350,00"
   - "M2 120,50 3.200,00"
   - "QTDE: 2 VALOR UNIT: 500 TOTAL: 1000"
@@ -654,6 +669,7 @@ Retorne APENAS um JSON válido no formato:
 {
   "items": [
     {
+      "composition_code": "93215",
       "description": "...",
       "unit": "UN",
       "quantity": 1,
@@ -991,7 +1007,8 @@ ${chunk}
                 level: item.level || 3,
                 total: (item.total !== undefined && item.total !== null) ? parseBRNumber(item.total) : null,
                 // Persist the enriched category (containing CODE=...;BASE=...)
-                category: norm.category
+                category: norm.category,
+                composition_code: norm.composition_code // NEW: Output to DB
             };
         }).filter(r => {
             const desc = r.description;
@@ -1007,6 +1024,16 @@ ${chunk}
             const GENERIC_REGEX = /^(total|resumo|valor total|subtotal|sum[aá]rio)$/i;
             if (GENERIC_REGEX.test(desc)) {
                 console.log(`[ExtractWorker] AI_ITEM_BLOCKED job=${job_id} reason=generic_description desc="${desc}"`);
+                return false;
+            }
+
+            // DEFENSE: Block "Guard Items" (Oversized/Error placeholders)
+            // This ensures SSOT purity even if OCR fallback slips up (belt & suspenders).
+            if (
+                (item.raw_line && item.raw_line.includes("GUARD")) ||
+                desc.startsWith("Falha na leitura automática")
+            ) {
+                console.log(`[ExtractWorker] AI_ITEM_BLOCKED job=${job_id} reason=guard_item_detected desc="${desc}"`);
                 return false;
             }
 

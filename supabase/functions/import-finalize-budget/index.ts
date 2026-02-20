@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
         }
 
         const body = await req.json();
-        const { job_id, uf, competence, desonerado, bdi_mode, social_charges } = body;
+        const { job_id, uf, competence, desonerado, bdi_mode, social_charges, enable_structure_parser_v1 } = body;
 
         // Resolve User ID if Service Mode (Bypass)
         if (!targetUserId) {
@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
             targetUserId = jobInfo.user_id;
         }
 
-        console.log(`[FinalizeBudget] Job: ${job_id} | Settings: ${uf}/${competence}`);
+        console.log(`[FinalizeBudget] Job: ${job_id} | Settings: ${uf}/${competence} | StructureV1: ${enable_structure_parser_v1}`);
 
         // Admin Client available (adminClient)
 
@@ -88,7 +88,8 @@ Deno.serve(async (req) => {
             competence: competence,
             desonerado: desonerado === true,
             bdi_mode: bdi_mode,
-            social_charges: social_charges
+            social_charges: social_charges,
+            enable_structure_parser_v1: enable_structure_parser_v1 === true
         };
 
         const { data: rpcData, error: rpcError } = await adminClient.rpc('finalize_import_to_budget', {

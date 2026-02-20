@@ -22,40 +22,37 @@ serve(async (req) => {
         // Use simplified ISO string for consistent logging/debugging, though PostgREST handles ISO well.
         const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 
-        // OPTIMIZATION: Avoid "count: exact" and "OR" specific performance traps.
-        // Instead of count(*), we just want to know if AT LEAST ONE job exists (O(1) with index).
-        // We run two parallel checks to avoid the OR operator complexity in some PG versions/indexes.
+        // WATCHDOG: Recover stale locks before checking capacity.
+        // This ensures expired locks don't permanently block slots.
+        try {
+            const { data: recovered } = await supabase.rpc('recover_stale_ocr_locks');
+            if (recovered && recovered as number > 0) console.log(`[OCR-POKER] Watchdog: Recovered ${recovered} stale locks.`);
 
-        const check1 = supabase
-            .from('import_ocr_jobs')
-            .select('id')
-            .eq('status', 'pending')
-            .is('scheduled_for', null)
-            .limit(1);
-
-        const check2 = supabase
-            .from('import_ocr_jobs')
-            .select('id')
-            .eq('status', 'pending')
-            .filter('scheduled_for', 'lte', 'now()')
-            .limit(1);
-
-        const [res1, res2] = await Promise.all([check1, check2]);
-
-        if (res1.error || res2.error) {
-            const err = res1.error || res2.error;
-            console.error(`[OCR-POKER] Database Check Error:`, res1.error, res2.error);
-            return new Response(JSON.stringify({ error: "Database check failed", details: err }), { status: 500 });
+            const { data: watchdog } = await supabase.rpc('cleanup_stale_ocr_jobs');
+            if (watchdog && watchdog.length > 0 && (watchdog[0].requeued_count > 0 || watchdog[0].failed_count > 0)) {
+                console.log(`[OCR-POKER] Watchdog: Requeued=${watchdog[0].requeued_count}, Failed=${watchdog[0].failed_count}`);
+            }
+        } catch (watchdogErr: any) {
+            console.error(`[OCR-POKER] Watchdog error (non-fatal):`, watchdogErr.message);
         }
 
-        const foundJob = (res1.data && res1.data.length > 0) || (res2.data && res2.data.length > 0);
+        // OPTIMIZATION: Use RPC to check capacity and eligibility in one go.
+        const RPC_CAP = 2; // Default Cap
+        const { data: shouldPoke, error: rpcError } = await supabase.rpc('should_poke_ocr_worker', { p_cap: RPC_CAP });
 
-        if (!foundJob) {
-            console.log(`[OCR-POKER] No eligible pending jobs found (checked at ${nowIso}). NOOP.`);
-            return new Response(JSON.stringify({ status: 'noop', checked_at: nowIso, note: "existence_check_only" }), {
+        if (rpcError) {
+            console.error(`[OCR-POKER] RPC Check Error:`, rpcError);
+            return new Response(JSON.stringify({ error: "RPC check failed", details: rpcError }), { status: 500 });
+        }
+
+        if (!shouldPoke) {
+            console.log(`[OCR-POKER] NOOP (cap reached or no eligible jobs). Checked at ${nowIso}.`);
+            return new Response(JSON.stringify({ status: 'noop', checked_at: nowIso, note: "cap_reached_or_empty" }), {
                 headers: { "Content-Type": "application/json" }
             });
         }
+
+        console.log(`[OCR-POKER] Eligible job exists and capacity available. Triggering worker...`);
 
         console.log(`[OCR-POKER] Eligible job found. Triggering Worker.`);
 
@@ -74,7 +71,7 @@ serve(async (req) => {
             body: JSON.stringify({
                 reason: 'cron_poke',
                 triggered_at: nowIso,
-                trigger_type: 'existence_check'
+                trigger_type: 'should_poke_rpc'
             })
         }).then(res => {
             console.log(`[OCR-POKER] Worker triggered. Status: ${res.status}`);

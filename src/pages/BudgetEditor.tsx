@@ -173,6 +173,9 @@ const BudgetEditor = () => {
     const [sourceJob, setSourceJob] = useState<ImportJob | null>(null);
     const [showPartialBanner, setShowPartialBanner] = useState(false);
 
+    // Binding Logic (Missing Composition)
+    const [bindingItem, setBindingItem] = useState<any | null>(null);
+
     useEffect(() => {
         if (!budgetId) return;
 
@@ -934,6 +937,45 @@ const BudgetEditor = () => {
         }
     };
 
+
+    const handleBindComposition = async (targetItem: any, resource: NormalizedResource) => {
+        try {
+            setLoading(true);
+            console.log("[handleBindComposition]", { targetId: targetItem.id, resourceCode: resource.code });
+
+            // 1. Encontrar a pendência (Issue) associada
+            const issue = await BudgetItemService.getHydrationIssue(String(targetItem.id));
+
+            if (!issue) {
+                console.error("Pendência não encontrada na tabela import_hydration_issues.");
+                // Fallback: Se não achar issue, tenta atualizar manualmente (mas avisa)
+                // OU, prioriza segurança e barra. Vamos barrar pois o user exigiu paridade.
+                alert("Não foi possível localizar a pendência original deste item. Tente recarregar a página ou contate suporte.");
+                return;
+            }
+
+            // 2. Chamar RPC Oficial de Resolução (Paridade Backend)
+            await BudgetItemService.resolveHydrationIssue(issue.id, {
+                source_type: 'internal_db',
+                code: resource.code
+            });
+
+            // 3. Recarregar e Limpar Estado
+            await loadBudget();
+            setIsAddingItem(false);
+            setBindingItem(null);
+            setSelectedResource(null);
+            setQuantity(1);
+            setSearchTerm('');
+
+        } catch (e: any) {
+            console.error("Erro ao vincular (RPC):", e);
+            alert(`Erro ao vincular composição: ${e.message || "Verifique sua conexão"}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleAddItem = async () => {
         // REGRA: Items DEVE ser um array (mesmo que vazio)
         if (!selectedResource || !items) {
@@ -984,6 +1026,12 @@ const BudgetEditor = () => {
                 compositionId: addItemTab === 'CPU' ? (selectedResource.id || selectedResource.raw?.id) : null,
                 insumoId: addItemTab === 'INS' ? (selectedResource.id || selectedResource.raw?.id) : null,
             };
+
+            // SE ESTIVER EM MODO DE VINCULAÇÃO (FIX PENDING)
+            if (bindingItem) {
+                await handleBindComposition(bindingItem, selectedResource);
+                return;
+            }
 
             console.log("[handleAddItem] Calling BudgetItemService.create with:", itemData);
             const newItem = await BudgetItemService.create(itemData);
@@ -3003,6 +3051,24 @@ const BudgetEditor = () => {
                                                     )}>
                                                         {item.description}
                                                     </span>
+                                                )}
+
+
+                                                {/* CTA: Vincular Composição (Quando Pendente) */}
+                                                {item.hydrationStatus === 'pending_review' && (
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setBindingItem(item);
+                                                            setAddItemTab('CPU');
+                                                            setSearchTerm(item.code || '');
+                                                            setIsAddingItem(true);
+                                                        }}
+                                                        className="ml-2 inline-flex items-center gap-1 bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-300 transition-colors animate-pulse z-20 relative"
+                                                        title="Este item foi importado mas não possui composição vinculada. Clique para selecionar uma composição."
+                                                    >
+                                                        <AlertTriangle size={10} /> Vincular
+                                                    </button>
                                                 )}
 
                                                 {/* Tooltip Rico na Descrição */}

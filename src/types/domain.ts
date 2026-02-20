@@ -67,6 +67,8 @@ export interface BudgetItem {
     isLocked?: boolean;
     notes?: string; // Internal annotations
     isDesonerated?: boolean; // Apply desoneration factor
+    hydrationStatus?: 'none' | 'pending_review' | 'internal_db' | 'analytic_file' | 'manual' | 'error';
+    hydrationDetails?: Record<string, any>; // JSONB details (e.g. pending_reason, parser_version)
     updatedAt: Date;
 }
 

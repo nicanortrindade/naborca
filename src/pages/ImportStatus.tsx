@@ -178,6 +178,17 @@ export default function ImportStatus() {
         }
 
         // PRIORITY 1.1: Explicit DONE but missing link (Finalizing state)
+        // [FIX] Check for terminal failure "NO_ITEMS" before assuming it's finalizing a budget
+        const isDone = j?.status === 'done';
+        const lastError = j?.last_error || j?.error_message || '';
+        const isNoItems = lastError.startsWith('NO_ITEMS_EXTRACTED');
+        const isTerminalFailed = isDone && (isNoItems || j?.current_step === 'waiting_user_extraction_failed');
+
+        if (isTerminalFailed && !(j as any)?.result_budget_id) {
+            if (import.meta.env.DEV) console.log("[UI-IMPORT] terminal state reached (NO_ITEMS)");
+            return { status: "extraction_failed_action" };
+        }
+
         if (j?.status === 'done' && !(j as any)?.result_budget_id) {
             return { status: "finalizing" };
         }
@@ -245,7 +256,9 @@ export default function ImportStatus() {
         if (j?.status === "applying") return { status: "applying" };
 
         // Done but no Budget ID yet -> Finalizing
+        // Double check terminal failure to avoid race conditions in logic flow
         if (j?.status === "done" && !(j as any)?.result_budget_id) {
+            if (isTerminalFailed) return { status: "extraction_failed_action" };
             return { status: "finalizing" };
         }
 
