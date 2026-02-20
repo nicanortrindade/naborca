@@ -91,6 +91,22 @@ EXTRACTION RULES:
 7. HIERARCHY: Use item_path to reconstruct the hierarchy from the item number prefix (e.g. "9.2.1" -> item_path: "9.2.1").
 8. GARBAGE FILTER: Discard ONLY pure noise: page headers, "BDI Geral: 25,00%", "Encargo Social", "Data:", "Revisao:", "Peso (%)", column headers, percentage-only lines.
 
+CRITICAL RULE — CONTEXT PRIORITY:
+When extracting numeric fields (quantity, unit_price, total_price) for the current item:
+- ALWAYS use values from context_after or the candidate's own text line.
+- NEVER use values from context_before as the current item's price or quantity.
+  context_before contains data from the PREVIOUS item and will produce wrong results.
+- BDI pattern: if you see "Unit Price BDI X" or a number followed by "BDI", the number
+  before "BDI" is the unit_price. The number after all BDI columns is total_price.
+
+RULE — ITEM_PATH INFERENCE:
+If item_path is not explicitly present in the candidate text, infer it from context_before:
+1. Scan context_before for a line matching pattern "N.N... DESCRIPTION"
+   (e.g. "1.6 INSTALAÇÕES ELÉTRICAS", "1.10.2 Fundações").
+2. If found, use the numeric prefix (e.g. "1.6", "1.10.2") as the item_path base.
+3. If no hierarchical number is found anywhere in the candidate context, leave item_path as null.
+Do NOT invent item_path numbers that have no basis in the candidate context.
+
 OUTPUT FORMAT:
 Respond ONLY with valid JSON. No markdown, no backticks.
 {
@@ -567,7 +583,7 @@ ${JSON.stringify(candidatesContext, null, 2)}
                     quantity: raw.quantity != null ? String(raw.quantity) : null,
                     unit_price: raw.unit_price != null ? String(raw.unit_price) : null,
                     total_price: raw.total_price != null ? String(raw.total_price) : null,
-                    item_path: raw.item_path ?? null,
+                    item_path: raw.item_path ?? (candidates.find((c: any) => c.id === (raw.candidate_id ?? raw.evidence?.candidate_id))?.extracted_signals?.item_path) ?? null,
                     raw_numbers: [], // Filled by default or logic
                     warnings: [],
                     confidence_score: 0.8, // Baseline for LLM

@@ -198,6 +198,7 @@ export function generateCandidatesStageA(text: string, options: {
 
     // --- SYNTHETIC SCAN LOOP ---
     if (runSynthetic) {
+        let lastSectionPath: string | undefined = undefined; // rastreia a última seção ativa
         for (let i = 0; i < limit; i++) {
             if (candidates.length >= caps.max_candidates) break;
 
@@ -219,6 +220,7 @@ export function generateCandidatesStageA(text: string, options: {
             if (matchPath) {
                 hitS1 = true;
                 stats.synthetic_heads_found++;
+                lastSectionPath = matchPath[1]; // atualiza seção ativa para candidatos seguintes
                 stats.heuristics_hit['S1'] = (stats.heuristics_hit['S1'] || 0) + 1;
 
                 const cand: StageACandidate = {
@@ -262,7 +264,8 @@ export function generateCandidatesStageA(text: string, options: {
                     context_after: lines.slice(i + 1, Math.min(limit, i + 3)).join('\n'),
                     extracted_signals: {
                         code: matchCode[1],
-                        description_fragment: matchCode[2]
+                        description_fragment: matchCode[2],
+                        item_path: lastSectionPath
                     },
                     raw_numbers: extractNumbers(line).map(v => ({ value: v, text: String(v), lineNo: originalLineNo })),
                     warnings: [],
@@ -330,7 +333,8 @@ export function generateCandidatesStageA(text: string, options: {
                         context_before: lines.slice(Math.max(0, i - 2), i).join('\n'),
                         context_after: lines.slice(scanStart, Math.min(limit, scanStart + 3)).join('\n'),
                         extracted_signals: {
-                            description_fragment: mergedDescription.substring(0, 100)
+                            description_fragment: mergedDescription.substring(0, 100),
+                            item_path: lastSectionPath
                         },
                         raw_numbers: [],
                         warnings: mergeOffset > 0 ? ['description_merge', 'neighborhood_inference'] : ['neighborhood_inference'],
@@ -362,7 +366,8 @@ export function generateCandidatesStageA(text: string, options: {
                     context_before: lines.slice(Math.max(0, i - 2), i).join('\n'),
                     context_after: lines.slice(i + 1, Math.min(limit, i + 3)).join('\n'),
                     extracted_signals: {
-                        description_fragment: line.substring(0, 50) + "..."
+                        description_fragment: line.substring(0, 50) + "...",
+                        item_path: lastSectionPath
                     },
                     raw_numbers: nums.map(v => ({ value: v, text: String(v), lineNo: originalLineNo })),
                     warnings: ['fallback_line_candidate'],
