@@ -39,6 +39,11 @@ When numbers appear concatenated in the snippet, split them using this column or
 ALWAYS try to extract unit, quantity, unit_price and total — even from concatenated text.
 Only return null for a numeric field if it is genuinely absent from the entire candidate block (snippet + context_before + context_after).
 
+CRITICAL RULE - CONTEXT FIELDS:
+- context_after contains THIS item's numeric values (unit, quantity, unit_price, total). ALWAYS prefer context_after for numeric extraction.
+- context_before contains the PREVIOUS item's values. NEVER use context_before as the source for this item's unit_price or total_price.
+- If context_after contains "X BDI 1" pattern, the number before "BDI 1" is the unit_price (com BDI). The number before that is unit_price (sem BDI). IGNORE both values from context_before entirely for numeric fields.
+
 EXTRACTION RULES:
 1. MANDATORY EXTRACTION: Extract an item if the snippet describes a service, work, constructive element, or budget stage.
 2. EVIDENCE REQUIRED: Cite the exact text that justifies each field in the evidence object.
