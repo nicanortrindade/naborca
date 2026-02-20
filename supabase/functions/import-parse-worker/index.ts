@@ -277,39 +277,31 @@ Deno.serve(async (_req) => {
             })
 
         } else if (itemsCount > 0) {
-            // CASE 2: Extraction done + items exist → FINALIZE
-            console.log(`[PARSE-WORKER] checkpoint=finalize_rpc_call_start job_id=${task.job_id}`)
+            // CASE 2: Extraction done + items exist → READY FOR HUMAN REVIEW
+            // O worker NÃO finaliza. O usuário deve revisar os itens e configurar
+            // UF, competência e BDI antes de gerar o orçamento via import-finalize-budget.
+            console.log(`[PARSE-WORKER] checkpoint=ready_for_review job_id=${task.job_id} items=${itemsCount}`)
 
-            const { data: rpcData, error: rpcError } = await supabase.rpc('finalize_import_to_budget', {
-                p_job_id: task.job_id,
-                p_user_id: jobData.user_id,
-                p_params: {}
-            })
+            const nowIso = new Date().toISOString()
 
-            if (rpcError) {
-                console.error(`[PARSE-WORKER] checkpoint=finalize_rpc_call_fail`, rpcError)
-                await writeTaskResult(supabase, task.id, {
-                    action: 'finalize_rpc_failed',
-                    error: rpcError.message,
-                    timestamp: new Date().toISOString()
+            await supabase
+                .from('import_jobs')
+                .update({
+                    status: 'done',
+                    stage: 'extraction_complete',
+                    current_step: 'waiting_user_review',
+                    stage_updated_at: nowIso,
+                    updated_at: nowIso
                 })
-                await supabase
-                    .from('import_parse_tasks')
-                    .update({ status: 'failed', last_error: `RPC Fail: ${rpcError.message}` })
-                    .eq('id', task.id)
-                return json(500, { error: 'finalize_rpc_failed', details: rpcError.message, db_fingerprint: dbFingerprint })
-            }
-
-            console.log(`[PARSE-WORKER] checkpoint=finalize_rpc_call_ok budget_id=${rpcData?.budget_id}`)
+                .eq('id', task.job_id)
 
             await writeTaskResult(supabase, task.id, {
-                action: 'finalized',
-                budget_id: rpcData?.budget_id,
+                action: 'ready_for_review',
                 items_count: itemsCount,
-                timestamp: new Date().toISOString()
+                timestamp: nowIso
             })
 
-            actionTaken = 'finalized_via_rpc';
+            actionTaken = 'ready_for_review';
 
         } else {
             // CASE 3: Extraction done + NO items → Diagnose via StageB metadata
