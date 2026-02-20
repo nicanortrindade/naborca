@@ -21,7 +21,7 @@ const OCR_EC2_URL = Deno.env.get("OCR_EC2_URL") ?? "";
 // -----------------------------
 const MIN_ITEMS_SUCCESS = 3;
 const MIN_TEXT_LEN_FOR_PARSE = 200;
-const STAGEB_BUILD_SIG = "stageb-classfix2-2026-02-20";
+const STAGEB_BUILD_SIG = "stageb-cleanfix-2026-02-20";
 
 // -----------------------------
 // SAFETY LIMITS
