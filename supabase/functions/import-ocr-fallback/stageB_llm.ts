@@ -6,7 +6,7 @@ import { safeMergeMetadata } from "./persistence_helper.ts";
 // ------------------------------------------------------------------
 // CONFIG
 // ------------------------------------------------------------------
-const BATCH_SIZE = 40; // Conservative limit for context window
+const BATCH_SIZE = 20; // Conservative limit for context window
 const MAX_RETRIES = 1;
 const MODEL_FALLBACKS = [
     "gemini-2.0-flash",
@@ -249,7 +249,12 @@ async function generateWithModelFallback(
                 // New SDK Call
                 const result = await client.models.generateContent({
                     model: modelName,
-                    contents: contents
+                    contents: contents,
+                    config: {
+                        maxOutputTokens: 16384,
+                        temperature: 0.1,
+                        topP: 0.95
+                    }
                 });
 
                 // Robust Text Extraction
