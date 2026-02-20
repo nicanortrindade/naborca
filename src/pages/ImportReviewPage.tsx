@@ -106,7 +106,8 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
 
         } catch (err: any) {
             console.error("Generate Error:", err);
-            alert(`Falha ao gerar orçamento: ${err.message}`);
+            const msg = err?.message || (typeof err === 'object' ? JSON.stringify(err) : String(err));
+            alert(`Falha ao gerar orçamento: ${msg}`);
         } finally {
             setGenerating(false);
         }

@@ -99,7 +99,18 @@ Deno.serve(async (req) => {
             p_analytic_data: analyticData
         });
 
-        if (rpcError) throw rpcError;
+        if (rpcError) {
+            const msg = typeof rpcError === 'string' ? rpcError : (rpcError.message || JSON.stringify(rpcError));
+            return new Response(JSON.stringify({ ok: false, reason: 'rpc_error', details: msg }), {
+                status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+
+        if (!rpcData || rpcData.ok === false) {
+            return new Response(JSON.stringify({ ok: false, reason: rpcData?.reason || 'rpc_returned_false', details: rpcData?.details || null }), {
+                status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
 
         return new Response(JSON.stringify(rpcData), {
             status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
