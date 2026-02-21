@@ -117,7 +117,12 @@ EXTRACTION RULES:
        (m², m³, m, un, UN, vb, VB, cj, CJ, kg, KG, l, L, h, H, pç, PÇ, sc, SC).
     f) Numeric values (quantity, unit_price, total_price) will typically be in context_after —
        follow the standard CONTEXT PRIORITY rules.
-8. GARBAGE FILTER: Discard ONLY pure noise: page headers, "BDI Geral: 25,00%", "Encargo Social", "Data:", "Revisao:", "Peso (%)", column headers, percentage-only lines.
+8. GARBAGE FILTER: Discard ONLY pure noise. You MUST discard a candidate if ANY of these are true:
+   - Line starts with "PLANILHA" (e.g., "PLANILHA ORÇAMENTÁRIA")
+   - Line contains "Siglas da Composição" or "O custo unitário" or "segunda-feira" or "PMv" or "Grau de Sigilo" or "DATA BASE"
+   - Line is shorter than 8 characters total
+   - Line has NO words with 5 or more consecutive letters (e.g. "A B C 1 2 3")
+   - It is a page header, "BDI Geral: 25,00%", "Encargo Social", "Data:", "Revisao:", "Peso (%)", column headers, or percentage-only line.
 8b. **SECTION TITLE PRESERVATION (MANDATORY)**:
     Lines that contain ONLY an item_path prefix (numeric, alphabetic or roman) followed
     by a description text, with NO code, NO unit, NO quantity, NO price → classify as
@@ -247,7 +252,7 @@ async function persistStageBMetaAtomic(
         patchFn(nextMetadata.stageB);
 
         // 4. Build Signature (Auto-update if not present)
-        nextMetadata.stageB.build_sig = "stageb-stfix3-2026-02-21";
+        nextMetadata.stageB.build_sig = "stageb-stbypass-2026-02-21";
 
         // 6. Atomic Update
         const { error: updateErr } = await supabase
@@ -490,8 +495,46 @@ async function processCandidatesBatch(
     // Instantiate Client (Scope: Batch)
     const client = new GoogleGenAI({ apiKey });
 
-    // Construct Context
-    const candidatesContext = candidates.map((c: any) => ({
+    // --- PATCH B: ST Bypass (Section Title Bypass) ---
+    const bypassedItems: StageBItem[] = [];
+    const candidatesForLLM: any[] = [];
+
+    for (const c of candidates) {
+        if (c.warnings?.includes("section_title_candidate")) {
+            bypassedItems.push({
+                candidate_id: c.id,
+                kind: "composition",
+                code: null,
+                description: c.extracted_signals?.description_fragment || "SEÇÃO",
+                unit: null,
+                quantity: null,
+                unit_price: null,
+                total_price: null,
+                item_path: c.extracted_signals?.item_path || null,
+                raw_numbers: [],
+                warnings: ["st_bypass_applied"],
+                confidence_score: 0.85,
+                evidence: {
+                    candidate_id: c.id,
+                    evidence_lines: c.evidence_lines || []
+                }
+            });
+        } else {
+            candidatesForLLM.push(c);
+        }
+    }
+
+    // Se todos os candidatos do batch foram bypassed, retorna imediatamente
+    if (candidatesForLLM.length === 0) {
+        console.log(`[STAGE-B] Batch ${batchIndex}: All ${bypassedItems.length} candidates were bypassed as ST.`);
+        return {
+            items: bypassedItems,
+            debug: { batch_index: batchIndex, items_bypassed: bypassedItems.length, llm_skipped: true }
+        };
+    }
+
+    // Construct Context ONLY for candidates going to the LLM
+    const candidatesContext = candidatesForLLM.map((c: any) => ({
         id: c.id,
         kind: c.kind,
         snippet: c.snippet || c.evidence, // PRIMARY GROUNDING
@@ -729,7 +772,7 @@ ${JSON.stringify(candidatesContext, null, 2)}
             ...stepDebug
         };
 
-        return { items: validatedItems, debug: batchDebug, error: undefined };
+        return { items: [...bypassedItems, ...validatedItems], debug: batchDebug, error: undefined };
 
     } catch (e: any) {
         console.error(`[STAGE-B] Batch ${batchIndex} Fatal Failed:`, e.message);
