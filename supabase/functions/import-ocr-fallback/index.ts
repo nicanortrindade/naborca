@@ -648,7 +648,12 @@ serve(async (req: Request) => {
         let filesQuery = supabase.from("import_files").select("*").eq("job_id", job_id);
         if (targetFileId) filesQuery = filesQuery.eq("id", targetFileId);
         const { data: candidateFiles } = await filesQuery;
-        let files = (candidateFiles || []).filter(f => isPdfFile(f).isPdf);
+        let files = (candidateFiles || [])
+            .filter(f => isPdfFile(f).isPdf)
+            .sort((a, b) => {
+                const order = { 'analytical': 0, 'synthetic': 1, 'unknown': 2 };
+                return (order[a.doc_role as keyof typeof order] ?? 2) - (order[b.doc_role as keyof typeof order] ?? 2);
+            });
         if (files.length === 0) return jsonResponse({ error: "No PDF files" }, 404, req);
 
         let globalItemsFound = 0;
