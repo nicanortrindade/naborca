@@ -166,6 +166,15 @@ If item_path is not explicitly present in the candidate text, infer it from cont
 3. If no hierarchical number is found anywhere in the candidate context, leave item_path as null.
 Do NOT invent item_path numbers that have no basis in the candidate context.
 
+CRITICAL RULE — SECTION TITLE CANDIDATES:
+When a candidate has warnings containing "section_title_candidate":
+- It is a section header line, NOT a budget item with price.
+- MANDATORY: set description = signals.description_fragment (never null or empty).
+- MANDATORY: set kind = "composition", code = null, unit = null, quantity = null,
+  unit_price = null, total_price = null.
+- MANDATORY: set item_path = signals.item_path if present.
+- NEVER discard these candidates — they are required for hierarchy resolution.
+
 OUTPUT FORMAT:
 Respond ONLY with valid JSON. No markdown, no backticks.
 {
@@ -238,7 +247,7 @@ async function persistStageBMetaAtomic(
         patchFn(nextMetadata.stageB);
 
         // 4. Build Signature (Auto-update if not present)
-        nextMetadata.stageB.build_sig = "stageb-8bfix-2026-02-21";
+        nextMetadata.stageB.build_sig = "stageb-stfix2-2026-02-21";
 
         // 6. Atomic Update
         const { error: updateErr } = await supabase
@@ -488,7 +497,9 @@ async function processCandidatesBatch(
         snippet: c.snippet || c.evidence, // PRIMARY GROUNDING
         context_before: c.context_before,
         context_after: c.context_after,
-        signals: c.extracted_signals // Hints from Stage A
+        signals: c.extracted_signals, // Hints from Stage A
+        evidence_lines: c.evidence_lines || [],
+        warnings: c.warnings || []
     }));
 
     const userPrompt = `
