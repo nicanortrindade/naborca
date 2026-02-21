@@ -252,7 +252,7 @@ async function persistStageBMetaAtomic(
         patchFn(nextMetadata.stageB);
 
         // 4. Build Signature (Auto-update if not present)
-        nextMetadata.stageB.build_sig = "stageb-zodfix-2026-02-21";
+        nextMetadata.stageB.build_sig = "stageb-catchfix-2026-02-21";
 
         // 6. Atomic Update
         const { error: updateErr } = await supabase
@@ -783,7 +783,7 @@ ${JSON.stringify(candidatesContext, null, 2)}
             ...stepDebug
         };
 
-        return { items: [], error: `Execution failed: ${e.message}`, debug: batchDebug };
+        return { items: [...bypassedItems], error: `Execution failed: ${e.message}`, debug: batchDebug };
     }
 }
 
