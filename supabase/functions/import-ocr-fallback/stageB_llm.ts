@@ -252,7 +252,7 @@ async function persistStageBMetaAtomic(
         patchFn(nextMetadata.stageB);
 
         // 4. Build Signature (Auto-update if not present)
-        nextMetadata.stageB.build_sig = "stageb-garbage2-2026-02-21";
+        nextMetadata.stageB.build_sig = "stageb-zodfix-2026-02-21";
 
         // 6. Atomic Update
         const { error: updateErr } = await supabase
@@ -536,7 +536,7 @@ async function processCandidatesBatch(
     // Construct Context ONLY for candidates going to the LLM
     const candidatesContext = candidatesForLLM.map((c: any) => ({
         id: c.id,
-        kind: c.kind,
+        stage_a_kind: c.kind,
         snippet: c.snippet || c.evidence, // PRIMARY GROUNDING
         context_before: c.context_before,
         context_after: c.context_after,
