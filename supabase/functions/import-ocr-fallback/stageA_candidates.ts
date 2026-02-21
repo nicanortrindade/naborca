@@ -153,6 +153,8 @@ const REGEX_ITEM_PATH = /^\s*(\d{1,3}(\.\d{1,3}){1,6})\s+(.{5,})$/; // "1.2.3 De
 const REGEX_CODE_START = /^(\d{5,10}|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/; // "94321 Description" or "CPU123 Desc"
 const REGEX_UNIT = /\b(UN|und|m²|m2|m³|m3|kg|h|vb|m)\b/i;
 const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\d{1,4})?\b/g; // 1.234,56 or 1234.56
+// Guard: detecta linhas que são títulos de seção e NÃO devem ser consumidas pelo S0
+const REGEX_IS_SECTION_TITLE = /^(\d{1,2}(?:\.\d{1,2}){0,2})\s+([AÀÁÂÃBCDEÉÊFGHIÍJKLMNOÓÔÕPQRSTUÚVWXYZ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$|^([A-Z]{1,3})\s*[-–]\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
 
 function extractNumbers(text: string): number[] {
     const matches = text.match(REGEX_MONEY_OR_QTY) || [];
@@ -250,6 +252,8 @@ export function generateCandidatesStageA(text: string, options: {
                 if (REGEX_ITEM_PATH.test(nxt) || REGEX_CODE_START.test(nxt)) break;
                 if (/^\s*[\d.,\s%]+\s*$/.test(nxt)) break;
                 if (REGEX_UNIT.test(nxt) && nxt.length < 15) break;
+                // Não consumir linhas que são títulos de seção
+                if (REGEX_IS_SECTION_TITLE.test(nxt)) break;
                 descFragments.push(nxt);
             }
             if (descFragments.length === 0) continue;
