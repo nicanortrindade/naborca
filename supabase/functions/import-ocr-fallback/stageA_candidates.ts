@@ -41,6 +41,7 @@ export interface StageACandidate {
         unit_price_candidate?: number;
         total_candidate?: number;
     };
+    evidence_lines?: Array<{ text: string }>; // Structured evidence lines for Stage B
     raw_numbers: Array<{ value: number; text: string; lineNo: number; context?: string }>;
     warnings: string[];
     debug_heuristic: string[];
@@ -380,6 +381,7 @@ export function generateCandidatesStageA(text: string, options: {
                             item_path: derivedPath,
                             description_fragment: titleText
                         },
+                        evidence_lines: [{ text: line }],
                         raw_numbers: [],
                         warnings: ['section_title_candidate'],
                         debug_heuristic: ['ST_section_title']

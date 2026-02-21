@@ -125,13 +125,21 @@ EXTRACTION RULES:
     These are section headers that MUST be preserved to avoid generic fallback names
     in the SQL finalization step (e.g. "SEÇÃO 1").
     Examples that MUST be preserved:
-      - "3 PAVIMENTAÇÃO"
-      - "1.4 DRENAGEM PLUVIAL"
-      - "A - SERVIÇOS INICIAIS"
-      - "II - FUNDAÇÕES"
-    Set item_path from the numeric/alphabetic prefix.
-    Set description as the remaining text.
+    - "3 PAVIMENTAÇÃO" → description: "PAVIMENTAÇÃO", item_path: "3", code: null
+    - "1.4 DRENAGEM PLUVIAL" → description: "DRENAGEM PLUVIAL", item_path: "1.4", code: null
+    - "A - SERVIÇOS INICIAIS" → description: "SERVIÇOS INICIAIS", item_path: null, code: null
+    - "II - FUNDAÇÕES" → description: "FUNDAÇÕES", item_path: null, code: null
+    MANDATORY fields for section titles:
+    - description: MUST contain the title text after the prefix — NEVER null or empty
+    - code: MUST be null
+    - unit: MUST be null
+    - quantity: MUST be null
+    - unit_price: MUST be null
+    - total_price: MUST be null
+    - kind: MUST be "composition"
+    Set item_path from the numeric prefix if present, null otherwise.
     NEVER discard these as garbage.
+    NEVER return description as null or empty for these items.
 9. **DEDUPLICATION — PARALLEL COLUMNS (MANDATORY)**:
    Some spreadsheets contain two parallel budget columns side by side (e.g. "Pacto Original"
    and "Nova Pactuação"). The OCR will capture the same item twice in sequence.
@@ -230,7 +238,7 @@ async function persistStageBMetaAtomic(
         patchFn(nextMetadata.stageB);
 
         // 4. Build Signature (Auto-update if not present)
-        nextMetadata.stageB.build_sig = "stageb-fixes-2026-02-21";
+        nextMetadata.stageB.build_sig = "stageb-8bfix-2026-02-21";
 
         // 6. Atomic Update
         const { error: updateErr } = await supabase
