@@ -252,7 +252,7 @@ async function persistStageBMetaAtomic(
         patchFn(nextMetadata.stageB);
 
         // 4. Build Signature (Auto-update if not present)
-        nextMetadata.stageB.build_sig = "stageb-stbypass-2026-02-21";
+        nextMetadata.stageB.build_sig = "stageb-garbage2-2026-02-21";
 
         // 6. Atomic Update
         const { error: updateErr } = await supabase
