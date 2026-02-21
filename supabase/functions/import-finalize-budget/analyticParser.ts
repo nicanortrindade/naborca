@@ -30,9 +30,11 @@ export class AnalyticReportParser {
         // Identifica cabeçalho de composição
         // Ex: "93215 COMPOSIÇÃO: ARGAMASSA TRAÇO 1:3..."
         // Ex: "COMPOSIÇÃO 10.203 - CONCRETO ARMADO..."
-        const rxCompHeader = /(?:COMPOSI[ÇC][ÃA]O|CÓDIGO)[:\s]+([0-9]{4,}[.\-0-9]*)\s+[-–]?\s*(.+)/i;
-        // Fallback: Código no início da linha seguido de texto longo
-        const rxCompHeaderSimple = /^([0-9]{4,}[.\-0-9]*)\s+(.+)/;
+        const rxCompHeader = /(?:COMPOSI[ÇC][ÃA]O|CÓDIGO|CPU)[:\s]+([A-Z0-9]{3,}[.\-A-Z0-9]*)\s+[-–]?\s*(.+)/i;
+        // Fallback: Código alfanumérico no início da linha (ex: KENE002, 93215, CPU123)
+        const rxCompHeaderSimple = /^([A-Z]{2,6}[0-9]{2,}[.\-0-9]*)\s+(.+)/;
+        // Fallback 2: Código numérico puro no início seguido de texto
+        const rxCompHeaderNumeric = /^([0-9]{4,}[.\-0-9]*)\s+(.+)/;
 
         // Identifica item/insumo dentro da composição
         // Ex: "SINAPI  88309  PEDREIRO  H  1,500  20,00"
@@ -47,9 +49,13 @@ export class AnalyticReportParser {
             // 1. Tentar detectar início de nova composição
             let matchHeader = line.match(rxCompHeader);
             if (!matchHeader) {
-                // Heurística de contexto: Se a linha começa com número e tem "COMPOSIÇÃO" ou palavras chave no texto
+                // Heurística: Código alfanumérico (KENE002, CPU123, etc.)
+                matchHeader = line.match(rxCompHeaderSimple);
+            }
+            if (!matchHeader) {
+                // Heurística de contexto: Código numérico + palavra-chave
                 if (/COMPOSI[ÇC][ÃA]O/i.test(line) || /CPU/i.test(line)) {
-                    matchHeader = line.match(rxCompHeaderSimple);
+                    matchHeader = line.match(rxCompHeaderNumeric);
                 }
             }
 
