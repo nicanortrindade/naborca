@@ -371,6 +371,15 @@ export function generateCandidatesStageA(text: string, options: {
                     const titleText = matchTitle[2].trim();
                     const derivedPath = /^\d/.test(prefix) ? prefix : undefined;
 
+                    const ST_BLOCKLIST = [
+                        'PLANILHA', 'ORÇAMENTÁRIA', 'LOCALIDADE', 'MUNICÍPIO',
+                        'DATA BASE', 'GRAU DE SIGILO', 'PROPOSTA', 'CONTRATO',
+                        'RECURSO', 'OPERAÇÃO', 'TOMADOR', 'PROPONENTE'
+                    ];
+                    const titleUpper = titleText.toUpperCase();
+                    const isBlocklisted = ST_BLOCKLIST.some(term => titleUpper.includes(term));
+                    if (isBlocklisted) continue; // descartar — não é título de seção
+
                     candidates.push({
                         id: generateShortId(),
                         kind: 'synthetic_line',

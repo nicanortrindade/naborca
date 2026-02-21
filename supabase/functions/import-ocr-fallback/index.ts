@@ -21,7 +21,7 @@ const OCR_EC2_URL = Deno.env.get("OCR_EC2_URL") ?? "";
 // -----------------------------
 const MIN_ITEMS_SUCCESS = 3;
 const MIN_TEXT_LEN_FOR_PARSE = 200;
-const STAGEB_BUILD_SIG = "stageb-stbypass-2026-02-21";
+const STAGEB_BUILD_SIG = "stageb-garbage2-2026-02-21";
 
 // -----------------------------
 // SAFETY LIMITS
@@ -883,9 +883,14 @@ serve(async (req: Request) => {
                                                     })
                                                 );
 
+                                                // Filtrar itens sem item_path E sem composition_code — são lixo de página
+                                                const filteredItems = dbItems.filter(item =>
+                                                    item.composition_code !== null || item.item_path !== null
+                                                );
+
                                                 // Deduplica por dedup_key — mantém última ocorrência (caso LLM retorne descrições repetidas no mesmo batch)
-                                                const deduped = new Map<string, typeof dbItems[0]>();
-                                                for (const item of dbItems) {
+                                                const deduped = new Map<string, typeof filteredItems[0]>();
+                                                for (const item of filteredItems) {
                                                     deduped.set(item.dedup_key, item);
                                                 }
                                                 const uniqueDbItems = Array.from(deduped.values());
