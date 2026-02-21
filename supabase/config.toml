@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.import-processor]
 verify_jwt = false
+
+[functions.import-finalize-budget]
+verify_jwt = false
