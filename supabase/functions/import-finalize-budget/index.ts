@@ -66,20 +66,24 @@ Deno.serve(async (req) => {
         // Admin Client available (adminClient)
 
         // Problem 2 Fix: TS is for Parsing Only. Logic is in SQL.
-        let analyticData = {};
+        let analyticData: Record<string, unknown> = {};
 
         // Fetch Analytic File content
         const { data: analyticFiles } = await adminClient
             .from('import_files')
             .select('extracted_text')
             .eq('job_id', job_id)
-            .eq('role', 'analytic')
+            .eq('doc_role', 'analytic')   // fix: era 'role', coluna correta é 'doc_role'
             .limit(1);
 
         if (analyticFiles?.[0]?.extracted_text) {
-            // Problem 3 Fix: Parser returns strictly typed Contract
-            analyticData = AnalyticReportParser.parse(analyticFiles[0].extracted_text);
-            console.log(`[FinalizeBudget] Parsed ${Object.keys(analyticData).length} compositions for SQL consumption.`);
+            try {
+                analyticData = AnalyticReportParser.parse(analyticFiles[0].extracted_text);
+                console.log(`[FinalizeBudget] Parsed ${Object.keys(analyticData).length} compositions for SQL consumption.`);
+            } catch (parseErr) {
+                console.warn(`[FinalizeBudget] AnalyticReportParser failed, continuing without analytic data:`, parseErr);
+                analyticData = {};
+            }
         }
 
         // Call RPC
