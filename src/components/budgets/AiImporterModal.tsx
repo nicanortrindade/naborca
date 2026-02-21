@@ -203,7 +203,7 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         user_id: user.id,
                         job_id: jobData.id,
                         file_kind: 'pdf', // Assuming PDF for OCR flow
-                        role,
+                        doc_role: role,
                         original_filename: file.name,
                         content_type: file.type,
                         storage_bucket: 'imports',

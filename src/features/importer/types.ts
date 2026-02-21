@@ -91,7 +91,7 @@ export interface ImportJob {
     id: string;
     user_id: string;
     status: ImportJobStatus;
-    doc_role: 'synthetic' | 'analytical' | 'unknown';
+    doc_role: 'synthetic' | 'analytic' | 'unknown';
     is_desonerado: boolean | null;
     document_context: Record<string, any> | null;
     progress: number;
@@ -117,7 +117,7 @@ export interface ImportFile {
     user_id: string;
     job_id: string;
     file_kind: 'pdf' | 'excel' | 'other';
-    doc_role: 'synthetic' | 'analytical' | 'unknown';
+    doc_role: 'synthetic' | 'analytic' | 'unknown';
     original_filename: string;
     content_type: string;
     storage_bucket: string;
