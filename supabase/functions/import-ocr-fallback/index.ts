@@ -715,6 +715,14 @@ serve(async (req: Request) => {
                     await supabase.from('import_files').update({
                         extracted_text: pdfData.text
                     }).eq('id', file.id);
+                    // Analytical file: só precisa do texto extraído, não do Stage A/B
+                    await updateImportFileExtractionState(supabase, file.id, {
+                        extraction_status: 'done',
+                        extraction_reason: 'analytical_text_only',
+                        extracted_completed_at: new Date().toISOString()
+                    }, 'analytical_done');
+                    console.log(`[ANALYTICAL] Text saved (${realLen} chars) for file ${file.id}. Skipping Stage A/B.`);
+                    continue;
                 }
 
                 // Shared state for Stage A -> Stage B
