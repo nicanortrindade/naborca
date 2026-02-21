@@ -189,7 +189,7 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
             setCurrentJobId(jobData.id);
 
             // 2. Upload Files Function
-            const uploadFile = async (file: File, role: 'synthetic' | 'analytic') => {
+            const uploadFile = async (file: File, role: 'synthetic' | 'analytical') => {
                 setUploadStep(`Enviando ${role === 'synthetic' ? 'Sintético' : 'Analítico'}...`);
                 const fileExt = file.name.split('.').pop();
                 const storagePath = `${user.id}/${Date.now()}_${role}_${Math.random().toString(36).substring(7)}.${fileExt}`;
@@ -218,7 +218,7 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
             // Process both slots
             const synId = await uploadFile(syntheticFile, 'synthetic');
             if (analyticFile) {
-                await uploadFile(analyticFile, 'analytic');
+                await uploadFile(analyticFile, 'analytical');
             }
 
             // 2.5 Invoke Edge Function (Explicit Execution)

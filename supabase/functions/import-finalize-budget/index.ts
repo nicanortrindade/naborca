@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
             .from('import_files')
             .select('extracted_text')
             .eq('job_id', job_id)
-            .eq('doc_role', 'analytic')   // fix: era 'role', coluna correta é 'doc_role'
+            .eq('doc_role', 'analytical')   // valor correto no banco de dados
             .limit(1);
 
         if (analyticFiles?.[0]?.extracted_text) {
