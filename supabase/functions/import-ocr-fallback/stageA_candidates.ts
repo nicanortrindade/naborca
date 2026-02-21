@@ -220,6 +220,84 @@ export function generateCandidatesStageA(text: string, options: {
             return before ?? after;
         }
 
+        // ── PRÉ-VARREDURA S0: Código Isolado + Descrição Multiline (Formato B fragmentado) ──
+        // Detecta: linha com [item_path+BANCO+código] sem descrição, seguida de fragmentos de
+        // descrição sem valores, depois unidade e números. Gera UM candidato S0_multiline_merge
+        // em vez de múltiplos S4 órfãos.
+        const REGEX_ISOLATED_CODE = /^(\d{1,3}(?:\.\d{1,3}){1,6})\.(SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP)(\w+(?:[-_]\w*)?)?\s*$/i;
+        const consumedLines = new Set<number>();
+
+        for (let si = 0; si < limit - 2; si++) {
+            if (candidates.length >= caps.max_candidates) break;
+            const sLine = lines[si].trim();
+            const mCode = sLine.match(REGEX_ISOLATED_CODE);
+            if (!mCode) continue;
+
+            const [, pathPart, bankPart, codePart = ''] = mCode;
+            // Limpar sufixos ADP do código
+            const rawCode = codePart
+                .replace(/\s*-\s*ADAPT\.?\s*$/i, '')
+                .replace(/[-_]ADP[-_]?\d*/i, '')
+                .trim();
+
+            // Coletar fragmentos de descrição (sem valores, sem nova âncora)
+            const descFragments: string[] = [];
+            let j = si + 1;
+            for (; j < Math.min(si + 5, limit); j++) {
+                const nxt = lines[j].trim();
+                if (!nxt || nxt.length < 3) break;
+                if (REGEX_ITEM_PATH.test(nxt) || REGEX_CODE_START.test(nxt)) break;
+                if (/^\s*[\d.,\s%]+\s*$/.test(nxt)) break;
+                if (REGEX_UNIT.test(nxt) && nxt.length < 15) break;
+                descFragments.push(nxt);
+            }
+            if (descFragments.length === 0) continue;
+
+            const mergedDesc = `${pathPart}.${bankPart}${codePart} ${descFragments.join(' ')}`;
+
+            // Coletar unidade + valores numéricos nas próximas 6 linhas
+            const valueLookahead: string[] = [];
+            let foundNum2 = false;
+            for (let w = j; w < Math.min(j + 6, limit); w++) {
+                const nxt2 = lines[w].trim();
+                if (REGEX_ITEM_PATH.test(nxt2) || REGEX_CODE_START.test(nxt2)) break;
+                if ((REGEX_UNIT.test(nxt2) && nxt2.length < 15) || /\d/.test(nxt2)) {
+                    if (/\d/.test(nxt2)) foundNum2 = true;
+                    valueLookahead.push(nxt2);
+                }
+            }
+            if (!foundNum2) continue;
+
+            stats.heuristics_hit['S0_multiline_merge'] = (stats.heuristics_hit['S0_multiline_merge'] || 0) + 1;
+            stats.synthetic_heads_found++;
+
+            candidates.push({
+                id: generateShortId(),
+                kind: 'synthetic_line',
+                source: 'ocr_heuristic_v1',
+                confidence: 0.72,
+                line_no: mapOriginalLineNo[si],
+                line_range: [mapOriginalLineNo[si], mapOriginalLineNo[Math.min(j + 5, limit - 1)]],
+                evidence: mergedDesc + (valueLookahead.length > 0 ? ' || ' + valueLookahead.join(' || ') : ''),
+                snippet: mergedDesc,
+                context_before: lines.slice(Math.max(0, si - 2), si).join('\n'),
+                context_after: valueLookahead.join('\n'),
+                extracted_signals: {
+                    item_path: pathPart,
+                    code: `${bankPart}${rawCode}`,
+                    description_fragment: descFragments.join(' ').substring(0, 120)
+                },
+                raw_numbers: [],
+                warnings: ['multiline_desc_merge'],
+                debug_heuristic: ['S0_multiline_merge']
+            });
+
+            // Marcar linhas consumidas (código isolado + fragmentos de descrição)
+            consumedLines.add(si);
+            for (let k = si + 1; k < j; k++) consumedLines.add(k);
+            si = j - 1;
+        }
+
         for (let i = 0; i < limit; i++) {
             if (candidates.length >= caps.max_candidates) break;
 
@@ -233,6 +311,9 @@ export function generateCandidatesStageA(text: string, options: {
 
             // Resolve a seção ativa usando o mapa pré-calculado
             const lastSectionPath = resolveNearestSection(i);
+
+            // Pular linhas já consumidas pelo S0_multiline_merge
+            if (consumedLines.has(i)) continue;
 
             let hitS1 = false;
             let hitS2 = false;
@@ -266,6 +347,45 @@ export function generateCandidatesStageA(text: string, options: {
                 };
                 candidates.push(cand);
                 continue; // Winner takes line
+            }
+
+            // ST: Section Title — prefixo numérico/alfabético/romano sem código nem valores
+            // Exemplos: "3 PAVIMENTAÇÃO", "1.4 DRENAGEM", "A - SERVIÇOS INICIAIS", "II - FUNDAÇÕES"
+            if (!hitS1) {
+                const REGEX_ST_NUMERIC = /^(\d{1,2}(?:\.\d{1,2}){0,2})\s+([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
+                const REGEX_ST_ALPHA = /^([A-Z]{1,3})\s*[-–]\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
+                const REGEX_ST_ROMAN = /^(I{1,3}V?|VI{0,3}|IX|IV|X)\s*[-–]\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
+                const matchTitle =
+                    line.match(REGEX_ST_NUMERIC) ||
+                    line.match(REGEX_ST_ALPHA) ||
+                    line.match(REGEX_ST_ROMAN);
+
+                if (matchTitle && extractNumbers(line).length === 0) {
+                    stats.heuristics_hit['ST_section_title'] = (stats.heuristics_hit['ST_section_title'] || 0) + 1;
+                    const prefix = matchTitle[1];
+                    const titleText = matchTitle[2].trim();
+                    const derivedPath = /^\d/.test(prefix) ? prefix : undefined;
+
+                    candidates.push({
+                        id: generateShortId(),
+                        kind: 'synthetic_line',
+                        source: 'ocr_heuristic_v1',
+                        confidence: 0.70,
+                        line_no: originalLineNo,
+                        evidence: line,
+                        snippet: line,
+                        context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
+                        context_after: lines.slice(i + 1, Math.min(limit, i + 2)).join('\n'),
+                        extracted_signals: {
+                            item_path: derivedPath,
+                            description_fragment: titleText
+                        },
+                        raw_numbers: [],
+                        warnings: ['section_title_candidate'],
+                        debug_heuristic: ['ST_section_title']
+                    });
+                    continue;
+                }
             }
 
             // S2: Code + Desc

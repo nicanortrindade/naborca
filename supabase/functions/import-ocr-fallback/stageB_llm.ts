@@ -61,16 +61,27 @@ EXTRACTION RULES:
    - "ORSELocação de container" → "Locação de container"
    Do NOT modify descriptions that do not start with these prefixes.
 5. **CODE CLEANING (MANDATORY)**:
-   The OCR may concatenate numeric values directly after the composition code.
-   Examples of dirty codes: "88316,00", "95673SINAPI", "103689SINAPI", "4654ORSE".
-   Rules:
-   - If code ends with ",00" or similar decimal suffix → remove the suffix.
-     Example: "88316,00" → "88316"
-   - If code ends with a bank name suffix (SINAPI, ORSE, SICRO) → remove the suffix.
-     Example: "95673SINAPI" → "95673"
-   - If code starts with a bank name prefix → remove the prefix.
-     Example: "SINAPI88316" → "88316"
-   Return only the clean alphanumeric code.
+   The OCR may concatenate numeric values, bank names, or adaptation suffixes directly
+   into the composition code. Apply ALL rules below in sequence:
+
+   a) Strip adaptation suffixes:
+      - Remove trailing " - ADAPT." (with or without spaces): "C0002 - ADAPT." → "C0002"
+      - Remove trailing "_ADP-01" or "_ADP-XX" patterns: "97096_ADP-01" → "97096"
+      - Remove trailing "-ADP-01" or "-ADP-XX" patterns: "97096-ADP-01" → "97096"
+
+   b) Strip bank name suffixes fused to code (no space):
+      - "95673SINAPI" → "95673"
+      - "4654ORSE" → "4654"
+      - "88316SICRO" → "88316"
+
+   c) Strip bank name prefixes fused to code (no space):
+      - "SINAPI88316" → "88316"
+      - "ORSE4654" → "4654"
+
+   d) Strip decimal suffixes fused to code:
+      - "88316,00" → "88316"
+
+   Return only the clean alphanumeric code (e.g. "C0002", "97096", "CPU-03", "JORRO001").
 6. **SYNTHETIC vs ANALYTIC — CLASSIFICATION RULE (MANDATORY)**:
    Use this decision tree strictly, in order:
 
@@ -89,7 +100,47 @@ EXTRACTION RULES:
 
    e) Default for any priced line with values → "synthetic_item"
 7. HIERARCHY: Use item_path to reconstruct the hierarchy from the item number prefix (e.g. "9.2.1" -> item_path: "9.2.1").
+7b. **FORMAT B — CONCATENATED LINE PARSING (MANDATORY)**:
+    Some PDFs collapse all columns into a single OCR line with no separators:
+    Pattern: [item_path][BANK][code] [description][unit]
+    Examples:
+      "1.3.1.0.1.SINAPI92427 Escavação manual em solo m³"
+      "1.4.0.0.8.SINAPI97096_ADP-01 Revestimento cerâmico m²"
+      "2.1.CPU-02 Fundação em radier m²"
+
+    When you detect this pattern:
+    a) Extract item_path from the leading numeric prefix (e.g. "1.3.1.0.1.").
+    b) Extract bank name if present (SINAPI, ORSE, SICRO, SICRO3, CPU, Próprio).
+    c) Extract code as the alphanumeric token immediately after the bank name (apply CODE CLEANING rules).
+    d) Extract description as the remaining text after the code token, stopping before the unit.
+    e) Extract unit as the last token if it matches known units:
+       (m², m³, m, un, UN, vb, VB, cj, CJ, kg, KG, l, L, h, H, pç, PÇ, sc, SC).
+    f) Numeric values (quantity, unit_price, total_price) will typically be in context_after —
+       follow the standard CONTEXT PRIORITY rules.
 8. GARBAGE FILTER: Discard ONLY pure noise: page headers, "BDI Geral: 25,00%", "Encargo Social", "Data:", "Revisao:", "Peso (%)", column headers, percentage-only lines.
+8b. **SECTION TITLE PRESERVATION (MANDATORY)**:
+    Lines that contain ONLY an item_path prefix (numeric, alphabetic or roman) followed
+    by a description text, with NO code, NO unit, NO quantity, NO price → classify as
+    kind: "composition" with confidence_score 0.9.
+    These are section headers that MUST be preserved to avoid generic fallback names
+    in the SQL finalization step (e.g. "SEÇÃO 1").
+    Examples that MUST be preserved:
+      - "3 PAVIMENTAÇÃO"
+      - "1.4 DRENAGEM PLUVIAL"
+      - "A - SERVIÇOS INICIAIS"
+      - "II - FUNDAÇÕES"
+    Set item_path from the numeric/alphabetic prefix.
+    Set description as the remaining text.
+    NEVER discard these as garbage.
+9. **DEDUPLICATION — PARALLEL COLUMNS (MANDATORY)**:
+   Some spreadsheets contain two parallel budget columns side by side (e.g. "Pacto Original"
+   and "Nova Pactuação"). The OCR will capture the same item twice in sequence.
+   Rules:
+   - If two consecutive candidates share the same code AND description, keep only the LAST
+     occurrence (which corresponds to the updated "Nova Pactuação" values).
+   - If the two occurrences have different unit_price or total_price, prefer the one with
+     higher values (typically the updated pactuação).
+   - Set kind to "synthetic_item" and add a warning: "DEDUP_PARALLEL_COLUMN".
 
 CRITICAL RULE — CONTEXT PRIORITY:
 When extracting numeric fields (quantity, unit_price, total_price) for the current item:
@@ -179,7 +230,7 @@ async function persistStageBMetaAtomic(
         patchFn(nextMetadata.stageB);
 
         // 4. Build Signature (Auto-update if not present)
-        nextMetadata.stageB.build_sig = "stageb-cleanfix-2026-02-20";
+        nextMetadata.stageB.build_sig = "stageb-fixes-2026-02-21";
 
         // 6. Atomic Update
         const { error: updateErr } = await supabase

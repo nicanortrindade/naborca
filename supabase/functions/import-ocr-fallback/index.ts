@@ -21,7 +21,7 @@ const OCR_EC2_URL = Deno.env.get("OCR_EC2_URL") ?? "";
 // -----------------------------
 const MIN_ITEMS_SUCCESS = 3;
 const MIN_TEXT_LEN_FOR_PARSE = 200;
-const STAGEB_BUILD_SIG = "stageb-cleanfix-2026-02-20";
+const STAGEB_BUILD_SIG = "stageb-levelfix-2026-02-21";
 
 // -----------------------------
 // SAFETY LIMITS
@@ -484,7 +484,13 @@ async function processMaxExtraction(supabase: any, jobId: string, fileId: string
         if (rawItems.length > 0) {
             const finalItems = await Promise.all(rawItems.slice(0, MAX_ITEMS_PER_CHUNK).map(async (item: any, idxInChunk: number) => {
                 const dedupKey = await generateDedupKey({ job_id: jobId, import_file_id: fileId, description: item.description, chunk_index: chunk.chunk_index, raw_line: item.raw_line });
-                const cleanNum = (v: any) => (typeof v === 'number') ? v : (typeof v === 'string' ? (isNaN(parseFloat(v.replace(',', '.'))) ? null : parseFloat(v.replace(',', '.'))) : null);
+                const cleanNum = (v: any) => {
+                    if (v === null || v === undefined) return null;
+                    if (typeof v === 'number') return v;
+                    const s = String(v).replace(/\./g, '').replace(',', '.').trim();
+                    const f = parseFloat(s);
+                    return isNaN(f) ? null : f;
+                };
                 return { job_id: jobId, import_file_id: fileId, chunk_index: chunk.chunk_index, idx: idxInChunk, dedup_key: dedupKey, description: item.description || item.raw_line || "Item sem descrição", unit: item.unit?.substring(0, 20) || null, quantity: cleanNum(item.quantity), unit_price: cleanNum(item.unit_price), total: cleanNum(item.total), category: item.category || 'general_item', raw_line: item.raw_line?.substring(0, 1000) || null, confidence: typeof item.confidence === 'number' ? item.confidence : 0.6 };
             }));
 
@@ -840,6 +846,19 @@ serve(async (req: Request) => {
                                                             raw_line: rawLine
                                                         });
 
+                                                        // Derivar level a partir do item_path ou kind
+                                                        let derivedLevel = 3;
+                                                        if (item.kind === 'composition' && !item.code) {
+                                                            // Título de seção — level baseado na profundidade do item_path
+                                                            const pathDepth = item.item_path
+                                                                ? item.item_path.split('.').filter((p: string) => p !== '0' && p !== '').length
+                                                                : 1;
+                                                            derivedLevel = Math.min(pathDepth, 2);
+                                                        } else if (item.item_path) {
+                                                            const pathDepth = item.item_path.split('.').filter((p: string) => p !== '0' && p !== '').length;
+                                                            derivedLevel = Math.min(Math.max(pathDepth, 1), 3);
+                                                        }
+
                                                         return {
                                                             job_id: job_id,
                                                             import_file_id: file.id,
@@ -854,7 +873,7 @@ serve(async (req: Request) => {
                                                             category: item.kind || 'stage_b_item',
                                                             raw_line: rawLine ? rawLine.substring(0, 1000) : null,
                                                             confidence: item.confidence_score || 0.8,
-                                                            level: 3,
+                                                            level: derivedLevel,
                                                             chunk_index: batchIndex,
                                                             composition_code: item.code || null,
                                                             dedup_key: dedupKey,
@@ -933,23 +952,39 @@ serve(async (req: Request) => {
                             // Original blocked out to prevent duplication
                             /*
                             if (stageBResult.items && stageBResult.items.length > 0) {
-                                const dbItems = stageBResult.items.map((item: any, idx: number) => ({
-                                    job_id: job_id,
-                                    import_file_id: file.id,
-                                    idx: idx,
-                                    // Removed dedup_key and source_stage as they don't exist in schema
-                                    description: item.description,
-                                    unit: item.unit,
-                                    quantity: item.quantity ? parseFloat(String(item.quantity).replace(',', '.')) : null,
-                                    unit_price: item.unit_price ? parseFloat(String(item.unit_price).replace(',', '.')) : null,
-                                    total: item.total_price ? parseFloat(String(item.total_price).replace(',', '.')) : null,
-                                    category: item.kind || 'stage_b_item',
-                                    raw_line: item.evidence?.evidence_lines?.[0]?.text || null,
-                                    confidence: item.confidence_score || 0.8,
-                                    chunk_index: 0,
-                                    level: 3,
-                                    composition_code: item.code || null
-                                }));
+                                const dbItems = stageBResult.items.map((item: any, idx: number) => {
+                                    // Derivar level a partir do item_path ou kind
+                                    let derivedLevel = 3;
+                                    if (item.kind === 'composition' && !item.code) {
+                                        // Título de seção — level baseado na profundidade do item_path
+                                        const pathDepth = item.item_path
+                                            ? item.item_path.split('.').filter((p: string) => p !== '0' && p !== '').length
+                                            : 1;
+                                        derivedLevel = Math.min(pathDepth, 2);
+                                    } else if (item.item_path) {
+                                        const pathDepth = item.item_path.split('.').filter((p: string) => p !== '0' && p !== '').length;
+                                        derivedLevel = Math.min(Math.max(pathDepth, 1), 3);
+                                    }
+
+                                    return {
+                                        job_id: job_id,
+                                        import_file_id: file.id,
+                                        idx: idx,
+                                        description: item.description,
+                                        unit: item.unit,
+                                        quantity: item.quantity ? parseFloat(String(item.quantity).replace(',', '.')) : null,
+                                        unit_price: item.unit_price ? parseFloat(String(item.unit_price).replace(',', '.')) : null,
+                                        total: item.total_price ? parseFloat(String(item.total_price).replace(',', '.')) : null,
+                                        category: item.kind || 'stage_b_item',
+                                        raw_line: item.evidence?.evidence_lines?.[0]?.text || null,
+                                        confidence: item.confidence_score || 0.8,
+                                        chunk_index: 0,
+                                        level: derivedLevel,
+                                        composition_code: item.code || null,
+                                        item_path: item.item_path || null,
+                                        source_candidate_id: item.evidence?.candidate_id || null
+                                    };
+                                });
     
                                 try {
                                     // [STAGE-B-DB-ATTEMPT]
