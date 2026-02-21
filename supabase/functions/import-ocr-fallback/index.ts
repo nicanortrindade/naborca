@@ -705,6 +705,13 @@ serve(async (req: Request) => {
                 const pdfData = await extractPdfText(buffer);
                 const realLen = pdfData?.text?.length || 0;
 
+                // Salva extracted_text no banco para uso posterior pelo AnalyticReportParser
+                if (pdfData?.text && file.doc_role === 'analytical') {
+                    await supabase.from('import_files').update({
+                        extracted_text: pdfData.text
+                    }).eq('id', file.id);
+                }
+
                 // Shared state for Stage A -> Stage B
                 let finalCandidates: any[] = [];
                 let stageBFailed = false;
