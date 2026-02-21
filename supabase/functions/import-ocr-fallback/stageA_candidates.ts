@@ -198,7 +198,28 @@ export function generateCandidatesStageA(text: string, options: {
 
     // --- SYNTHETIC SCAN LOOP ---
     if (runSynthetic) {
-        let lastSectionPath: string | undefined = undefined; // rastreia a última seção ativa
+        // ── PRÉ-VARREDURA: mapeia índice → item_path para todos os cabeçalhos S1 ──
+        const sectionMap = new Map<number, string>();
+        for (let si = 0; si < limit; si++) {
+            const m = lines[si].match(REGEX_ITEM_PATH);
+            if (m) sectionMap.set(si, m[1]);
+        }
+
+        // Array ordenado de [lineIdx, item_path] para varredura linear
+        const sectionEntries = Array.from(sectionMap.entries()).sort((a, b) => a[0] - b[0]);
+
+        // Retorna o item_path mais próximo: prefere o cabeçalho imediatamente anterior;
+        // se não existir anterior, usa o próximo.
+        function resolveNearestSection(lineIdx: number): string | undefined {
+            let before: string | undefined = undefined;
+            let after: string | undefined = undefined;
+            for (const [sIdx, path] of sectionEntries) {
+                if (sIdx <= lineIdx) { before = path; }
+                else if (after === undefined) { after = path; break; }
+            }
+            return before ?? after;
+        }
+
         for (let i = 0; i < limit; i++) {
             if (candidates.length >= caps.max_candidates) break;
 
@@ -210,6 +231,9 @@ export function generateCandidatesStageA(text: string, options: {
             if (/^(pag|pág|data|hora|emitido)/i.test(line)) continue;
             if (/^[_\-=.]{3,}$/.test(line)) continue;
 
+            // Resolve a seção ativa usando o mapa pré-calculado
+            const lastSectionPath = resolveNearestSection(i);
+
             let hitS1 = false;
             let hitS2 = false;
             let hitS3 = false;
@@ -220,7 +244,6 @@ export function generateCandidatesStageA(text: string, options: {
             if (matchPath) {
                 hitS1 = true;
                 stats.synthetic_heads_found++;
-                lastSectionPath = matchPath[1]; // atualiza seção ativa para candidatos seguintes
                 stats.heuristics_hit['S1'] = (stats.heuristics_hit['S1'] || 0) + 1;
 
                 const cand: StageACandidate = {

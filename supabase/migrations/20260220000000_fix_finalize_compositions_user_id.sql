@@ -76,7 +76,7 @@ BEGIN -- 1. Setup & Validation
 
     -- Params Extraction
     v_uf := COALESCE(p_params->>'uf', 'BA');
-    v_competence := COALESCE(p_params->>'competence', to_char(now(), 'MM/YYYY'));
+    v_competence := COALESCE(p_params->>'competence', to_char(now(), 'YYYY-MM'));
     v_desonerado := COALESCE((p_params->>'desonerado')::boolean, true);
     -- FORCED DEFAULT: enable_structure_parser_v1 is TRUE unless explicitly false in params
     v_use_parser := COALESCE((p_params->>'enable_structure_parser_v1')::boolean, true);
