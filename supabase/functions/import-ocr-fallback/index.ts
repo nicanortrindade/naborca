@@ -1156,7 +1156,13 @@ serve(async (req: Request) => {
             const budgetId = await resolveBudgetIdForJob(supabase, job_id, jobData);
             if (budgetId) await hydrateBudgetItemsFromAI({ supabase, requestId, jobId: job_id, budgetId });
             const isComplete = dbCount >= COMPLETENESS_MIN_VALID_ITEMS;
-            await supabase.from("import_jobs").update({ status: isComplete ? "done" : "waiting_user", current_step: isComplete ? "done" : "waiting_user_partial", progress: 100, document_context: { ...(jobData.document_context || {}), ocr_fallback_executed: true, inserted_items_count: dbCount, debug_info: createSafeDebugInfo(debugSummary) } }).eq("id", job_id);
+            await supabase.from("import_jobs").update({
+                status: isComplete ? "done" : "waiting_user",
+                current_step: isComplete ? "done" : "waiting_user_partial",
+                stage: "ready_to_finalize",
+                progress: 100,
+                document_context: { ...(jobData.document_context || {}), ocr_fallback_executed: true, inserted_items_count: dbCount, debug_info: createSafeDebugInfo(debugSummary) }
+            }).eq("id", job_id);
             if (isComplete) fetch(`${SUPABASE_URL}/functions/v1/import-finalize-budget`, { method: 'POST', headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` }, body: JSON.stringify({ job_id }) }).catch(() => { });
             return jsonResponse({ ok: true, items: dbCount, status: isComplete ? "done" : "waiting_user" });
         } else {
