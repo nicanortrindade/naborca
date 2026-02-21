@@ -24,15 +24,9 @@ export const StageBItemSchema = z.object({
     code: z.string().nullable().optional(),
     description: z.string().min(1, "Description is mandatory"),
     unit: z.string().nullable().optional(),
-    quantity: z.string().nullable().optional()
-        .refine(v => v !== null && v !== undefined && v !== '',
-            { message: "quantity should be provided when visible in source" }),
-    unit_price: z.string().nullable().optional()
-        .refine(v => v !== null && v !== undefined && v !== '',
-            { message: "unit_price should be provided when visible in source" }),
-    total_price: z.string().nullable().optional()
-        .refine(v => v !== null && v !== undefined && v !== '',
-            { message: "total_price should be provided when visible in source" }),
+    quantity: z.string().nullable().optional(),
+    unit_price: z.string().nullable().optional(),
+    total_price: z.string().nullable().optional(),
     item_path: z.string().nullable().optional(),
     raw_numbers: z.array(z.string()).default([]),
     evidence: StageBEvidenceSchema,
