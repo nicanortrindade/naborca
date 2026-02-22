@@ -21,7 +21,7 @@ const OCR_EC2_URL = Deno.env.get("OCR_EC2_URL") ?? "";
 // -----------------------------
 const MIN_ITEMS_SUCCESS = 3;
 const MIN_TEXT_LEN_FOR_PARSE = 200;
-const STAGEB_BUILD_SIG = "stageb-complete-fix-2026-02-22";
+const STAGEB_BUILD_SIG = "stageb-docrole-fix-2026-02-22";
 
 // -----------------------------
 // SAFETY LIMITS
@@ -1226,7 +1226,8 @@ serve(async (req: Request) => {
             const { data: fileDataForBatches } = await supabase
                 .from("import_files")
                 .select("metadata")
-                .eq("job_id", job_id);
+                .eq("job_id", job_id)
+                .eq("doc_role", "synthetic");
 
             let lastPersistedBatch = -1;
             let totalCandidates = 0;
