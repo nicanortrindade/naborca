@@ -17,6 +17,8 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
     const [error, setError] = useState<string | null>(null);
     const [generating, setGenerating] = useState(false);
     const [jobContext, setJobContext] = useState<any>(null);
+    const [jobStage, setJobStage] = useState<string | null>(null);
+
 
     const [params, setParams] = useState({
         uf: 'BA',
@@ -33,9 +35,18 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
     }, [jobId]);
 
     const fetchJobContext = async () => {
-        const { data } = await supabase.from('import_jobs' as any).select('document_context').eq('id', jobId).single();
-        if (data && data.document_context) {
-            setJobContext(data.document_context);
+        const { data } = await supabase
+            .from('import_jobs' as any)
+            .select('document_context, stage, status, result_budget_id')
+            .eq('id', jobId)
+            .single();
+        if (data) {
+            if (data.document_context) setJobContext(data.document_context);
+            setJobStage(data.stage);
+            // Se já tem budget gerado, redireciona direto
+            if (data.result_budget_id && data.stage === 'finalized') {
+                navigate(toRelativePath(`/budgets/${data.result_budget_id}`));
+            }
         }
     };
 
@@ -335,7 +346,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                         </button>
                         <button
                             onClick={handleGenerateBudget}
-                            disabled={generating || items.length === 0}
+                            disabled={generating || items.length === 0 || (jobStage !== null && jobStage !== 'finalized' && jobStage !== 'ocr_queued')}
                             className="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 active:transform active:scale-95 font-semibold shadow-md shadow-blue-600/20 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 transition-all min-w-[200px]"
                         >
                             {generating ? (
