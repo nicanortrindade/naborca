@@ -35,6 +35,7 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
     const [isUploading, setIsUploading] = useState(false);
     const [uploadStep, setUploadStep] = useState<string>('');
     const [cancelMode, setCancelMode] = useState(false);
+    const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; percent: number } | undefined>();
 
     // Session State
     const [resumeSession, setResumeSession] = useState<ImportSession | null>(null);
@@ -93,12 +94,15 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                 jobId,
                 importFileId,
                 signal: controller.signal,
-                onProgress: ({ status, attempt, message }) => {
+                onProgress: ({ status, attempt, message, batchProgress: bp }) => {
+                    if (bp) setBatchProgress(bp);
                     let text = `Processando IA... (Tentativa ${attempt})`;
                     if (status === 'ocr_started') text = 'Iniciando engine OCR...';
-                    else if (status === 'ocr_running') text = `Lendo documentos... (Fase ${attempt})`;
+                    else if (status === 'ocr_running') text = bp
+                        ? `Processando lote ${bp.current} de ${bp.total} (${bp.percent}%)`
+                        : `Lendo documentos... (Fase ${attempt})`;
                     else if (status === 'unknown') text = `Processando... (estado ${attempt})`;
-                    if (message && typeof message === 'string') text += ` - ${message}`;
+                    if (message && typeof message === 'string' && !bp) text += ` - ${message}`;
                     setUploadStep(text);
                 }
             });
@@ -362,9 +366,25 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                                 <div className="absolute inset-0 bg-blue-500/20 blur-2xl rounded-full animate-pulse"></div>
                                 <Loader2 className="w-16 h-16 text-blue-600 animate-spin relative z-10" />
                             </div>
-                            <div className="space-y-2">
+                            <div className="space-y-4 w-full max-w-sm">
                                 <h3 className="text-xl font-black text-slate-800">Processando Inteligência Artificial</h3>
-                                <p className="text-sm font-medium text-slate-400 animate-pulse">{uploadStep}</p>
+                                {batchProgress ? (
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between text-xs font-medium text-slate-500">
+                                            <span>Lote {batchProgress.current} de {batchProgress.total}</span>
+                                            <span>{batchProgress.percent}%</span>
+                                        </div>
+                                        <div className="w-full bg-slate-200 rounded-full h-2">
+                                            <div
+                                                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                                                style={{ width: `${batchProgress.percent}%` }}
+                                            />
+                                        </div>
+                                        <p className="text-sm font-medium text-slate-400">{uploadStep}</p>
+                                    </div>
+                                ) : (
+                                    <p className="text-sm font-medium text-slate-400 animate-pulse">{uploadStep}</p>
+                                )}
                             </div>
                             <button onClick={() => setCancelMode(true)} className="text-xs font-bold text-slate-300 hover:text-red-500 transition-colors">Interromper processo</button>
                         </div>

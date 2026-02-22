@@ -81,7 +81,7 @@ export async function runImportParseWorkerUntilDone(params: {
     jobId: string;
     importFileId?: string;
     signal?: AbortSignal;
-    onProgress?: (info: { status: WorkerStatus; attempt: number; nextDelayMs: number; elapsedMs: number; message?: string }) => void;
+    onProgress?: (info: { status: WorkerStatus; attempt: number; nextDelayMs: number; elapsedMs: number; message?: string; batchProgress?: { current: number; total: number; percent: number }; }) => void;
 }): Promise<PollingResult> {
     const { jobId, signal, onProgress } = params;
     const startAt = Date.now();
@@ -169,6 +169,23 @@ export async function runImportParseWorkerUntilDone(params: {
                 .select('*', { count: 'exact', head: true })
                 .eq('job_id', jobId);
 
+            // Buscar progresso real dos batches
+            let batchProgress: { current: number; total: number; percent: number } | undefined;
+            const { data: batchMetaRaw } = await supabase
+                .from('import_files' as any)
+                .select('metadata')
+                .eq('job_id', jobId)
+                .eq('doc_role', 'synthetic')
+                .single();
+            const batchMeta = batchMetaRaw as any;
+
+            if (batchMeta?.metadata?.stageB?.total_batches) {
+                const total = batchMeta.metadata.stageB.total_batches as number;
+                const current = (batchMeta.metadata.stageB.last_persisted_batch_index as number ?? -1) + 1;
+                const percent = Math.min(99, Math.round((current / total) * 100));
+                batchProgress = { current, total, percent };
+            }
+
             // --- REGRA ABSOLUTA: Se existem itens, o job está pronto para revisão ---
             if ((itemsCount || 0) > 0 && job?.status === 'done') {
                 logTelemetry('info', 'polling_terminal', { jobId, result: 'success_items_exist_priority', items: itemsCount });
@@ -194,7 +211,10 @@ export async function runImportParseWorkerUntilDone(params: {
                         attempt,
                         nextDelayMs: POLLING_INTERVAL_MS,
                         elapsedMs,
-                        message: `Processando itens... (${done}/${total}) - ${itemsCount || 0} extraídos`
+                        message: batchProgress
+                            ? `Processando lote ${batchProgress.current} de ${batchProgress.total}`
+                            : `Processando itens... ${itemsCount || 0} extraídos`,
+                        batchProgress
                     });
                 }
 
