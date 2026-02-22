@@ -88,21 +88,45 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
 
             const result = data;
 
-            if (!result || !result.budget_id) {
-                // Logical Error
+            if (result?.ok === false) {
                 if (result?.reason === 'no_items_found') {
                     alert("Atenção: Nenhum item foi encontrado para gerar o orçamento.");
                     return;
                 }
-                if (result?.ok === false) {
-                    throw new Error(result.details || result.reason || "Erro desconhecido no processamento.");
-                }
-                // Fallback
-                throw new Error("Resposta inválida do servidor (Budget ID ausente).");
+                throw new Error(result.details || result.reason || "Erro desconhecido no processamento.");
             }
 
-            // Success
+            // Fluxo assíncrono: polling até result_budget_id aparecer
+            if (result?.async === true) {
+                let attempts = 0;
+                const maxAttempts = 40; // 40 x 5s = 200s
+                const poll = async (): Promise<void> => {
+                    if (attempts >= maxAttempts) {
+                        throw new Error("Tempo limite excedido aguardando geração do orçamento.");
+                    }
+                    attempts++;
+                    const { data: jobData } = await supabase
+                        .from('import_jobs' as any)
+                        .select('result_budget_id, stage')
+                        .eq('id', jobId)
+                        .single();
+                    if (jobData?.result_budget_id && jobData?.stage === 'finalized') {
+                        navigate(toRelativePath(`/budgets/${jobData.result_budget_id}`));
+                        return;
+                    }
+                    await new Promise(res => setTimeout(res, 5000));
+                    return poll();
+                };
+                await poll();
+                return;
+            }
+
+            // Fluxo síncrono legado
+            if (!result?.budget_id) {
+                throw new Error("Resposta inválida do servidor (Budget ID ausente).");
+            }
             navigate(toRelativePath(`/budgets/${result.budget_id}`));
+
 
         } catch (err: any) {
             console.error("Generate Error:", err);
