@@ -86,7 +86,7 @@ export async function runImportParseWorkerUntilDone(params: {
     const { jobId, signal, onProgress } = params;
     const startAt = Date.now();
     let attempt = 0;
-    const MAX_TIME_MS = 10 * 60 * 1000; // 10 minutes timeout
+    const MAX_TIME_MS = 35 * 60 * 1000; // 35 minutes timeout
     const POLLING_INTERVAL_MS = 3000;
 
     logTelemetry('info', 'polling_start_db_mode', { jobId });
@@ -170,7 +170,7 @@ export async function runImportParseWorkerUntilDone(params: {
                 .eq('job_id', jobId);
 
             // --- REGRA ABSOLUTA: Se existem itens, o job está pronto para revisão ---
-            if ((itemsCount || 0) > 0) {
+            if ((itemsCount || 0) > 0 && job?.status === 'done') {
                 logTelemetry('info', 'polling_terminal', { jobId, result: 'success_items_exist_priority', items: itemsCount });
                 return {
                     finalStatus: 'success',
