@@ -502,7 +502,6 @@ async function processCandidatesBatch(
     for (const c of candidates) {
         if (c.warnings?.includes("section_title_candidate")) {
             bypassedItems.push({
-                candidate_id: c.id,
                 kind: "composition",
                 code: null,
                 description: c.extracted_signals?.description_fragment || "SEÇÃO",
