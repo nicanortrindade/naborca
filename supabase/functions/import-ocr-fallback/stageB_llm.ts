@@ -251,9 +251,6 @@ async function persistStageBMetaAtomic(
         // 3. Apply Patch via transformation
         patchFn(nextMetadata.stageB);
 
-        // 4. Build Signature (Auto-update if not present)
-        nextMetadata.stageB.build_sig = "stageb-catchfix-2026-02-21";
-
         // 6. Atomic Update
         const { error: updateErr } = await supabase
             .from('import_files')
@@ -821,12 +818,21 @@ export async function executeStageB(
     const validCandidates = candidates;
     stats.candidates_total = validCandidates.length;
 
+    // Compute total_batches NOW, from the true candidate count,
+    // before any timeout could cut the execution short.
+    const totalBatchesCalculated = Math.max(1, Math.ceil(validCandidates.length / BATCH_SIZE));
+    console.log(`[STAGE-B-EXEC] totalBatchesCalculated=${totalBatchesCalculated} (candidates=${validCandidates.length}, BATCH_SIZE=${BATCH_SIZE})`);
+
     // 1. ATOMIC START MARKER
     if (persistenceOpts) {
         await persistStageBMetaAtomic(persistenceOpts, (stageB) => {
             stageB.llm_sdk = "@google/genai";
             stageB.llm_started_at = stageB.llm_started_at || new Date().toISOString();
             stageB.llm_models_configured = MODEL_FALLBACKS;
+            // Persist total_batches so the finalization check can read it
+            // even when timeout interrupts processing mid-way.
+            // NEVER overwrite an existing value — a retry must keep the original count.
+            stageB.total_batches = stageB.total_batches || totalBatchesCalculated;
             // Ensure array exists
             stageB.llm_model_attempts = stageB.llm_model_attempts || [];
             // Preserve existing debug.index_gate!
