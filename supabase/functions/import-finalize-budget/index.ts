@@ -61,6 +61,30 @@ Deno.serve(async (req) => {
             targetUserId = jobInfo.user_id;
         }
 
+        // GUARD: só finaliza se todos os batches foram processados
+        const { data: batchGuardData } = await adminClient
+            .from('import_files')
+            .select('metadata')
+            .eq('job_id', job_id)
+            .eq('doc_role', 'synthetic')
+            .single();
+
+        const stageB = batchGuardData?.metadata?.stageB;
+        const totalBatches = stageB?.total_batches ?? 0;
+        const lastBatch = stageB?.last_persisted_batch_index ?? -1;
+        const allBatchesDone = totalBatches > 0 && lastBatch >= totalBatches - 1;
+
+        if (!allBatchesDone) {
+            console.warn(`[FinalizeBudget] GUARD BLOCKED: lastBatch=${lastBatch}, totalBatches=${totalBatches}, job=${job_id}`);
+            return new Response(JSON.stringify({
+                ok: false,
+                reason: 'batches_not_complete',
+                details: { lastBatch, totalBatches }
+            }), { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
+        console.log(`[FinalizeBudget] GUARD PASSED: lastBatch=${lastBatch}, totalBatches=${totalBatches}`);
+
         console.log(`[FinalizeBudget] Job: ${job_id} | Settings: ${uf}/${competence} | StructureV1: ${enable_structure_parser_v1}`);
 
         // Admin Client available (adminClient)
@@ -120,7 +144,7 @@ Deno.serve(async (req) => {
             status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
 
-    } catch (error) {
+    } catch (error: any) {
         console.error(`[FinalizeBudget] Error:`, error);
         return new Response(JSON.stringify({ ok: false, reason: 'internal_error', details: error.message }), { status: 500, headers: corsHeaders });
     }
