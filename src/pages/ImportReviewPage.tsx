@@ -110,7 +110,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
             // Fluxo assíncrono: polling até result_budget_id aparecer
             if (result?.async === true) {
                 let attempts = 0;
-                const maxAttempts = 40; // 40 x 5s = 200s
+                const maxAttempts = 80; // 80 x 5s = 400s
                 const poll = async (): Promise<void> => {
                     if (attempts >= maxAttempts) {
                         throw new Error("Tempo limite excedido aguardando geração do orçamento.");

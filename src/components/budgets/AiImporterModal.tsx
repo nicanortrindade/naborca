@@ -124,16 +124,35 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         return; // Stop execution
                     }
                 } else {
-                    // PARTIAL SUCCESS: Waiting User Review
-                    // Do NOT clear session yet because user might refresh page during review
-                    // navigate to REVIEW page
-                    await new Promise(r => setTimeout(r, 600));
-                    if (!controller.signal.aborted) {
-                        navigate(toRelativePath(`/importacoes/${jobId}`));
-                        onClose();
-                        return;
-                    }
+                    // Aguarda result_budget_id ser preenchido antes de redirecionar
+                    setUploadStep('Finalizando orçamento...');
+                    let attempts = 0;
+                    const maxAttempts = 80; // 80 x 5s = 400s
+                    const pollBudget = async (): Promise<void> => {
+                        if (attempts >= maxAttempts || controller.signal.aborted) {
+                            // Timeout — redireciona para revisão como fallback
+                            navigate(toRelativePath(`/importacoes/${jobId}`));
+                            onClose();
+                            return;
+                        }
+                        attempts++;
+                        const { data: jobData } = await supabase
+                            .from('import_jobs' as any)
+                            .select('result_budget_id, stage')
+                            .eq('id', jobId)
+                            .single();
+                        if (jobData?.result_budget_id && jobData?.stage === 'finalized') {
+                            navigate(toRelativePath(`/budgets/${jobData.result_budget_id}`));
+                            onClose();
+                            return;
+                        }
+                        await new Promise(r => setTimeout(r, 5000));
+                        return pollBudget();
+                    };
+                    await pollBudget();
+                    return;
                 }
+
             } else {
                 // FAILURE / THRESHOLD REACHED
                 // Instead of throwing, we redirect to review so user can see what happened or do manual entry.
