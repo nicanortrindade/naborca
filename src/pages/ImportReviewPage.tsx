@@ -32,6 +32,25 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
     useEffect(() => {
         fetchItems();
         fetchJobContext();
+
+        // Polling: verifica stage a cada 10s até finalizar
+        const interval = setInterval(async () => {
+            const { data } = await supabase
+                .from('import_jobs' as any)
+                .select('stage, status, result_budget_id')
+                .eq('id', jobId)
+                .single();
+
+            if (data) {
+                setJobStage(data.stage);
+                if (data.result_budget_id && data.stage === 'finalized') {
+                    clearInterval(interval);
+                    navigate(toRelativePath(`/budgets/${data.result_budget_id}`));
+                }
+            }
+        }, 10000);
+
+        return () => clearInterval(interval);
     }, [jobId]);
 
     const fetchJobContext = async () => {
