@@ -1,0 +1,52 @@
+﻿diff --git a/supabase/functions/import-ocr-fallback/index.ts b/supabase/functions/import-ocr-fallback/index.ts
+index 784ae0b..8ed761a 100644
+--- a/supabase/functions/import-ocr-fallback/index.ts
++++ b/supabase/functions/import-ocr-fallback/index.ts
+@@ -1209,21 +1209,41 @@ serve(async (req: Request) => {
+ 
+         if (targetFileId) return jsonResponse({ ok: true, file_id: targetFileId, items_found: globalItemsFound, status: 'file_processed' });
+ 
+-        const { count: finalCount } = await supabase.from("import_ai_items").select("*", { count: "exact", head: true }).eq("job_id", job_id);
++        const { count: finalCount } = await supabase
++            .from("import_ai_items")
++            .select("*", { count: "exact", head: true })
++            .eq("job_id", job_id);
+         const dbCount = finalCount || 0;
+ 
+         if (dbCount > 0) {
+             const budgetId = await resolveBudgetIdForJob(supabase, job_id, jobData);
+             if (budgetId) await hydrateBudgetItemsFromAI({ supabase, requestId, jobId: job_id, budgetId });
+-            const isComplete = dbCount >= COMPLETENESS_MIN_VALID_ITEMS;
++
++            // Verificar se todos os batches foram processados antes de finalizar
++            const totalBatches = Math.ceil(candidates.length / BATCH_SIZE);
++            const lastPersistedBatch = stageBResult?.lastBatchIndex ?? -1;
++            const allBatchesDone = lastPersistedBatch >= totalBatches - 1;
++            const isComplete = dbCount >= COMPLETENESS_MIN_VALID_ITEMS && allBatchesDone;
++
+             await supabase.from("import_jobs").update({
+                 status: isComplete ? "done" : "waiting_user",
+                 current_step: isComplete ? "done" : "waiting_user_partial",
+-                stage: "ready_to_finalize",
+-                progress: 100,
+-                document_context: { ...(jobData.document_context || {}), ocr_fallback_executed: true, inserted_items_count: dbCount, debug_info: createSafeDebugInfo(debugSummary) }
++                stage: isComplete ? "ready_to_finalize" : "processing",
++                progress: isComplete ? 100 : Math.round((lastPersistedBatch + 1) / totalBatches * 100),
++                document_context: {
++                    ...(jobData.document_context || {}),
++                    ocr_fallback_executed: true,
++                    inserted_items_count: dbCount,
++                    debug_info: createSafeDebugInfo(debugSummary)
++                }
+             }).eq("id", job_id);
+-            if (isComplete) fetch(`${SUPABASE_URL}/functions/v1/import-finalize-budget`, { method: 'POST', headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` }, body: JSON.stringify({ job_id }) }).catch(() => { });
++
++            if (isComplete) fetch(`${SUPABASE_URL}/functions/v1/import-finalize-budget`, {
++                method: 'POST',
++                headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
++                body: JSON.stringify({ job_id })
++            }).catch(() => { });
++
+             return jsonResponse({ ok: true, items: dbCount, status: isComplete ? "done" : "waiting_user" });
+         } else {
+             // No items in DB, check Stage B metadata for diagnostics

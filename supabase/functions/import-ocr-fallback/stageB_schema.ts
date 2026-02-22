@@ -52,6 +52,7 @@ export interface StageBOutput {
     // Results
     items: StageBItem[];
     item_count: number;
+    total_batches?: number;
     debug?: any; // Detailed debug info (input sample, raw output, parser stats)
 
     // Diagnostics

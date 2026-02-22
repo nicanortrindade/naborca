@@ -1,0 +1,108 @@
+﻿Checking import_jobs for 250c3080-f71c-499b-a51d-bf031da1c3ad...
+Job Data: {
+  "id": "250c3080-f71c-499b-a51d-bf031da1c3ad",
+  "created_at": "2026-02-22T00:02:41.493633+00:00",
+  "updated_at": "2026-02-22T00:13:00.590803+00:00",
+  "user_id": "6c3c24cd-5392-4238-9374-2f439c462e87",
+  "status": "processing",
+  "doc_role": "unknown",
+  "document_context": {
+    "debug_info": {
+      "stage": "delegation_done",
+      "last_checkpoint": "delegation_done"
+    }
+  },
+  "is_desonerado": null,
+  "progress": 20,
+  "current_step": "dispatched_to_worker",
+  "error_message": null,
+  "artifacts": {},
+  "stage": "finalized",
+  "stage_updated_at": "2026-02-22T00:02:41.493633+00:00",
+  "last_error": null,
+  "heartbeat_at": null,
+  "extraction_attempts": 0,
+  "extraction_retryable": false,
+  "extraction_next_retry_at": null,
+  "extraction_last_reason": null,
+  "result_budget_id": "845193c4-6308-43ce-9cb7-f4f31d9f9141",
+  "finalized_at": "2026-02-22T00:10:38.765793+00:00"
+}
+
+Checking import_files for job_id 250c3080-f71c-499b-a51d-bf031da1c3ad...
+
+--- File ID: 81e20264-7b59-4b50-8b7e-19ad465c6d6b ---
+Metadata StageB: {
+  "debug": {
+    "index_gate": {
+      "ts": "2026-02-22T00:12:04.525Z",
+      "job_id": "250c3080-f71c-499b-a51d-bf031da1c3ad",
+      "marker": "INDEX_TS_ENTERED_FILE_LOOP",
+      "file_id": "81e20264-7b59-4b50-8b7e-19ad465c6d6b",
+      "reached_stageB_block": true
+    }
+  },
+  "build_sig": "stageb-catchfix-2026-02-21"
+}
+
+--- File ID: f36f3b70-a542-4d5b-9a57-2ba9f418c3bb ---
+Metadata StageB: {
+  "debug": {
+    "index_gate": {
+      "ts": "2026-02-22T00:10:04.887Z",
+      "job_id": "250c3080-f71c-499b-a51d-bf031da1c3ad",
+      "marker": "INDEX_TS_ENTERED_FILE_LOOP",
+      "file_id": "f36f3b70-a542-4d5b-9a57-2ba9f418c3bb",
+      "timestamp": "2026-02-22T00:10:06.182Z",
+      "finalCandidates_len": 307,
+      "reached_stageB_block": true,
+      "stageA_candidate_count": 307
+    }
+  },
+  "llm_sdk": "@google/genai",
+  "build_sig": "stageb-catchfix-2026-02-21",
+  "llm_started_at": "2026-02-22T00:10:06.326Z",
+  "llm_model_actual": "gemini-2.0-flash",
+  "llm_succeeded_at": "2026-02-22T00:12:24.745Z",
+  "last_persisted_at": "2026-02-22T00:12:24.840Z",
+  "llm_model_attempts": [
+    {
+      "ts": "2026-02-22T00:10:26.903Z",
+      "kind": "success",
+      "model": "gemini-2.0-flash"
+    },
+    {
+      "ts": "2026-02-22T00:10:52.682Z",
+      "kind": "success",
+      "model": "gemini-2.0-flash"
+    },
+    {
+      "ts": "2026-02-22T00:11:12.408Z",
+      "kind": "success",
+      "model": "gemini-2.0-flash"
+    },
+    {
+      "ts": "2026-02-22T00:11:37.190Z",
+      "kind": "success",
+      "model": "gemini-2.0-flash"
+    },
+    {
+      "ts": "2026-02-22T00:12:01.129Z",
+      "kind": "success",
+      "model": "gemini-2.0-flash"
+    },
+    {
+      "ts": "2026-02-22T00:12:24.712Z",
+      "kind": "success",
+      "model": "gemini-2.0-flash"
+    }
+  ],
+  "llm_models_configured": [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro"
+  ],
+  "last_persisted_batch_index": 5,
+  "last_persisted_candidate_count": 120
+}

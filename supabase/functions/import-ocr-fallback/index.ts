@@ -809,6 +809,7 @@ serve(async (req: Request) => {
                                     supabase,
                                     jobId: job_id,
                                     fileId: file.id,
+                                    buildSig: STAGEB_BUILD_SIG,
                                     onSaveMeta: async (meta) => {
                                         await safeMergeMetadata(supabase, file.id, meta, 'stage_b_atomic_update');
                                     }
@@ -816,7 +817,7 @@ serve(async (req: Request) => {
                                 {
                                     startBatchIndex: typeof lastBatchIndex === 'number' ? lastBatchIndex + 1 : 0,
                                     onBatchResult: async (batchRes) => {
-                                        const { batchIndex, items, candidateCount } = batchRes;
+                                        const { batchIndex, items, candidateCount, totalBatches } = batchRes;
                                         // INCREMENTAL INSERT
                                         if (items && items.length > 0) {
                                             // Filtrar itens sem description (campo obrigatório)
@@ -1230,31 +1231,29 @@ serve(async (req: Request) => {
                 .eq("doc_role", "synthetic");
 
             let lastPersistedBatch = -1;
-            let totalCandidates = 0;
-            const BATCH_SIZE_LOCAL = 20; // Deve ser igual ao BATCH_SIZE definido em stageB_llm.ts
+            let totalBatches = 0;
 
             if (fileDataForBatches && fileDataForBatches.length > 0) {
                 for (const fd of fileDataForBatches) {
-                    const stageA = fd.metadata?.stageA;
                     const stageB = fd.metadata?.stageB;
                     if (stageB && typeof stageB.last_persisted_batch_index === 'number') {
                         if (stageB.last_persisted_batch_index > lastPersistedBatch) {
                             lastPersistedBatch = stageB.last_persisted_batch_index;
                         }
                     }
-                    // Fonte primária: stageA.candidate_count
-                    if (stageA) {
-                        if (typeof stageA.candidate_count === 'number' && stageA.candidate_count > totalCandidates) {
-                            totalCandidates = stageA.candidate_count;
-                        } else if (typeof (stageA.stats as any)?.candidates_found === 'number' && (stageA.stats as any).candidates_found > totalCandidates) {
-                            totalCandidates = (stageA.stats as any).candidates_found;
-                        }
+                    if (stageB && typeof stageB.total_batches === 'number' && stageB.total_batches > totalBatches) {
+                        totalBatches = stageB.total_batches;
                     }
                 }
             }
-            if (totalCandidates === 0) totalCandidates = 307;
 
-            const totalBatches = Math.max(1, Math.ceil(totalCandidates / BATCH_SIZE_LOCAL));
+            if (totalBatches === 0) {
+                totalBatches = Math.max(16, lastPersistedBatch + 2);
+                console.warn(`[FINALIZE-GUARD] total_batches ausente. Fallback=${totalBatches} (lastPersistedBatch=${lastPersistedBatch})`);
+            }
+
+            console.log(`[FINALIZE-GUARD] totalBatches=${totalBatches}, lastPersistedBatch=${lastPersistedBatch}`);
+
             const allBatchesDone = lastPersistedBatch >= totalBatches - 1;
             const isComplete = dbCount >= COMPLETENESS_MIN_VALID_ITEMS && allBatchesDone;
 

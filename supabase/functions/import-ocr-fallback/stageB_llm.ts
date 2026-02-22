@@ -218,6 +218,7 @@ export type PersistenceOpts = {
     fileId: string;
     jobId: string;
     onSaveMeta?: (meta: any) => Promise<void>;
+    buildSig?: string;
 };
 
 // ------------------------------------------------------------------
@@ -252,7 +253,9 @@ async function persistStageBMetaAtomic(
         patchFn(nextMetadata.stageB);
 
         // 4. Build Signature (Auto-update if not present)
-        nextMetadata.stageB.build_sig = "stageb-catchfix-2026-02-21";
+        if (opts.buildSig) {
+            nextMetadata.stageB.build_sig = opts.buildSig;
+        }
 
         // 6. Atomic Update
         const { error: updateErr } = await supabase
@@ -796,7 +799,7 @@ export async function executeStageB(
     persistenceOpts?: PersistenceOpts,
     resumeOpts?: {
         startBatchIndex?: number;
-        onBatchResult?: (result: { batchIndex: number; candidateCount: number; items: StageBItem[] }) => Promise<void>;
+        onBatchResult?: (result: { batchIndex: number; candidateCount: number; items: StageBItem[]; totalBatches: number }) => Promise<void>;
     }
 ): Promise<StageBOutput> {
     console.log(`[STAGE-B-EXEC] Starting executeStageB. Valid Candidates: ${candidates.length}, ResumeBatch: ${resumeOpts?.startBatchIndex || 0}`);
@@ -822,12 +825,15 @@ export async function executeStageB(
     stats.candidates_total = validCandidates.length;
 
     // 1. ATOMIC START MARKER
+    const totalBatchesCalculated = Math.max(1, Math.ceil(validCandidates.length / BATCH_SIZE));
+    console.log(`[STAGE-B-EXEC] Total batches to process: ${totalBatchesCalculated}`);
+
     if (persistenceOpts) {
         await persistStageBMetaAtomic(persistenceOpts, (stageB) => {
             stageB.llm_sdk = "@google/genai";
             stageB.llm_started_at = stageB.llm_started_at || new Date().toISOString();
             stageB.llm_models_configured = MODEL_FALLBACKS;
-            // Ensure array exists
+            stageB.total_batches = stageB.total_batches || totalBatchesCalculated;
             stageB.llm_model_attempts = stageB.llm_model_attempts || [];
             // Preserve existing debug.index_gate!
             stageB.debug = stageB.debug || {};
@@ -837,6 +843,8 @@ export async function executeStageB(
     // [BATCHING] Chunked execution loop
     const startBatch = resumeOpts?.startBatchIndex || 0;
     const startIndex = startBatch * BATCH_SIZE;
+
+
 
     for (let i = startIndex; i < candidates.length; i += BATCH_SIZE) {
         const batchCandidates = candidates.slice(i, i + BATCH_SIZE);
@@ -901,7 +909,8 @@ export async function executeStageB(
                 await resumeOpts.onBatchResult({
                     batchIndex,
                     items: result.items,
-                    candidateCount: i + BATCH_SIZE // Approx candidates processed so far
+                    candidateCount: i + BATCH_SIZE, // Approx candidates processed so far
+                    totalBatches: totalBatchesCalculated
                 });
             } catch (cbErr: any) {
                 console.error(`[STAGE-B] onBatchResult Callback Failed (Batch ${batchIndex}):`, cbErr);
@@ -1003,6 +1012,7 @@ export async function executeStageB(
         request_id: requestId,
         items: uniqueItems,
         item_count: uniqueItems.length,
+        total_batches: totalBatchesCalculated,
         batches: batches,
         warnings: warnings, // Changed from warnings to allWarnings
         stats: {
