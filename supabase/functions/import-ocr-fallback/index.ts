@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { GoogleGenerativeAI } from "https://esm.sh/@google/generative-ai@0.21.0";
 import { z } from "https://esm.sh/zod@3.23.8";
-import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174/legacy/build/pdf.mjs";
+import pdfParse from "npm:pdf-parse@1.1.1";
 import { Buffer } from "node:buffer";
 import { generateCandidatesStageA } from "./stageA_candidates.ts";
 import { executeStageB } from "./stageB_llm.ts";
@@ -21,7 +21,7 @@ const OCR_EC2_URL = Deno.env.get("OCR_EC2_URL") ?? "";
 // -----------------------------
 const MIN_ITEMS_SUCCESS = 3;
 const MIN_TEXT_LEN_FOR_PARSE = 200;
-const STAGEB_BUILD_SIG = "stageb-pdfjs-fix-2026-02-21";
+const STAGEB_BUILD_SIG = "stageb-catchfix-2026-02-21";
 
 // -----------------------------
 // SAFETY LIMITS
@@ -509,77 +509,8 @@ async function processMaxExtraction(supabase: any, jobId: string, fileId: string
 
 async function extractPdfText(buffer: ArrayBuffer): Promise<{ text: string, numpages: number } | null> {
     try {
-        // Fix for Deno / Edge Function Web Worker and Canvas timeouts
-        pdfjsLib.GlobalWorkerOptions.workerSrc = "";
-        const loadingTask = pdfjsLib.getDocument({
-            data: new Uint8Array(buffer),
-            useWorkerFetch: false,
-            isEvalSupported: false,
-            useSystemFonts: true
-        });
-        const pdf = await loadingTask.promise;
-        const numPages = pdf.numPages;
-        let fullText = "";
-
-        for (let i = 1; i <= numPages; i++) {
-            const page = await pdf.getPage(i);
-            const textContent = await page.getTextContent();
-
-            const items = textContent.items as any[];
-
-            // Group by Y (with 3px tolerance)
-            const lines: { y: number, items: any[] }[] = [];
-
-            for (const item of items) {
-                if (!item.str || item.str.trim() === '') continue;
-
-                const x = item.transform[4];
-                const y = item.transform[5];
-
-                // Find existing line within 3px
-                let foundLine = lines.find(l => Math.abs(l.y - y) <= 3);
-                if (!foundLine) {
-                    foundLine = { y, items: [] };
-                    lines.push(foundLine);
-                }
-                foundLine.items.push({ str: item.str, x, width: item.width || 0 });
-            }
-
-            // Order lines top-to-bottom: 
-            // PDF coordinates usually have Y=0 at the bottom left, so descending Y means top-to-bottom.
-            lines.sort((a, b) => b.y - a.y);
-
-            for (const line of lines) {
-                // Sort items left-to-right
-                line.items.sort((a, b) => a.x - b.x);
-
-                let lineStr = "";
-                let lastRight = -1;
-
-                for (let j = 0; j < line.items.length; j++) {
-                    const it = line.items[j];
-                    if (j === 0) {
-                        lineStr += it.str;
-                        lastRight = it.x + it.width;
-                    } else {
-                        const gap = it.x - lastRight;
-                        if (gap > 20) {
-                            lineStr += " || " + it.str;
-                        } else if (gap > 2) {
-                            lineStr += " " + it.str;
-                        } else {
-                            lineStr += it.str;
-                        }
-                        lastRight = it.x + it.width;
-                    }
-                }
-                fullText += lineStr + "\n";
-            }
-
-            fullText += "\n";
-        }
-
-        return { text: fullText.trim(), numpages: numPages };
+        const data = await pdfParse(Buffer.from(buffer));
+        return { text: data.text, numpages: data.numpages };
     } catch (e: any) {
         console.warn("[FULL-SCAN] Local PDF text extraction failed:", e.message);
         return null;
