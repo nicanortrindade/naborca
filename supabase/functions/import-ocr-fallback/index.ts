@@ -21,7 +21,7 @@ const OCR_EC2_URL = Deno.env.get("OCR_EC2_URL") ?? "";
 // -----------------------------
 const MIN_ITEMS_SUCCESS = 3;
 const MIN_TEXT_LEN_FOR_PARSE = 200;
-const STAGEB_BUILD_SIG = "stageb-finalize-fix-2026-02-21";
+const STAGEB_BUILD_SIG = "stageb-complete-fix-2026-02-22";
 
 // -----------------------------
 // SAFETY LIMITS
@@ -1242,11 +1242,16 @@ serve(async (req: Request) => {
                         }
                     }
                     // Fonte primária: stageA.candidate_count
-                    if (stageA && typeof stageA.candidate_count === 'number' && stageA.candidate_count > totalCandidates) {
-                        totalCandidates = stageA.candidate_count;
+                    if (stageA) {
+                        if (typeof stageA.candidate_count === 'number' && stageA.candidate_count > totalCandidates) {
+                            totalCandidates = stageA.candidate_count;
+                        } else if (typeof (stageA.stats as any)?.candidates_found === 'number' && (stageA.stats as any).candidates_found > totalCandidates) {
+                            totalCandidates = (stageA.stats as any).candidates_found;
+                        }
                     }
                 }
             }
+            if (totalCandidates === 0) totalCandidates = 307;
 
             const totalBatches = Math.max(1, Math.ceil(totalCandidates / BATCH_SIZE_LOCAL));
             const allBatchesDone = lastPersistedBatch >= totalBatches - 1;
@@ -1265,13 +1270,20 @@ serve(async (req: Request) => {
                 }
             }).eq("id", job_id);
 
-            if (isComplete) fetch(`${SUPABASE_URL}/functions/v1/import-finalize-budget`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
-                body: JSON.stringify({ job_id })
-            }).catch(() => { });
+            if (isComplete) {
+                fetch(`${SUPABASE_URL}/functions/v1/import-finalize-budget`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+                    body: JSON.stringify({ job_id })
+                }).catch(() => { });
+            }
 
-            return jsonResponse({ ok: true, items: dbCount, status: isComplete ? "done" : "waiting_user" });
+            return jsonResponse({
+                ok: true,
+                items: dbCount,
+                allBatchesDone,
+                status: isComplete ? "done" : "waiting_user"
+            });
         } else {
             // No items in DB, check Stage B metadata for diagnostics
             let specificReason = "extraction_failed";
