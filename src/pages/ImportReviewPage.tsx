@@ -346,7 +346,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                         </button>
                         <button
                             onClick={handleGenerateBudget}
-                            disabled={generating || items.length === 0 || (jobStage !== null && jobStage !== 'finalized' && jobStage !== 'ocr_queued')}
+                            disabled={generating || items.length === 0 || jobStage !== 'finalized'}
                             className="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 active:transform active:scale-95 font-semibold shadow-md shadow-blue-600/20 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 transition-all min-w-[200px]"
                         >
                             {generating ? (
