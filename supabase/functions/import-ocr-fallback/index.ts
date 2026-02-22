@@ -1241,6 +1241,11 @@ serve(async (req: Request) => {
                             lastPersistedBatch = stageB.last_persisted_batch_index;
                         }
                     }
+<<<<<<< HEAD
+=======
+                    // Fonte primária: stageB.total_batches gravado no início do executeStageB,
+                    // antes de qualquer timeout, a partir da contagem real de candidatos.
+>>>>>>> af2a94b3a65e778c51db177166eb5dfbc8772721
                     if (stageB && typeof stageB.total_batches === 'number' && stageB.total_batches > totalBatches) {
                         totalBatches = stageB.total_batches;
                     }
@@ -1248,8 +1253,16 @@ serve(async (req: Request) => {
             }
 
             if (totalBatches === 0) {
+<<<<<<< HEAD
                 totalBatches = Math.max(16, lastPersistedBatch + 2);
                 console.warn(`[FINALIZE-GUARD] total_batches ausente. Fallback=${totalBatches} (lastPersistedBatch=${lastPersistedBatch})`);
+=======
+                // Fallback seguro: jobs iniciados antes deste deploy não têm total_batches
+                // persistido. Usamos lastPersistedBatch + 2 como estimativa conservadora,
+                // com mínimo de 16 (≥307 candidatos / 20 = 15,35 → 16 batches).
+                totalBatches = Math.max(16, lastPersistedBatch + 2);
+                console.warn(`[FINALIZE-GUARD] total_batches not found in metadata. Using fallback=${totalBatches} (lastPersistedBatch=${lastPersistedBatch}). Job may be from before this deploy.`);
+>>>>>>> af2a94b3a65e778c51db177166eb5dfbc8772721
             }
 
             console.log(`[FINALIZE-GUARD] totalBatches=${totalBatches}, lastPersistedBatch=${lastPersistedBatch}`);
