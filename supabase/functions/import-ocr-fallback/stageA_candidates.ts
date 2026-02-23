@@ -622,23 +622,22 @@ export function generateCandidatesStageA(text: string, options: {
             const curr = candidates[m];
             const nxt = candidates[m + 1];
 
-            if (curr.kind === 'synthetic_line' && nxt.kind === 'synthetic_line') {
-                const codeC = curr.extracted_signals.code;
-                const codeN = nxt.extracted_signals.code;
+            const codeC = curr.extracted_signals?.code;
+            const codeN = nxt.extracted_signals?.code;
 
-                if (codeC && codeN && codeC === codeN) {
-                    // Merge nxt into curr
-                    curr.snippet += " " + nxt.snippet;
-                    curr.evidence += " || " + nxt.evidence;
-                    if (nxt.extracted_signals.description_fragment) {
-                        curr.extracted_signals.description_fragment = (curr.extracted_signals.description_fragment || "") + " " + nxt.extracted_signals.description_fragment;
-                    }
-                    if (curr.line_range && nxt.line_range) {
-                        curr.line_range[1] = Math.max(curr.line_range[1], nxt.line_range[1]);
-                    }
-                    candidates.splice(m + 1, 1);
-                    m--; // Re-checar o item atual com o novo sucessor
+            if (codeC && codeN && codeC === codeN) {
+                // Merge nxt into curr
+                curr.snippet += " " + nxt.snippet;
+                curr.evidence += " || " + nxt.evidence;
+                if (nxt.extracted_signals?.description_fragment) {
+                    if (!curr.extracted_signals) curr.extracted_signals = {};
+                    curr.extracted_signals.description_fragment = (curr.extracted_signals.description_fragment || "") + " " + nxt.extracted_signals.description_fragment;
                 }
+                if (curr.line_range && nxt.line_range) {
+                    curr.line_range[1] = Math.max(curr.line_range[1], nxt.line_range[1]);
+                }
+                candidates.splice(m + 1, 1);
+                m--; // Re-checar o item atual com o novo sucessor
             }
         }
     }
