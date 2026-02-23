@@ -1,8 +1,14 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@supabase/functions-js@^0.0.0-automated": "0.0.0-jsr-test.1",
+    "jsr:@supabase/supabase-js@2": "2.93.3",
     "npm:@eslint/js@^9.39.1": "9.39.2",
     "npm:@google/genai@*": "1.41.0",
+    "npm:@supabase/auth-js@2.93.3": "2.93.3",
+    "npm:@supabase/postgrest-js@2.93.3": "2.93.3",
+    "npm:@supabase/realtime-js@2.93.3": "2.93.3",
+    "npm:@supabase/storage-js@2.93.3": "2.93.3",
     "npm:@supabase/supabase-js@^2.90.1": "2.93.3",
     "npm:@types/file-saver@^2.0.7": "2.0.7",
     "npm:@types/node@^24.10.9": "24.10.9",
@@ -39,6 +45,21 @@
     "npm:uuid@13": "13.0.0",
     "npm:vite@^7.2.4": "7.3.1_@types+node@24.10.9_picomatch@4.0.3",
     "npm:xlsx@~0.18.5": "0.18.5"
+  },
+  "jsr": {
+    "@supabase/functions-js@0.0.0-jsr-test.1": {
+      "integrity": "b1b37924af1f0011b4753201e1585a37b030e996c6682492e02575eb27d902b2"
+    },
+    "@supabase/supabase-js@2.93.3": {
+      "integrity": "e41bffc124ef8345e4f417b07069563a97803af318473991e63d39b16f979cc1",
+      "dependencies": [
+        "jsr:@supabase/functions-js",
+        "npm:@supabase/auth-js",
+        "npm:@supabase/postgrest-js",
+        "npm:@supabase/realtime-js",
+        "npm:@supabase/storage-js"
+      ]
+    }
   },
   "npm": {
     "@alloc/quick-lru@5.2.0": {

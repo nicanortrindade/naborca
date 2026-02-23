@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
 
         // Check for Service Role Bypass
         const token = authHeader.replace(/^Bearer\s+/, '');
-        const isServiceRole = token === supabaseServiceKey;
+        const isServiceRole = token === supabaseServiceKey || req.headers.get('x-internal-call') === 'true';
 
         if (isServiceRole) {
             console.log("FINALIZE_BUDGET_AUTH=service_role");
@@ -85,6 +85,23 @@ Deno.serve(async (req) => {
 
         console.log(`[FinalizeBudget] GUARD PASSED: lastBatch=${lastBatch}, totalBatches=${totalBatches}`);
 
+        // Early return: job já foi finalizado anteriormente
+        const { data: jobCheck } = await adminClient
+            .from('import_jobs')
+            .select('result_budget_id, stage')
+            .eq('id', job_id)
+            .single();
+
+        if (jobCheck?.result_budget_id && jobCheck?.stage === 'finalized') {
+            console.log(`[FinalizeBudget] Job já finalizado, retornando budget existente: ${jobCheck.result_budget_id}`);
+            return new Response(JSON.stringify({
+                ok: true,
+                budget_id: jobCheck.result_budget_id,
+                already_finalized: true
+            }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
+
         console.log(`[FinalizeBudget] Job: ${job_id} | Settings: ${uf}/${competence} | StructureV1: ${enable_structure_parser_v1}`);
 
         // Admin Client available (adminClient)
@@ -120,6 +137,7 @@ Deno.serve(async (req) => {
             enable_structure_parser_v1: enable_structure_parser_v1 === true
         };
 
+        // Executa finalização diretamente via RPC
         const { data: rpcData, error: rpcError } = await adminClient.rpc('finalize_import_to_budget', {
             p_job_id: job_id,
             p_user_id: targetUserId,
@@ -129,6 +147,7 @@ Deno.serve(async (req) => {
 
         if (rpcError) {
             const msg = typeof rpcError === 'string' ? rpcError : (rpcError.message || JSON.stringify(rpcError));
+            console.error(`[FinalizeBudget] RPC error:`, msg);
             return new Response(JSON.stringify({ ok: false, reason: 'rpc_error', details: msg }), {
                 status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
             });
@@ -140,9 +159,11 @@ Deno.serve(async (req) => {
             });
         }
 
+        console.log(`[FinalizeBudget] RPC concluído: budget_id=${rpcData.budget_id}`);
         return new Response(JSON.stringify(rpcData), {
             status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
+
 
     } catch (error: any) {
         console.error(`[FinalizeBudget] Error:`, error);

@@ -1,0 +1,4 @@
+﻿530: await supabase.from('import_jobs').update({ status: 'done', current_step: technicalError ? 'waiting_user_technical_failure' : 'waiting_user_extraction_failed', last_error: errorMsg || reason, error_message: userMessage, stage: 'ocr_failed', stage_updated_at: new Date().toISOString(), updated_at: new Date().toISOString(), document_context: { ...(currentJobData?.document_context || {}), ocr_fallback_executed: true, debug_info: { ...createSafeDebugInfo(debugSummary), failure_reason: reason, failure_technical: errorMsg }, user_action: { required: true, reason, message: userMessage, items_count: 0 } } }).eq('id', jobId);
+599: await supabase.from('import_jobs').update({ status: 'processing', stage: 'ocr_queued', updated_at: new Date().toISOString() }).eq('id', job_id).neq('status', 'done');
+624: .update({ status: 'processing', stage: 'ocr_queued', updated_at: new Date().toISOString() })
+814: await safeMergeMetadata(supabase, file.id, meta, 'stage_b_atomic_update');

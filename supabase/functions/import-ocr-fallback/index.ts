@@ -877,7 +877,11 @@ serve(async (req: Request) => {
                                                             level: derivedLevel,
                                                             chunk_index: batchIndex,
                                                             composition_code: item.code || null,
+<<<<<<< HEAD
                                                             price_source: (item as any).price_source || null,
+=======
+                                                            price_source: item.price_source || null,
+>>>>>>> fde1ded (feat: add price_source extraction to LLM pipeline)
                                                             dedup_key: dedupKey,
                                                             item_path: item.item_path || null,                        // NOVO
                                                             source_candidate_id: item.evidence?.candidate_id || null  // NOVO
@@ -925,6 +929,12 @@ serve(async (req: Request) => {
                                                 }
                                             }
                                         }
+
+                                        // Atualiza heartbeat para evitar que o watchdog considere o job travado
+                                        await supabase
+                                            .from('import_jobs')
+                                            .update({ heartbeat_at: new Date().toISOString() })
+                                            .eq('id', job_id);
 
                                         // UPDATE CHECKPOINT
                                         await safeMergeMetadata(supabase, file.id, {

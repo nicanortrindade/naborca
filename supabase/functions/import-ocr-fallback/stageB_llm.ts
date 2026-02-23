@@ -145,7 +145,9 @@ EXTRACTION RULES:
     Set item_path from the numeric prefix if present, null otherwise.
     NEVER discard these as garbage.
     NEVER return description as null or empty for these items.
-9. **DEDUPLICATION — PARALLEL COLUMNS (MANDATORY)**:
+9. **PRICE SOURCE EXTRACTION (MANDATORY)**:
+   - price_source: identifique a fonte de preço do item. Procure por nomes como SINAPI, ORSE, SICRO, SBC, EMOP, SETOP, SEINFRA, IOPES, CPU, CDHU, AGESUL, AGETOP, Próprio. Retorne apenas o nome do banco sem data ou versão. Se não identificado, retorne null.
+10. **DEDUPLICATION — PARALLEL COLUMNS (MANDATORY)**:
    Some spreadsheets contain two parallel budget columns side by side (e.g. "Pacto Original"
    and "Nova Pactuação"). The OCR will capture the same item twice in sequence.
    Rules:
@@ -281,6 +283,11 @@ async function persistStageBMetaAtomic(
 
         // 3. Apply Patch via transformation
         patchFn(nextMetadata.stageB);
+
+        // 4. Build Signature (Auto-update if not present)
+        if (opts.buildSig) {
+            nextMetadata.stageB.build_sig = opts.buildSig;
+        }
 
         // 6. Atomic Update
         const { error: updateErr } = await supabase
@@ -858,11 +865,15 @@ export async function executeStageB(
 
     // 1. ATOMIC START MARKER — persists total_batches so finalization can read it
     // even when a timeout interrupts processing mid-way.
+    console.log(`[STAGE-B-EXEC] Total batches to process: ${totalBatchesCalculated}`);
     if (persistenceOpts) {
         await persistStageBMetaAtomic(persistenceOpts, (stageB) => {
             stageB.llm_sdk = "@google/genai";
             stageB.llm_started_at = stageB.llm_started_at || new Date().toISOString();
             stageB.llm_models_configured = MODEL_FALLBACKS;
+            // Persist total_batches so the finalization check can read it
+            // even when timeout interrupts processing mid-way.
+            // NEVER overwrite an existing value — a retry must keep the original count.
             stageB.total_batches = stageB.total_batches || totalBatchesCalculated;
             stageB.llm_model_attempts = stageB.llm_model_attempts || [];
             // Preserve existing debug.index_gate!
@@ -877,6 +888,7 @@ export async function executeStageB(
 
 
     for (let i = startIndex; i < candidates.length; i += BATCH_SIZE) {
+        const batchStartAt = Date.now();
         const batchCandidates = candidates.slice(i, i + BATCH_SIZE);
         const batchIndex = Math.floor(i / BATCH_SIZE);
 
@@ -895,36 +907,24 @@ export async function executeStageB(
         if (result.items.length > 0) {
             allItems.push(...result.items);
             allAccepted.push(...result.items);
-            stats.candidates_used += batchCandidates.length; // Approximate
+            stats.candidates_used += batchCandidates.length;
         }
 
         if (result.debug?.parse?.rejected_items) {
             allRejected.push(...result.debug.parse.rejected_items);
         }
 
-        // Capture Raw Output (First batch preference, or first valid)
         if (!rawOutputTruncatedGlobal && result.debug?.raw_output_truncated) {
             rawOutputTruncatedGlobal = result.debug.raw_output_truncated;
         }
 
-        // Capture Model Info (Keep latest valid or first)
         if (result.debug?.llm_model_actual) {
             lastDebugWithModelInfo = result.debug;
         }
 
         stats.batches_processed++;
 
-        // [STAGE-B-TIMING]
         const batchEndAt = Date.now();
-        // Assuming batchStartAt is defined somewhere, if not, this will be an error.
-        // For now, keeping it as is, as the instruction didn't touch this.
-        // If batchStartAt is not defined, it should be defined before the loop.
-        // Let's assume it's defined globally or within the scope.
-        // If it's meant to be per-batch, it should be inside the loop.
-        // Given the original code, it's likely `batchStartAt` was defined before the loop.
-        // If it's not, this will cause a runtime error.
-        // For now, I'll assume it's defined.
-        const batchStartAt = Date.now(); // Added this line to make it compile, assuming it was missing.
         console.log("[STAGE-B-TIMING]", {
             batchIndex,
             startedAt: new Date(batchStartAt).toISOString(),
@@ -939,16 +939,11 @@ export async function executeStageB(
                 await resumeOpts.onBatchResult({
                     batchIndex,
                     items: result.items,
-                    candidateCount: i + BATCH_SIZE, // Approx candidates processed so far
+                    candidateCount: i + BATCH_SIZE,
                     totalBatches: totalBatchesCalculated
                 });
             } catch (cbErr: any) {
                 console.error(`[STAGE-B] onBatchResult Callback Failed (Batch ${batchIndex}):`, cbErr);
-                // We do NOT stop execution, just log. Or should we throw?
-                // If persistence fails, maybe we should stop?
-                // User said "Garantir que ... os itens já processados ... sejam persistidos".
-                // If callback fails (DB fail), future batches won't be persisted either.
-                // But we proceed to try. 
             }
         }
     }

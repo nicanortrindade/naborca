@@ -1,0 +1,14 @@
+﻿34: const COMPLETENESS_MIN_VALID_ITEMS = 30;
+1217: const dbCount = finalCount || 0;
+1219: if (dbCount > 0) {
+1263: const allBatchesDone = lastPersistedBatch >= totalBatches - 1;
+1264: const isComplete = dbCount >= COMPLETENESS_MIN_VALID_ITEMS && allBatchesDone;
+1267: status: isComplete ? "done" : "waiting_user",
+1268: current_step: isComplete ? "done" : "waiting_user_partial",
+1269: stage: isComplete ? "ready_to_finalize" : "processing",
+1270: progress: isComplete ? 100 : Math.min(99, Math.round(((lastPersistedBatch + 1) / totalBatches) * 100)),
+1274: inserted_items_count: dbCount,
+1279: if (isComplete) {
+1289: items: dbCount,
+1290: allBatchesDone,
+1291: status: isComplete ? "done" : "waiting_user"

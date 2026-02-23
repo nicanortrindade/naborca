@@ -1,0 +1,2 @@
+﻿Deployed Functions on project cgebiryqfqheyazwtzzm: import-finalize-budget
+You can inspect your deployment in the Dashboard: https://supabase.com/dashboard/project/cgebiryqfqheyazwtzzm/functions
