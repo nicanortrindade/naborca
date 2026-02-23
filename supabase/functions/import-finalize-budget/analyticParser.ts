@@ -12,39 +12,22 @@ export interface AnalyzedComposition {
     }>;
 }
 
-/**
- * Known engineering units (longest-first for regex alternation).
- */
 const KNOWN_UNITS = [
     'MÊS', 'M2', 'M3', 'ML', 'KG', 'KM', 'UN', 'VB', 'CJ', 'SC', 'HA',
     'M²', 'M³', 'CH', 'CI', 'HP', 'TB', 'PR', 'GL', 'DM', 'JG',
-    'H', 'L', 'M', 'T',
+    'H', 'L', 'M', 'T', 'UNXMÊS'
 ] as const;
 
 const UNITS_ALT = KNOWN_UNITS.join('|');
 
-/** Known source/bank keywords */
 const BANKS = 'SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|EMOP|KENE|SBC|SETOP|CDHU|CPOS(?:\\/CDHU)?|COMP';
 
-/** Parse Brazilian-format number: "1.234,56" → 1234.56, "1,3200" → 1.32 */
 function parseNum(s: string | undefined): number {
     if (!s) return 0;
     const cleaned = s.replace(/\./g, '').replace(',', '.');
     return parseFloat(cleaned) || 0;
 }
 
-/**
- * Split glued OCR numbers into coefficient, price, and optional total.
- * 
- * In OCR-extracted engineering documents, numbers are concatenated without separators:
- *   "1,320000024,3732,17" → coef=1.3200000, price=24.37, total=32.17
- * 
- * Key insight: price/total always have 2 decimal digits. 
- * Coefficient has many (typically 7) decimal digits.
- * The first comma belongs to the coefficient. We use heuristic scoring
- * (prefer 7-digit coef decimals) to determine where the coefficient ends
- * and the price integer begins.
- */
 function splitGluedNumbers(s: string): { coef: number; price: number } | null {
     const commaPositions: number[] = [];
     for (let i = 0; i < s.length; i++) {
@@ -57,14 +40,11 @@ function splitGluedNumbers(s: string): { coef: number; price: number } | null {
     }
 
     if (commaPositions.length === 3) {
-        // 3 commas = coef + price + total
         const coefInt = s.substring(0, commaPositions[0]);
-        const seg1 = s.substring(commaPositions[0] + 1, commaPositions[1]); // coef_dec + price_int
-        const seg2 = s.substring(commaPositions[1] + 1, commaPositions[2]); // price_dec + total_int
-
+        const seg1 = s.substring(commaPositions[0] + 1, commaPositions[1]);
+        const seg2 = s.substring(commaPositions[1] + 1, commaPositions[2]);
         const priceDec = seg2.substring(0, 2);
 
-        // Determine price_int length by trying splits and scoring by coef_dec ≈ 7
         let bestCoefDec = '', bestPriceInt = '';
         let bestScore = Infinity;
         for (const piLen of [1, 2, 3, 4]) {
@@ -79,12 +59,11 @@ function splitGluedNumbers(s: string): { coef: number; price: number } | null {
                 bestPriceInt = priceInt;
             }
         }
-
+        if (!bestCoefDec) return null;
         const coef = parseNum(coefInt + ',' + bestCoefDec);
         const price = parseNum(bestPriceInt + ',' + priceDec);
         return { coef, price };
     } else if (commaPositions.length === 2) {
-        // 2 commas = coef + price (no total)
         const coefInt = s.substring(0, commaPositions[0]);
         const seg1 = s.substring(commaPositions[0] + 1, commaPositions[1]);
         const seg2 = s.substring(commaPositions[1] + 1);
@@ -114,257 +93,204 @@ function splitGluedNumbers(s: string): { coef: number; price: number } | null {
 }
 
 export class AnalyticReportParser {
-    /**
-     * Extrai composições de texto bruto OCR de relatórios analíticos.
-     *
-     * Lida com formatos onde campos ficam "grudados" sem espaços (OCR típico):
-     *   Header:  "CPU2526 PróprioLOCAÇÃO DE CONTAINER..."
-     *   Glued:   "88316,00SINAPISERVENTE COM ENCARGOS COMPLEMENTARESH1,320000024,3732,17"
-     *   Alpha:   "A.12.000.021099 CPOS/CDHUCONTAINER DEPÓSITO...869,79"
-     *   Spaced:  "3421 SINAPI CIMENTO PORTLAND KG 5,000 0,80"
-     */
     static parse(text: string): Record<string, AnalyzedComposition> {
         const compositions: Record<string, AnalyzedComposition> = {};
         if (!text) return compositions;
 
-        const lines = text.split('\n');
+        const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         let currentComp: AnalyzedComposition | null = null;
 
-        // ── Section markers ──────────────────────────────────────────────
-        const rxSectionComposicao = /^Composi[çc][ãa]o\s*Auxiliar/i;
-        const rxSectionInsumo = /^Insumo$/i;
+        let state: 'IDLE' | 'IN_COMPOSITION_HEADER' | 'IN_ITEM_HEADER' | 'IGNORE_UNTIL_MARKER' = 'IDLE';
         let currentSection: 'insumo' | 'composition' = 'insumo';
 
-        // ── Header patterns ─────────────────────────────────────────────
-        // H1: "CPU2526 PróprioLOCAÇÃO..." — bank prefix + code + space + description
-        // Captures the FULL prefix+code as group 1, then description as group 2
-        const rxHeaderPrefixed = /^((?:CPU|ORSE|SINAPI|SICRO3?|PROP|Próprio|EMOP|KENE|SBC|SETOP|CDHU|CPOS|COMP)\s*[A-Z0-9][\w.\-]*)\s+(.+)/i;
+        let headerBuffer: string[] = [];
+        let itemBuffer: string[] = [];
 
-        // H2: "COMPOSIÇÃO 93215 - CONCRETO ARMADO..."
-        const rxHeaderComposicao = /(?:COMPOSI[ÇC][ÃA]O|CÓDIGO)[:\s]+([0-9]{4,}[.\-0-9]*)\s+[-–]?\s*(.+)/i;
+        const categoryRegex = /(CANT|SEDI|REVES|FUND|ESTRU|ACAB|INST|MAT|EQUIP|SERV)\s*-\s*[A-ZÀÁÂÃÉÊÍÓÔÕÚÜÇ\s]+$/i;
+        const headerUnitNumsRegex = /^(UNXMÊS|M²|M³|M2|M3|ML|KG|UN|VB|H|L)\d/i;
 
-        // H3: "93215 SINAPI ARGAMASSA TRAÇO 1:3 M3" — numeric code + bank + description
-        const rxHeaderNumericWithSource = new RegExp(
-            `^([0-9]{4,}[.\\-0-9]*)\\s+(?:${BANKS})\\b\\s*(.+)`, 'i'
-        );
+        for (let line of lines) {
+            const isComposicao = line.toLowerCase() === 'composição';
+            const isComposicaoAux = line.toLowerCase() === 'composição auxiliar' || line.toLowerCase() === 'composição auxiliar ref';
+            const isInsumo = line.toLowerCase() === 'insumo';
 
-        // ── Item patterns ───────────────────────────────────────────────
-
-        // ITEM-GLUED: Fields concatenated without spaces (OCR artifact).
-        // "88316,00SINAPISERVENTE COM ENCARGOS COMPLEMENTARESH1,320000024,3732,17"
-        // After matching code+bank, we split desc+unit+numbers using the unit anchor
-        // and the splitGluedNumbers function for the numeric tail.
-        const rxItemGluedStart = new RegExp(
-            `^(\\d{3,})` +                                          // code
-            `[,.]?(\\d{2})?` +                                      // optional decimal part
-            `(${BANKS})` +                                           // bank
-            `(.+)$`,                                                 // rest (desc + unit + numbers)
-            'i'
-        );
-
-        // Split the "rest" part: description + UNIT + glued_numbers
-        const rxGluedDescUnitNums = new RegExp(
-            `^(.+?)(${UNITS_ALT})((?:\\d+[,.]\\d+)+)\\s*$`, 'i'
-        );
-
-        // ITEM-SPACED: Clean spaced format
-        const rxItemSpaced = new RegExp(
-            `^(?:(?:${BANKS})\\s+)?(\\d{3,}[.\\-\\d]*)\\s+` +     // optional bank prefix + code
-            `(.+?)\\s+` +                                            // description
-            `(${UNITS_ALT})\\s+` +                                   // unit
-            `(\\d+[,.]\\d+)\\s+` +                                   // coefficient
-            `(\\d+[,.]\\d+)` +                                       // price
-            `(?:\\s+(\\d+[,.]\\d+))?` +                               // total (optional)
-            `\\s*$`,
-            'i'
-        );
-
-        // ITEM-ALPHA: Alphanumeric code with dots (CPOS/CDHU style)
-        const rxItemAlpha = new RegExp(
-            `^([A-Z][\\d.]+[\\d])\\s*(?:${BANKS})\\s*(.+?)\\s*(\\d+[,.]\\d+)\\s*$`, 'i'
-        );
-
-        // ── Ignore patterns ─────────────────────────────────────────────
-        const rxIgnore = /^(?:DESCRI[ÇC]|COEFICIENTE|PRE[ÇC]O\s*UNIT|CUSTO\s*TOTAL|[-=]{3,})/i;
-
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line || line.length < 3) continue;
-
-            // Check section markers
-            if (rxSectionComposicao.test(line)) {
-                currentSection = 'composition';
-                continue;
-            }
-            if (rxSectionInsumo.test(line)) {
-                currentSection = 'insumo';
-                continue;
-            }
-
-            // Skip table headers
-            if (rxIgnore.test(line)) continue;
-
-            // ── Strategy: If inside a composition, try item patterns FIRST ──
-            if (currentComp) {
-                let matched = false;
-
-                // Try ITEM-GLUED
-                const mGlued = line.match(rxItemGluedStart);
-                if (mGlued) {
-                    const restPart = mGlued[4];
-                    const mDescUnit = restPart.match(rxGluedDescUnitNums);
-                    if (mDescUnit) {
-                        const nums = splitGluedNumbers(mDescUnit[3]);
-                        if (nums) {
-                            currentComp.items.push({
-                                code: mGlued[1],
-                                description: mDescUnit[1].trim(),
-                                type: currentSection,
-                                unit: mDescUnit[2].toUpperCase(),
-                                coefficient: nums.coef,
-                                price: nums.price
-                            });
-                            matched = true;
-                        }
-                    }
-                }
-
-                // Try ITEM-SPACED
-                if (!matched) {
-                    const mSpaced = line.match(rxItemSpaced);
-                    if (mSpaced) {
-                        // Clean description: remove leading bank name if present
-                        const spacedDesc = mSpaced[2].trim().replace(
-                            /^(?:SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|EMOP|KENE|SBC|SETOP|CDHU|CPOS|COMP)\s+/i, ''
-                        );
-                        currentComp.items.push({
-                            code: mSpaced[1],
-                            description: spacedDesc,
-                            type: currentSection,
-                            unit: mSpaced[3].toUpperCase(),
-                            coefficient: parseNum(mSpaced[4]),
-                            price: parseNum(mSpaced[5])
-                        });
-                        matched = true;
-                    }
-                }
-
-                // Try ITEM-ALPHA (CPOS/CDHU style)
-                if (!matched) {
-                    const mAlpha = line.match(rxItemAlpha);
-                    if (mAlpha) {
-                        currentComp.items.push({
-                            code: mAlpha[1],
-                            description: mAlpha[2].trim(),
-                            type: currentSection,
-                            unit: 'UN',
-                            coefficient: 1,
-                            price: parseNum(mAlpha[3])
-                        });
-                        matched = true;
-                    }
-                }
-
-                if (matched) continue;
-                // If no item matched, fall through to header detection below.
-            }
-
-            // ── Try to detect composition header ─────────────────────────
-            let headerCode = '';
-            let headerDesc = '';
-            let headerFound = false;
-
-            // H2: "COMPOSIÇÃO 93215 - ..."
-            const mH2 = line.match(rxHeaderComposicao);
-            if (mH2) {
-                headerCode = mH2[1];
-                headerDesc = mH2[2];
-                headerFound = true;
-            }
-
-            // H1: "CPU2526 PróprioLOCAÇÃO..." — captures full prefix+code
-            if (!headerFound) {
-                const mH1 = line.match(rxHeaderPrefixed);
-                if (mH1) {
-                    // Extract numeric part from prefix+code (e.g., "CPU2526" → "2526", "KENE001" → "KENE001")
-                    const fullCode = mH1[1].replace(/\s+/g, '');
-                    // Remove known bank prefix to get clean code
-                    const codeOnly = fullCode.replace(/^(?:CPU|ORSE|SINAPI|SICRO3?|PROP|Próprio|EMOP|KENE|SBC|SETOP|CDHU|CPOS|COMP)/i, '');
-                    // If removing prefix leaves only digits, use just the digits.
-                    // If code is alphanumeric (like KENE001), keep full code.
-                    const bankPrefix = fullCode.substring(0, fullCode.length - codeOnly.length);
-                    // For banks that are ALSO part of the code (KENE, SBC), keep them
-                    const alphaBanks = /^(KENE|SBC|SETOP)/i;
-                    headerCode = alphaBanks.test(bankPrefix) ? fullCode : codeOnly;
-                    // Clean description: remove leading bank name glued to description
-                    // e.g., "PróprioLOCAÇÃO DE CONTAINER..." → "LOCAÇÃO DE CONTAINER..."
-                    headerDesc = mH1[2].replace(
-                        /^(?:SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|EMOP|KENE|SBC|SETOP|CDHU|CPOS|COMP)\s*/i, ''
-                    );
-                    headerFound = true;
-                }
-            }
-
-            // H3: "93215 SINAPI ARGAMASSA..." — only when NOT inside a composition
-            // (inside a composition, spaced items would have been caught above)
-            if (!headerFound) {
-                const mH3 = line.match(rxHeaderNumericWithSource);
-                if (mH3) {
-                    // If inside a composition and no item pattern matched, this could be:
-                    // a) A new composition header
-                    // b) An item with unusual format
-                    // Heuristic: if it has UNIT+NUMBERS at end, it's an item (skip).
-                    // Otherwise, it's a header.
-                    if (currentComp) {
-                        const hasItemSuffix = new RegExp(`(${UNITS_ALT})\\s+\\d+[,.]\\d+\\s+\\d+[,.]\\d+`, 'i').test(line);
-                        if (!hasItemSuffix) {
-                            headerCode = mH3[1];
-                            headerDesc = mH3[2];
-                            headerFound = true;
-                        }
-                    } else {
-                        headerCode = mH3[1];
-                        headerDesc = mH3[2];
-                        headerFound = true;
-                    }
-                }
-            }
-
-            if (headerFound && headerCode) {
-                // Save previous composition if it has items
-                if (currentComp && currentComp.items.length > 0) {
+            if (isComposicao) {
+                if (currentComp && currentComp.code) {
                     compositions[currentComp.code] = currentComp;
                 }
-
-                const cleanCode = headerCode.replace(/[^A-Za-z0-9.\-]/g, '');
-
-                // Extract unit from end of description
-                let unit = 'UN';
-                const unitMatch = headerDesc.match(new RegExp(`\\s(${UNITS_ALT})\\s*$`, 'i'));
-                if (unitMatch) {
-                    unit = unitMatch[1].toUpperCase();
-                }
-
-                currentComp = {
-                    code: cleanCode,
-                    description: headerDesc.trim(),
-                    unit,
-                    items: []
-                };
-                currentSection = 'insumo'; // Reset for new composition
+                state = 'IN_COMPOSITION_HEADER';
+                headerBuffer = [];
+                currentComp = null;
                 continue;
+            }
+
+            if (isComposicaoAux) {
+                state = 'IN_ITEM_HEADER';
+                currentSection = 'composition';
+                itemBuffer = [];
+                continue;
+            }
+
+            if (isInsumo) {
+                state = 'IN_ITEM_HEADER';
+                currentSection = 'insumo';
+                itemBuffer = [];
+                continue;
+            }
+
+            if (state === 'IGNORE_UNTIL_MARKER') {
+                continue;
+            }
+
+            if (line.match(/^Observação/i)) {
+                state = 'IGNORE_UNTIL_MARKER';
+                continue;
+            }
+
+            if (categoryRegex.test(line)) {
+                line = line.replace(categoryRegex, '').trim();
+                if (!line) continue;
+            }
+
+            const lowerLine = line.toLowerCase();
+            if (lowerLine === 'material' || lowerLine === 'materialunxmês') {
+                continue;
+            }
+
+            if (lowerLine.startsWith('mo sem ls') || lowerLine.startsWith('valor do bdi')) {
+                continue;
+            }
+
+            if (state === 'IN_COMPOSITION_HEADER') {
+                if (headerUnitNumsRegex.test(line)) {
+                    const match = line.match(/^(UNXMÊS|M²|M³|M2|M3|ML|KG|UN|VB|H|L)(\d.*)$/i);
+                    let unit = 'UN';
+                    if (match) {
+                        unit = match[1].toUpperCase();
+                    }
+
+                    const fullDesc = headerBuffer.join(' ');
+                    const altMatch = fullDesc.match(new RegExp(`^([A-Z0-9.\\-,/]+?)(?:\\s*-?\\s*)?(?:(${BANKS}))\\s*(.*)$`, 'i'));
+
+                    let code = 'UNKNOWN';
+                    let desc = fullDesc;
+
+                    if (altMatch) {
+                        code = altMatch[1];
+                        desc = altMatch[3];
+                    } else {
+                        const spaceIdx = fullDesc.indexOf(' ');
+                        if (spaceIdx !== -1) {
+                            code = fullDesc.substring(0, spaceIdx);
+                            desc = fullDesc.substring(spaceIdx + 1).replace(new RegExp(`^(?:${BANKS})\\s*`, 'i'), '');
+                        }
+                    }
+
+                    currentComp = {
+                        code: code.trim().replace(/,00$/, ''),
+                        description: desc.trim(),
+                        unit: unit,
+                        items: []
+                    };
+                    state = 'IDLE';
+                } else {
+                    headerBuffer.push(line);
+                }
+            } else if (state === 'IN_ITEM_HEADER') {
+                const numsMatch = line.match(/^(.*?)(\d+[,]\d+(?:[,.]\d+)*)$/);
+
+                if (numsMatch && /\d+[,]\d+/.test(numsMatch[2]) && (numsMatch[2].match(/,/g) || []).length >= 1) {
+                    const prefixString = numsMatch[1];
+                    const numString = numsMatch[2];
+
+                    if (prefixString) {
+                        itemBuffer.push(prefixString);
+                    }
+
+                    const fullText = itemBuffer.join(' ');
+                    let code = '';
+                    let desc = fullText;
+
+                    const mCodeBank = fullText.match(new RegExp(`^([A-Z0-9.\\-,/]+?)(?:\\s*-?\\s*)?(?:(${BANKS}))\\s*(.*)$`, 'i'));
+                    if (mCodeBank) {
+                        code = mCodeBank[1];
+                        desc = mCodeBank[3];
+                    } else {
+                        const spaceIdx = fullText.indexOf(' ');
+                        if (spaceIdx !== -1) {
+                            code = fullText.substring(0, spaceIdx);
+                            desc = fullText.substring(spaceIdx + 1).replace(new RegExp(`^(?:${BANKS})\\s*`, 'i'), '');
+                        } else {
+                            code = fullText;
+                        }
+                    }
+
+                    let unit = 'UN';
+                    const unitMatch = desc.match(new RegExp(`(?:Material)?(${UNITS_ALT})$`, 'i'));
+                    if (unitMatch) {
+                        unit = unitMatch[1].toUpperCase();
+                        desc = desc.substring(0, desc.length - unitMatch[0].length).trim();
+                    } else if (prefixString) {
+                        const preUnitMatch = prefixString.match(new RegExp(`(?:Material)?(${UNITS_ALT})$`, 'i'));
+                        if (preUnitMatch) {
+                            unit = preUnitMatch[1].toUpperCase();
+                        }
+                    }
+
+                    const parsedNums = splitGluedNumbers(numString);
+                    const coef = parsedNums ? parsedNums.coef : 1;
+                    const price = parsedNums ? parsedNums.price : 0;
+
+                    if (currentComp) {
+                        currentComp.items.push({
+                            code: code.trim().replace(/,00$/, ''),
+                            description: desc.trim(),
+                            type: currentSection,
+                            unit: unit.toUpperCase(),
+                            coefficient: coef,
+                            price: price
+                        });
+                    }
+
+                    state = 'IDLE';
+                } else {
+                    itemBuffer.push(line);
+                }
             }
         }
 
-        // Save the last composition
-        if (currentComp && currentComp.items.length > 0) {
+        if (currentComp && currentComp.code) {
             compositions[currentComp.code] = currentComp;
         }
 
-        // Logging
         const totalItems = Object.values(compositions).reduce((sum, c) => sum + c.items.length, 0);
         console.log(`[AnalyticParser] Parsed ${Object.keys(compositions).length} compositions with ${totalItems} total items.`);
 
         return compositions;
     }
+}
+
+if (import.meta.main) {
+    const text = `Composição
+CPU2526 PróprioLOCAÇÃO DE CONTAINER TIPO DEPÓSITO - ÁREA MÍNIMA DE 13,80 M2CANT - CANTEIRO DE 
+OBRAS
+UNXMÊS1,0000000969,30
+Composição Auxiliar
+88316,00SINAPISERVENTE COM ENCARGOS COMPLEMENTARESSEDI - SERVIÇOS 
+DIVERSOS
+H1,320000024,3732,17
+Composição Auxiliar
+88247,00SINAPIAUXILIAR DE ELETRICISTA COM ENCARGOS COMPLEMENTARESSEDI - SERVIÇOS 
+DIVERSOS
+H1,320000025,5633,74
+Insumo
+A.12.000.021099 CPOS/CDHUCONTAINER DEPÓSITO, MÓDULO METÁLICO EM AÇO GALVANIZADO DE 6,0X2,3X2,5M
+Materialunxmês1,0000000869,79869,79
+MO sem LS =>LS =>0,00MO com LS =>969,30
+Valor do BDI =>0,25Valor com BDI =>1.192,08
+Observação
+Composição de Referência: 02.02.150 CPOS/CDHU`;
+
+    const res = AnalyticReportParser.parse(text);
+    console.log(JSON.stringify(res, null, 2));
 }
