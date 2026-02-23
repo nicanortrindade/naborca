@@ -114,14 +114,13 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
 
                 // IMPORTANT: Immediate Navigation if budget ID is present (Complete Success)
                 if (result.resultBudgetId) {
-                    clearImportSession(); // Job is done
-                    // Short delay purely for UX "Concluído" message visibility
+                    // Já tem budget — vai direto para o orçamento
+                    clearImportSession();
                     await new Promise(r => setTimeout(r, 600));
                     if (!controller.signal.aborted) {
-                        // DEFENSIVE: Ensure we never navigate to an absolute URL accidentally
-                        navigate(toRelativePath(`/budgets/${result.resultBudgetId}`));
+                        navigate(toRelativePath(`/importacoes/${jobId}`));
                         onClose();
-                        return; // Stop execution
+                        return;
                     }
                 } else {
                     // Aguarda result_budget_id ser preenchido antes de redirecionar
@@ -141,9 +140,14 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                             .select('result_budget_id, stage')
                             .eq('id', jobId)
                             .single();
-                        if (jobData?.result_budget_id && jobData?.stage === 'finalized') {
-                            navigate(toRelativePath(`/budgets/${jobData.result_budget_id}`));
-                            onClose();
+                        if (jobData?.stage === 'finalized') {
+                            // Job finalizado — vai para revisão para configurar BDI/encargos antes de gerar
+                            clearImportSession();
+                            await new Promise(r => setTimeout(r, 600));
+                            if (!controller.signal.aborted) {
+                                navigate(toRelativePath(`/importacoes/${jobId}`));
+                                onClose();
+                            }
                             return;
                         }
                         await new Promise(r => setTimeout(r, 5000));
