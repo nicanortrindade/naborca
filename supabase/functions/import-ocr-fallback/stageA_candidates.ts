@@ -155,6 +155,7 @@ const REGEX_UNIT = /\b(UN|und|m²|m2|m³|m3|kg|h|vb|m)\b/i;
 const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\d{1,4})?\b/g; // 1.234,56 or 1234.56
 // Guard: detecta linhas que são títulos de seção e NÃO devem ser consumidas pelo S0
 const REGEX_IS_SECTION_TITLE = /^(\d{1,2}(?:\.\d{1,2}){0,2})\s+([AÀÁÂÃBCDEÉÊFGHIÍJKLMNOÓÔÕPQRSTUÚVWXYZ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$|^([A-Z]{1,3})\s*[-–]\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
+const REGEX_BANKS_HEADER = /(SINAPI|ORSE|SICRO|SBC|EMOP|SETOP|SEINFRA|IOPES|CPU|CDHU|AGESUL|AGETOP|Próprio|SICRO3|GOINFRA)(?:\s*[-–]\s*(?:SINAPI|ORSE|SICRO|SBC|EMOP|SETOP|SEINFRA|IOPES|CPU|CDHU|AGESUL|AGETOP|Próprio|SICRO3|GOINFRA)){2,}/i;
 
 function extractNumbers(text: string): number[] {
     const matches = text.match(REGEX_MONEY_OR_QTY) || [];
@@ -244,6 +245,7 @@ export function generateCandidatesStageA(text: string, options: {
         for (let si = 0; si < limit - 2; si++) {
             if (candidates.length >= caps.max_candidates) break;
             const sLine = lines[si].trim();
+            if (REGEX_BANKS_HEADER.test(sLine)) continue;
 
             // ── S0b: FULL collapse — todos os campos numa única linha ──────────────
             const mFull = sLine.match(REGEX_S0B_FULL);
@@ -372,6 +374,7 @@ export function generateCandidatesStageA(text: string, options: {
             if (line.length < 5) continue;
             if (/^(pag|pág|data|hora|emitido)/i.test(line)) continue;
             if (/^[_\-=.]{3,}$/.test(line)) continue;
+            if (REGEX_BANKS_HEADER.test(line)) continue;
 
             // Resolve a seção ativa usando o mapa pré-calculado
             const lastSectionPath = resolveNearestSection(i);

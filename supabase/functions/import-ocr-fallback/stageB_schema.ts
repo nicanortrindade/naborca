@@ -31,7 +31,6 @@ export const StageBItemSchema = z.object({
     quantity: z.string().nullable().optional(),
     unit_price: z.string().nullable().optional(),
     total_price: z.string().nullable().optional(),
-    price_source: z.string().nullable().optional(),
     item_path: z.string().nullable().optional(),
     raw_numbers: z.array(z.string()).default([]),
     evidence: StageBEvidenceSchema,
