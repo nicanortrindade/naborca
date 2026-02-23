@@ -1071,19 +1071,31 @@ serve(async (req: Request) => {
                             fileDebug.db_persisted = dbPersistedCount;
 
                             // 5. UPDATE EXTRACTION STATUS
-                            if (dbPersistedCount > 0) {
-                                await updateImportFileExtractionState(supabase, file.id, {
-                                    extraction_status: 'done',
-                                    extraction_items_inserted: dbPersistedCount,
-                                    extracted_completed_at: new Date().toISOString()
-                                }, 'stage_b_success');
+                            const startBatchIndex = typeof lastBatchIndex === 'number' ? lastBatchIndex + 1 : 0;
+                            const allBatchesDone = stageBResult.stats.batches_processed + startBatchIndex >= (stageBResult.total_batches || 1);
+
+                            if (allBatchesDone) {
+                                if (dbPersistedCount > 0) {
+                                    await updateImportFileExtractionState(supabase, file.id, {
+                                        extraction_status: 'done',
+                                        extraction_items_inserted: dbPersistedCount,
+                                        extracted_completed_at: new Date().toISOString()
+                                    }, 'stage_b_success');
+                                } else {
+                                    await updateImportFileExtractionState(supabase, file.id, {
+                                        extraction_status: 'done',
+                                        extraction_items_inserted: 0,
+                                        extraction_reason: 'stage_b_zero_items',
+                                        extracted_completed_at: new Date().toISOString()
+                                    }, 'stage_b_zero');
+                                }
                             } else {
                                 await updateImportFileExtractionState(supabase, file.id, {
-                                    extraction_status: 'done',
-                                    extraction_items_inserted: 0,
-                                    extraction_reason: 'stage_b_zero_items',
-                                    extracted_completed_at: new Date().toISOString()
-                                }, 'stage_b_zero');
+                                    extraction_status: 'processing',
+                                    extraction_items_inserted: dbPersistedCount
+                                }, 'stage_b_partial');
+                                // Retorna 'continued' para o ocr-worker re-disparar
+                                return jsonResponse({ status: 'continued', batches_done: stageBResult.stats.batches_processed });
                             }
 
                         } else {
