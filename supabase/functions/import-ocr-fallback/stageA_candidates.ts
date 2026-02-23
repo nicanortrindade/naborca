@@ -195,6 +195,19 @@ export function generateCandidatesStageA(text: string, options: {
     };
 
     const candidates: StageACandidate[] = [];
+    const _originalPush = candidates.push.bind(candidates);
+    candidates.push = function (...items: StageACandidate[]) {
+        for (const item of items) {
+            const desc = item.extracted_signals?.description_fragment || '';
+            const snippet = item.snippet || '';
+            // Última linha de defesa: descarta candidato se ele casar com o padrão de cabeçalho de múltiplos bancos
+            if (REGEX_BANKS_HEADER.test(desc) || REGEX_BANKS_HEADER.test(snippet)) {
+                continue;
+            }
+            _originalPush(item);
+        }
+        return this.length;
+    };
     const warnings: string[] = [];
 
     const limit = Math.min(lines.length, caps.max_lines_scanned);
