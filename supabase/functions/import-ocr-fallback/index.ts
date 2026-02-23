@@ -1071,30 +1071,19 @@ serve(async (req: Request) => {
                             fileDebug.db_persisted = dbPersistedCount;
 
                             // 5. UPDATE EXTRACTION STATUS
-                            const lastProcessedIdx = stageBResult.batches?.[stageBResult.batches.length - 1]?.batch_index ?? (typeof lastBatchIndex === 'number' ? lastBatchIndex : -1);
-                            const isFileDone = lastProcessedIdx >= ((stageBResult.total_batches || 1) - 1);
-
-                            if (isFileDone) {
-                                if (dbPersistedCount > 0) {
-                                    await updateImportFileExtractionState(supabase, file.id, {
-                                        extraction_status: 'done',
-                                        extraction_items_inserted: dbPersistedCount,
-                                        extracted_completed_at: new Date().toISOString()
-                                    }, 'stage_b_success');
-                                } else {
-                                    // If 0 items but success, mark as done with zero items reason
-                                    await updateImportFileExtractionState(supabase, file.id, {
-                                        extraction_status: 'done',
-                                        extraction_items_inserted: 0,
-                                        extraction_reason: 'stage_b_zero_items',
-                                        extracted_completed_at: new Date().toISOString()
-                                    }, 'stage_b_zero');
-                                }
-                            } else {
-                                // Apenas atualiza heartbeat para continuar processando no próximo chunk
+                            if (dbPersistedCount > 0) {
                                 await updateImportFileExtractionState(supabase, file.id, {
-                                    extraction_status: 'processing',
-                                }, 'stage_b_partial');
+                                    extraction_status: 'done',
+                                    extraction_items_inserted: dbPersistedCount,
+                                    extracted_completed_at: new Date().toISOString()
+                                }, 'stage_b_success');
+                            } else {
+                                await updateImportFileExtractionState(supabase, file.id, {
+                                    extraction_status: 'done',
+                                    extraction_items_inserted: 0,
+                                    extraction_reason: 'stage_b_zero_items',
+                                    extracted_completed_at: new Date().toISOString()
+                                }, 'stage_b_zero');
                             }
 
                         } else {
