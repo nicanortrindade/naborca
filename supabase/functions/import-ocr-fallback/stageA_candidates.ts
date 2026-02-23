@@ -294,7 +294,7 @@ export function generateCandidatesStageA(text: string, options: {
                     extracted_signals: {
                         item_path: pathPart,
                         code: rawCode || undefined,
-                        description_fragment: descPart.trim().substring(0, 120),
+                        description_fragment: descPart.trim().substring(0, 400),
                         unit: unitPart.trim()
                     },
                     raw_numbers: [],
@@ -366,7 +366,7 @@ export function generateCandidatesStageA(text: string, options: {
                 extracted_signals: {
                     item_path: pathPart,
                     code: `${bankPart}${rawCode}`,
-                    description_fragment: descFragments.join(' ').substring(0, 120)
+                    description_fragment: descFragments.join(' ').substring(0, 400)
                 },
                 raw_numbers: [],
                 warnings: ['multiline_desc_merge'],
@@ -572,7 +572,7 @@ export function generateCandidatesStageA(text: string, options: {
                         context_before: lines.slice(Math.max(0, i - 2), i).join('\n'),
                         context_after: lines.slice(scanStart, Math.min(limit, scanStart + 3)).join('\n'),
                         extracted_signals: {
-                            description_fragment: mergedDescription.substring(0, 100),
+                            description_fragment: mergedDescription.substring(0, 400),
                             item_path: lastSectionPath
                         },
                         raw_numbers: [],
@@ -605,7 +605,7 @@ export function generateCandidatesStageA(text: string, options: {
                     context_before: lines.slice(Math.max(0, i - 2), i).join('\n'),
                     context_after: lines.slice(i + 1, Math.min(limit, i + 3)).join('\n'),
                     extracted_signals: {
-                        description_fragment: line.substring(0, 50) + "...",
+                        description_fragment: line.substring(0, 400) + "...",
                         item_path: lastSectionPath
                     },
                     raw_numbers: nums.map(v => ({ value: v, text: String(v), lineNo: originalLineNo })),
