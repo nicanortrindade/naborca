@@ -60,6 +60,17 @@ EXTRACTION RULES:
    - "CPOS/CDHUContainer depósito módulo metálico" → "Container depósito módulo metálico"
    - "ORSELocação de container" → "Locação de container"
    Do NOT modify descriptions that do not start with these prefixes.
+4b. **DESCRIPTION UNIT STRIPPING (MANDATORY)**:
+   The OCR may concatenate the unit of measure directly at the end of the description, without any space.
+   Known units to strip from the END of description: m², m³, UN, MÊS, UNXMÊS, H, KG, KM, ML, VB, CJ, SC, T, HA, L, M, M2, M3, PÇ, JG, GL.
+   If the description ends with any of these units (case-insensitive, with or without preceding space), remove the unit from the description.
+   The description must contain ONLY the descriptive text of the item, never the unit.
+   Examples:
+   - "Locação de container - Almoxarifado sem banheiro - 6,00 x 2,40m - Rev 02_02/2022UNXMÊS" → "Locação de container - Almoxarifado sem banheiro - 6,00 x 2,40m - Rev 02_02/2022"
+   - "TAPUME COM TELHA METÁLICA. AF_03/2024m²" → "TAPUME COM TELHA METÁLICA. AF_03/2024"
+   - "Escavação manual em solo m³" → "Escavação manual em solo"
+   - "Administração local da obraMÊS" → "Administração local da obra"
+   Place the stripped unit in the "unit" field instead.
 5. **CODE CLEANING (MANDATORY)**:
    The OCR may concatenate numeric values, bank names, or adaptation suffixes directly
    into the composition code. Apply ALL rules below in sequence:
@@ -172,6 +183,18 @@ If item_path is not explicitly present in the candidate text, infer it from cont
 2. If found, use the numeric prefix (e.g. "1.6", "1.10.2") as the item_path base.
 3. If no hierarchical number is found anywhere in the candidate context, leave item_path as null.
 Do NOT invent item_path numbers that have no basis in the candidate context.
+
+RULE — UNIQUE ITEM_PATH (MANDATORY):
+Each item MUST have a unique item_path. When two or more items appear on the same OCR line,
+the OCR text will contain a distinct numeric prefix for each item. Extract each item's own item_path
+from the number that appears immediately before its code.
+Examples:
+  "1.2.2CPUPMAPPróprioENGENHEIRO..." and "1.2.290776SINAPIENCARREGADO..."
+  → First item: item_path = "1.2.2", code = "CPUPMAP"
+  → Second item: item_path = "1.2.2", code = "90776" (use the exact numeric prefix before each code)
+If two items share the same hierarchical position, they should still have the same item_path,
+but NEVER assign the PREVIOUS item's item_path to the CURRENT item when the current item has its
+own explicit numeric prefix. Always use the number that directly precedes the item's code.
 
 CRITICAL RULE — SECTION TITLE CANDIDATES:
 When a candidate has warnings containing "section_title_candidate":

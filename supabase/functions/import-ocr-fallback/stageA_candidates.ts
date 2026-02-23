@@ -157,6 +157,15 @@ const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\
 const REGEX_IS_SECTION_TITLE = /^(\d{1,2}(?:\.\d{1,2}){0,2})\s+([AÀÁÂÃBCDEÉÊFGHIÍJKLMNOÓÔÕPQRSTUÚVWXYZ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$|^([A-Z]{1,3})\s*[-–]\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
 const REGEX_BANKS_HEADER = /(SINAPI|ORSE|SICRO|SBC|EMOP|SETOP|SEINFRA|IOPES|CPU|CDHU|AGESUL|AGETOP|Próprio|SICRO3|GOINFRA)(?:\s*[-–]\s*(?:SINAPI|ORSE|SICRO|SBC|EMOP|SETOP|SEINFRA|IOPES|CPU|CDHU|AGESUL|AGETOP|Próprio|SICRO3|GOINFRA)){2,}/i;
 
+// Guard: detecta cabeçalho de projeto com data DD/MM/YYYY + percentuais colados
+// Ex: "Centro de Atenção Psicossocial - Portes 1 e 2 - Área Construída: 564,56m²25,00%71,46%07/10/2025"
+const REGEX_PROJECT_TITLE_WITH_DATE_PCT = /\d{2}\/\d{2}\/\d{4}.*%|%.*\d{2}\/\d{2}\/\d{4}/;
+
+// Guard: detecta totais de seção — dígito(s) colado(s) em texto maiúsculo seguido de número sem separador de item_path
+// Ex: "1SERVIÇOS PRELIMINARES E INDIRETOS185.303,28"
+// Padrão: começa com 1-2 dígitos (sem ponto), seguidos de texto maiúsculo (5+ chars), terminando com números colados
+const REGEX_SECTION_TOTAL = /^\d{1,2}[A-ZÀÁÂÃÉÊÍÓÔÕÚÜÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÜÇ ]{4,}\d/;
+
 function extractNumbers(text: string): number[] {
     const matches = text.match(REGEX_MONEY_OR_QTY) || [];
     return matches.map(m => {
@@ -202,6 +211,14 @@ export function generateCandidatesStageA(text: string, options: {
             const snippet = item.snippet || '';
             // Última linha de defesa: descarta candidato se ele casar com o padrão de cabeçalho de múltiplos bancos
             if (REGEX_BANKS_HEADER.test(desc) || REGEX_BANKS_HEADER.test(snippet)) {
+                continue;
+            }
+            // Guard: descarta cabeçalhos de projeto com data+percentual colados
+            if (REGEX_PROJECT_TITLE_WITH_DATE_PCT.test(snippet) || REGEX_PROJECT_TITLE_WITH_DATE_PCT.test(desc)) {
+                continue;
+            }
+            // Guard: descarta totais de seção (dígito colado em texto maiúsculo + número)
+            if (REGEX_SECTION_TOTAL.test(snippet)) {
                 continue;
             }
             _originalPush(item);
@@ -390,6 +407,14 @@ export function generateCandidatesStageA(text: string, options: {
             if (/^(pag|pág|data|hora|emitido)/i.test(line)) continue;
             if (/^[_\-=.]{3,}$/.test(line)) continue;
             if (REGEX_BANKS_HEADER.test(line)) continue;
+
+            // FILTER: Project title headers with date+percentage glued
+            // Ex: "Centro de Atenção Psicossocial...564,56m²25,00%71,46%07/10/2025"
+            if (REGEX_PROJECT_TITLE_WITH_DATE_PCT.test(line)) continue;
+
+            // FILTER: Section total lines — single digit glued to uppercase text + trailing number
+            // Ex: "1SERVIÇOS PRELIMINARES E INDIRETOS185.303,28"
+            if (REGEX_SECTION_TOTAL.test(line)) continue;
 
             // FILTER: Bank header lines (e.g. "SINAPI (07/2025) - CPOS/CDHU (06/2025) - ...")
             // These are reference metadata, not budget items. Must be filtered on raw line.
