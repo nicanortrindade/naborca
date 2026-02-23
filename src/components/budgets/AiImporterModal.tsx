@@ -110,52 +110,59 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
             logUiEvent('terminal_ui_state', { status: result.finalStatus, jobId });
 
             if (result.finalStatus === 'success') {
-                setUploadStep('Concluído! Redirecionando...');
+                setUploadStep('Concluído! Aguardando finalização do orçamento...');
 
-                // IMPORTANT: Immediate Navigation if budget ID is present (Complete Success)
-                if (result.resultBudgetId) {
-                    // Já tem budget — vai direto para o orçamento
-                    clearImportSession();
-                    await new Promise(r => setTimeout(r, 600));
-                    if (!controller.signal.aborted) {
+                // Poll until BOTH stage = 'finalized' AND result_budget_id IS NOT NULL.
+                // This prevents a premature redirect that leaves the review page with a
+                // disabled "Gerar Orçamento" button (job done but finalize RPC not yet run).
+                //
+                // Fast-path: if the outer polling engine already received result_budget_id
+                // AND the job reached 'finalized' we still go through the same poll to
+                // confirm both conditions, but the first iteration will pass immediately.
+                let attempts = 0;
+                const maxAttempts = 120; // 120 × 3 s = 360 s max wait
+                const pollBudget = async (): Promise<void> => {
+                    if (attempts >= maxAttempts || controller.signal.aborted) {
+                        // Timeout safety valve — redirect anyway so user is never stuck
+                        console.warn('[UI-IMPORT] pollBudget timeout — redirecting as fallback', { jobId, attempts });
+                        clearImportSession();
                         navigate(toRelativePath(`/importacoes/${jobId}`));
                         onClose();
                         return;
                     }
-                } else {
-                    // Aguarda result_budget_id ser preenchido antes de redirecionar
-                    setUploadStep('Finalizando orçamento...');
-                    let attempts = 0;
-                    const maxAttempts = 80; // 80 x 5s = 400s
-                    const pollBudget = async (): Promise<void> => {
-                        if (attempts >= maxAttempts || controller.signal.aborted) {
-                            // Timeout — redireciona para revisão como fallback
+                    attempts++;
+                    const { data: jobData } = await supabase
+                        .from('import_jobs' as any)
+                        .select('result_budget_id, stage, status')
+                        .eq('id', jobId)
+                        .single();
+
+                    const isFinalized = jobData?.stage === 'finalized';
+                    const hasBudgetId = !!jobData?.result_budget_id;
+
+                    if (isFinalized && hasBudgetId) {
+                        // ✅ Both conditions met — safe to redirect
+                        clearImportSession();
+                        await new Promise(r => setTimeout(r, 600));
+                        if (!controller.signal.aborted) {
                             navigate(toRelativePath(`/importacoes/${jobId}`));
                             onClose();
-                            return;
                         }
-                        attempts++;
-                        const { data: jobData } = await supabase
-                            .from('import_jobs' as any)
-                            .select('result_budget_id, stage')
-                            .eq('id', jobId)
-                            .single();
-                        if (jobData?.stage === 'finalized') {
-                            // Job finalizado — vai para revisão para configurar BDI/encargos antes de gerar
-                            clearImportSession();
-                            await new Promise(r => setTimeout(r, 600));
-                            if (!controller.signal.aborted) {
-                                navigate(toRelativePath(`/importacoes/${jobId}`));
-                                onClose();
-                            }
-                            return;
-                        }
-                        await new Promise(r => setTimeout(r, 5000));
-                        return pollBudget();
-                    };
-                    await pollBudget();
-                    return;
-                }
+                        return;
+                    }
+
+                    // Not ready yet — update progress text and keep polling
+                    if (isFinalized && !hasBudgetId) {
+                        setUploadStep('Finalizado! Aguardando ID do orçamento...');
+                    } else {
+                        setUploadStep(`Finalizando orçamento... (${attempts})`);
+                    }
+
+                    await new Promise(r => setTimeout(r, 3000));
+                    return pollBudget();
+                };
+                await pollBudget();
+                return;
 
             } else {
                 // FAILURE / THRESHOLD REACHED

@@ -282,14 +282,6 @@ async function persistStageBMetaAtomic(
         // 3. Apply Patch via transformation
         patchFn(nextMetadata.stageB);
 
-<<<<<<< HEAD
-        // 4. Build Signature (Auto-update if not present)
-        if (opts.buildSig) {
-            nextMetadata.stageB.build_sig = opts.buildSig;
-        }
-
-=======
->>>>>>> af2a94b3a65e778c51db177166eb5dfbc8772721
         // 6. Atomic Update
         const { error: updateErr } = await supabase
             .from('import_files')
@@ -860,27 +852,18 @@ export async function executeStageB(
 
     // Compute total_batches NOW, from the true candidate count,
     // before any timeout could cut the execution short.
+    // NEVER overwrite an existing value — a retry must keep the original count.
     const totalBatchesCalculated = Math.max(1, Math.ceil(validCandidates.length / BATCH_SIZE));
     console.log(`[STAGE-B-EXEC] totalBatchesCalculated=${totalBatchesCalculated} (candidates=${validCandidates.length}, BATCH_SIZE=${BATCH_SIZE})`);
 
-    // 1. ATOMIC START MARKER
-    const totalBatchesCalculated = Math.max(1, Math.ceil(validCandidates.length / BATCH_SIZE));
-    console.log(`[STAGE-B-EXEC] Total batches to process: ${totalBatchesCalculated}`);
-
+    // 1. ATOMIC START MARKER — persists total_batches so finalization can read it
+    // even when a timeout interrupts processing mid-way.
     if (persistenceOpts) {
         await persistStageBMetaAtomic(persistenceOpts, (stageB) => {
             stageB.llm_sdk = "@google/genai";
             stageB.llm_started_at = stageB.llm_started_at || new Date().toISOString();
             stageB.llm_models_configured = MODEL_FALLBACKS;
-<<<<<<< HEAD
             stageB.total_batches = stageB.total_batches || totalBatchesCalculated;
-=======
-            // Persist total_batches so the finalization check can read it
-            // even when timeout interrupts processing mid-way.
-            // NEVER overwrite an existing value — a retry must keep the original count.
-            stageB.total_batches = stageB.total_batches || totalBatchesCalculated;
-            // Ensure array exists
->>>>>>> af2a94b3a65e778c51db177166eb5dfbc8772721
             stageB.llm_model_attempts = stageB.llm_model_attempts || [];
             // Preserve existing debug.index_gate!
             stageB.debug = stageB.debug || {};
