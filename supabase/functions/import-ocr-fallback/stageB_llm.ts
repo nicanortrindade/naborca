@@ -187,6 +187,7 @@ Respond ONLY with valid JSON. No markdown, no backticks.
     {
       "candidate_id": "...",
       "kind": "synthetic_item" | "analytic_line" | "composition",
+      "price_source": "SINAPI" | "ORSE" | "SICRO" | "CPU" | "EMOP" | "CDHU" | "IOPES" | "SETOP" | "SEINFRA" | "GOINFRA" | "AGESUL" | "SBC" | "TCPO" | "Próprio" | null,
       "code": "...",
       "description": "...",
       "unit": "...",
@@ -198,6 +199,35 @@ Respond ONLY with valid JSON. No markdown, no backticks.
     }
   ]
 }
+
+RULE — price_source EXTRACTION (MANDATORY):
+price_source identifies the price database the item belongs to. Extract it from:
+1. The "Fonte" column in the PDF (e.g. "SINAPI", "ORSE", "CPU").
+2. The bank prefix in the item line (e.g. "1.1.0.0.1.SINAPI103689" → price_source: "SINAPI").
+3. The bank name fused to the code (e.g. "ORSE4554" → price_source: "ORSE", code: "4554").
+4. The label before the composition code (e.g. "Composição KENE002" → price_source: "Próprio", code: "KENE002").
+
+Known bank names and their canonical price_source values:
+  SINAPI → "SINAPI"
+  ORSE → "ORSE"
+  SICRO, SICRO3 → "SICRO"
+  CPU, CPU-XX → "CPU"
+  EMOP → "EMOP"
+  CDHU, CPOS/CDHU → "CDHU"
+  IOPES → "IOPES"
+  SETOP → "SETOP"
+  SEINFRA → "SEINFRA"
+  GOINFRA, AGETOP CIVIL → "GOINFRA"
+  AGESUL → "AGESUL"
+  SBC → "SBC"
+  TCPO → "TCPO"
+  Composição, Composicao, Próprio, Propria → "Próprio"
+  Unknown / not found → null
+
+CRITICAL: When bank name is fused to code (e.g. "SINAPI103689", "ORSE4554"):
+- Set price_source to the bank name ("SINAPI", "ORSE")
+- Set code to ONLY the numeric/alphanumeric part ("103689", "4554")
+- Do NOT include the bank name in the code field
 `;
 
 // ------------------------------------------------------------------
@@ -695,6 +725,7 @@ ${JSON.stringify(candidatesContext, null, 2)}
 
                 const item: any = {
                     kind: raw.kind ?? "synthetic_item",
+                    price_source: raw.price_source ?? null,
                     code: raw.code ?? null,
                     description,
                     unit: raw.unit ?? null,

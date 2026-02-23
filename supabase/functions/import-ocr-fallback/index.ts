@@ -877,6 +877,7 @@ serve(async (req: Request) => {
                                                             level: derivedLevel,
                                                             chunk_index: batchIndex,
                                                             composition_code: item.code || null,
+                                                            price_source: (item as any).price_source || null,
                                                             dedup_key: dedupKey,
                                                             item_path: item.item_path || null,                        // NOVO
                                                             source_candidate_id: item.evidence?.candidate_id || null  // NOVO
@@ -987,6 +988,7 @@ serve(async (req: Request) => {
                                         chunk_index: 0,
                                         level: derivedLevel,
                                         composition_code: item.code || null,
+                                        price_source: (item as any).price_source || null,
                                         item_path: item.item_path || null,
                                         source_candidate_id: item.evidence?.candidate_id || null
                                     };

@@ -227,12 +227,71 @@ export function generateCandidatesStageA(text: string, options: {
         // Detecta: linha com [item_path+BANCO+código] sem descrição, seguida de fragmentos de
         // descrição sem valores, depois unidade e números. Gera UM candidato S0_multiline_merge
         // em vez de múltiplos S4 órfãos.
-        const REGEX_ISOLATED_CODE = /^(\d{1,3}(?:\.\d{1,3}){1,6})\.(SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP)(\w+(?:[-_]\w*)?)?\s*$/i;
+        //
+        // Ampliado 2026-02-23 (Kennedy fix):
+        //   • Adiciona Composição/Composicao ao grupo de bancos
+        //   • Permite espaço opcional entre banco e código numérico (ORSE 20, ORSE 2511)
+        const REGEX_ISOLATED_CODE = /^(\d{1,3}(?:\.\d{1,3}){1,6})\.(SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|Composi[çc][aã]o?)\s*(\w+(?:[-_]\w*)?)?\s*$/i;
+
+        // S0b: linha FULL collapse — item_path + banco + código + descrição + unidade na mesma linha.
+        // Ex: "1.3.0.0.2.ORSE 2511 Carga manual de material de 3ª categoriaM3"
+        // Ex: "1.7.0.0.1.Composição KENE001 BANCO DE ALVENARIA COM PINTURA ACRILICAM"
+        // Ex: "1.2.0.0.1.ComposiçãoKENNE011Administração local da obraMÊS"
+        const REGEX_S0B_FULL = /^(\d{1,3}(?:\.\d{1,3}){1,6})\.(SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|Composi[çc][aã]o?)\s*(\w+(?:[-_]\w*)?)?\s+(.+?)\s*(M2|M3|UN|ML|KG|MÊS|KM|VB|CJ|SC|T|HA|H|L|M|m²|m³)\s*$/i;
+
         const consumedLines = new Set<number>();
 
         for (let si = 0; si < limit - 2; si++) {
             if (candidates.length >= caps.max_candidates) break;
             const sLine = lines[si].trim();
+
+            // ── S0b: FULL collapse — todos os campos numa única linha ──────────────
+            const mFull = sLine.match(REGEX_S0B_FULL);
+            if (mFull) {
+                const [, pathPart, bankPart, codePart = '', descPart, unitPart] = mFull;
+                const rawCode = codePart
+                    .replace(/\s*-\s*ADAPT\.?\s*$/i, '')
+                    .replace(/[-_]ADP[-_]?\d*/i, '')
+                    .trim();
+
+                // Coletar valores numéricos nas próximas linhas (quantidade, preço)
+                const valueLookahead: string[] = [];
+                for (let w = si + 1; w < Math.min(si + 7, limit); w++) {
+                    const nxt = lines[w].trim();
+                    if (REGEX_ITEM_PATH.test(nxt) || REGEX_CODE_START.test(nxt)) break;
+                    if (/\d/.test(nxt)) valueLookahead.push(nxt);
+                }
+
+                stats.heuristics_hit['S0b_full_collapse'] = (stats.heuristics_hit['S0b_full_collapse'] || 0) + 1;
+                stats.synthetic_heads_found++;
+
+                candidates.push({
+                    id: generateShortId(),
+                    kind: 'synthetic_line',
+                    source: 'ocr_heuristic_v1',
+                    confidence: 0.78,
+                    line_no: mapOriginalLineNo[si],
+                    line_range: [mapOriginalLineNo[si], mapOriginalLineNo[Math.min(si + 6, limit - 1)]],
+                    evidence: sLine + (valueLookahead.length > 0 ? ' || ' + valueLookahead.join(' || ') : ''),
+                    snippet: `${pathPart}.${bankPart}${rawCode ? ' ' + rawCode : ''} ${descPart.trim()}`,
+                    context_before: lines.slice(Math.max(0, si - 2), si).join('\n'),
+                    context_after: [unitPart, ...valueLookahead].join('\n'),
+                    extracted_signals: {
+                        item_path: pathPart,
+                        code: rawCode || undefined,
+                        description_fragment: descPart.trim().substring(0, 120),
+                        unit: unitPart.trim()
+                    },
+                    raw_numbers: [],
+                    warnings: ['s0b_full_collapse'],
+                    debug_heuristic: ['S0b_full_collapse']
+                });
+
+                consumedLines.add(si);
+                continue; // linha consumida — não processar em S0/S1/S3/S4
+            }
+
+            // ── S0 original: código isolado + descrição nas linhas seguintes ──────
             const mCode = sLine.match(REGEX_ISOLATED_CODE);
             if (!mCode) continue;
 

@@ -21,6 +21,10 @@ export type StageBEvidence = z.infer<typeof StageBEvidenceSchema>;
 // No inference. Null if not found in text.
 export const StageBItemSchema = z.object({
     kind: z.enum(["synthetic_item", "analytic_line", "composition"]),
+    // price_source: banco de preços de origem (SINAPI, ORSE, CPU, EMOP, etc.)
+    // Extraído pelo LLM a partir da coluna "Fonte" do PDF.
+    // null quando não identificável (composição própria sem prefixo de banco).
+    price_source: z.string().nullable().optional(),
     code: z.string().nullable().optional(),
     description: z.string().min(1, "Description is mandatory"),
     unit: z.string().nullable().optional(),
