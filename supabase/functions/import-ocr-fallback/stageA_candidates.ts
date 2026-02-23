@@ -391,6 +391,13 @@ export function generateCandidatesStageA(text: string, options: {
             if (/^[_\-=.]{3,}$/.test(line)) continue;
             if (REGEX_BANKS_HEADER.test(line)) continue;
 
+            // FILTER: Bank header lines (e.g. "SINAPI (07/2025) - CPOS/CDHU (06/2025) - ...")
+            // These are reference metadata, not budget items. Must be filtered on raw line.
+            if (/SINAPI\s*\(\d{2}\/\d{4}\)|CPOS\/CDHU|ORSE\s*\(\d{2}\/\d{4}\)|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL/i.test(line) &&
+                (line.match(/\(\d{2}\/\d{4}\)/g) || []).length >= 2) {
+                continue;
+            }
+
             // Resolve a seção ativa usando o mapa pré-calculado
             const lastSectionPath = resolveNearestSection(i);
 
@@ -590,7 +597,15 @@ export function generateCandidatesStageA(text: string, options: {
             // Line with > 10 letters and > 1 number
             const nums = extractNumbers(line);
             const letters = line.replace(/[^a-zA-Z]/g, '').length;
-            if (!hitS1 && !hitS2 && !hitS3 && nums.length > 0 && letters > 10) {
+
+            // GUARD: Skip S4 for orphan continuation fragments.
+            // If the previous line was already consumed (S0/S1/S2/S3) and this line
+            // has no item_path and no code, it's likely a broken description fragment.
+            const prevConsumed = i > 0 && (consumedLines.has(i - 1) ||
+                candidates.some(c => c.line_no === mapOriginalLineNo[i - 1]));
+            const hasOwnAnchor = REGEX_ITEM_PATH.test(line) || REGEX_CODE_START.test(line);
+
+            if (!hitS1 && !hitS2 && !hitS3 && nums.length > 0 && letters > 10 && !(prevConsumed && !hasOwnAnchor)) {
                 hitS4 = true;
                 stats.heuristics_hit['S4'] = (stats.heuristics_hit['S4'] || 0) + 1;
 

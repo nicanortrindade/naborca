@@ -138,9 +138,10 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         .single();
 
                     const isFinalized = jobData?.stage === 'finalized';
+                    const isReadyToFinalize = jobData?.stage === 'ready_to_finalize';
                     const hasBudgetId = !!jobData?.result_budget_id;
 
-                    if (isFinalized && hasBudgetId) {
+                    if ((isFinalized || isReadyToFinalize) && hasBudgetId) {
                         // ✅ Both conditions met — safe to redirect
                         clearImportSession();
                         await new Promise(r => setTimeout(r, 600));
@@ -148,6 +149,16 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                             navigate(toRelativePath(`/importacoes/${jobId}`));
                             onClose();
                         }
+                        return;
+                    }
+
+                    // If finalization is taking too long but stage is ready_to_finalize,
+                    // redirect to review page so user isn't stuck forever
+                    if (isReadyToFinalize && !hasBudgetId && attempts > 20) {
+                        console.warn('[UI-IMPORT] pollBudget: ready_to_finalize but no budget_id after 60s — redirecting to review');
+                        clearImportSession();
+                        navigate(toRelativePath(`/importacoes/${jobId}`));
+                        onClose();
                         return;
                     }
 

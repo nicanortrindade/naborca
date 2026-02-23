@@ -741,6 +741,9 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
     const adjustedMap = new Map<string | number, { tBase: number, tFinal: number, tUnit?: number, tUnitFinal?: number }>(); // id -> { totalBase: number, totalFinal: number }
     // We need IDs. ExportItem has unitId.
 
+    let accumTotalBase = 0;
+    let accumTotalFinal = 0;
+
     // First pass: Leaves
     processedItems.forEach((row, idx) => {
         if (!row.isGroup) {
