@@ -170,14 +170,14 @@ export class AnalyticReportParser {
                     }
 
                     const fullDesc = headerBuffer.join(' ');
-                    const altMatch = fullDesc.match(new RegExp(`^([A-Z0-9.\\-,/]+?)(?:\\s*-?\\s*)?(?:(${BANKS}))\\s*(.*)$`, 'i'));
-
                     let code = 'UNKNOWN';
                     let desc = fullDesc;
 
+                    // Tenta: CODE BANCO descrição (com espaço entre código e banco)
+                    const altMatch = fullDesc.match(new RegExp(`^([A-Z0-9.\\-,/]+)\\s+(?:${BANKS})\\s*(.*)$`, 'i'));
                     if (altMatch) {
                         code = altMatch[1];
-                        desc = altMatch[3];
+                        desc = altMatch[2];
                     } else {
                         const spaceIdx = fullDesc.indexOf(' ');
                         if (spaceIdx !== -1) {
@@ -211,17 +211,25 @@ export class AnalyticReportParser {
                     let code = '';
                     let desc = fullText;
 
-                    const mCodeBank = fullText.match(new RegExp(`^([A-Z0-9.\\-,/]+?)(?:\\s*-?\\s*)?(?:(${BANKS}))\\s*(.*)$`, 'i'));
+                    // Tenta: CODE BANCO descrição (com espaço entre código e banco)
+                    const mCodeBank = fullText.match(new RegExp(`^([A-Z0-9.\\-,/]+)\\s+(?:${BANKS})\\s*(.*)$`, 'i'));
                     if (mCodeBank) {
                         code = mCodeBank[1];
-                        desc = mCodeBank[3];
+                        desc = mCodeBank[2];
                     } else {
-                        const spaceIdx = fullText.indexOf(' ');
-                        if (spaceIdx !== -1) {
-                            code = fullText.substring(0, spaceIdx);
-                            desc = fullText.substring(spaceIdx + 1).replace(new RegExp(`^(?:${BANKS})\\s*`, 'i'), '');
+                        // Tenta: CODE colado a BANCO sem espaço (ex: 88316,00SINAPI... já virou 88316 SINAPI após buffer join)
+                        const mCodeGlued = fullText.match(new RegExp(`^([A-Z0-9.\\-,/]+?)(?:${BANKS})(.*)$`, 'i'));
+                        if (mCodeGlued) {
+                            code = mCodeGlued[1];
+                            desc = mCodeGlued[2];
                         } else {
-                            code = fullText;
+                            const spaceIdx = fullText.indexOf(' ');
+                            if (spaceIdx !== -1) {
+                                code = fullText.substring(0, spaceIdx);
+                                desc = fullText.substring(spaceIdx + 1).replace(new RegExp(`^(?:${BANKS})\\s*`, 'i'), '');
+                            } else {
+                                code = fullText;
+                            }
                         }
                     }
 
