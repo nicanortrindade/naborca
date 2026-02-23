@@ -45,6 +45,7 @@ Deno.serve(async (req) => {
 
         const body = await req.json();
         const { job_id, uf, competence, desonerado, bdi_mode, social_charges, enable_structure_parser_v1 } = body;
+        const force_rehydrate = body?.force_rehydrate === true;
 
         // Resolve User ID if Service Mode (Bypass)
         if (!targetUserId) {
@@ -93,12 +94,15 @@ Deno.serve(async (req) => {
             .single();
 
         if (jobCheck?.result_budget_id && jobCheck?.stage === 'finalized') {
-            console.log(`[FinalizeBudget] Job já finalizado, retornando budget existente: ${jobCheck.result_budget_id}`);
-            return new Response(JSON.stringify({
-                ok: true,
-                budget_id: jobCheck.result_budget_id,
-                already_finalized: true
-            }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            if (!force_rehydrate) {
+                console.log(`[FinalizeBudget] Job já finalizado, retornando budget existente: ${jobCheck.result_budget_id}`);
+                return new Response(JSON.stringify({
+                    ok: true,
+                    budget_id: jobCheck.result_budget_id,
+                    already_finalized: true
+                }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+            console.log(`[FinalizeBudget] force_rehydrate=true, reconstruindo budget: ${jobCheck.result_budget_id}`);
         }
 
 
