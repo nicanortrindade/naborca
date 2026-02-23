@@ -832,6 +832,7 @@ export async function executeStageB(
     persistenceOpts?: PersistenceOpts,
     resumeOpts?: {
         startBatchIndex?: number;
+        maxBatches?: number;
         onBatchResult?: (result: { batchIndex: number; candidateCount: number; items: StageBItem[]; totalBatches: number }) => Promise<void>;
     }
 ): Promise<StageBOutput> {
@@ -884,10 +885,16 @@ export async function executeStageB(
     // [BATCHING] Chunked execution loop
     const startBatch = resumeOpts?.startBatchIndex || 0;
     const startIndex = startBatch * BATCH_SIZE;
-
-
+    const maxBatches = resumeOpts?.maxBatches || Infinity;
+    let bCount = 0;
 
     for (let i = startIndex; i < candidates.length; i += BATCH_SIZE) {
+        if (bCount >= maxBatches) {
+            console.log(`[STAGE-B-EXEC] Stopping early. Reached max batches limit: ${maxBatches}`);
+            break;
+        }
+        bCount++;
+
         const batchStartAt = Date.now();
         const batchCandidates = candidates.slice(i, i + BATCH_SIZE);
         const batchIndex = Math.floor(i / BATCH_SIZE);

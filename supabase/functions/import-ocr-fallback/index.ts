@@ -585,6 +585,8 @@ serve(async (req: Request) => {
         }
 
         const reqBody = await req.json();
+        const maxChunksStr = req.headers.get('x-max-chunks') || reqBody.max_chunks || reqBody.maxBatches;
+        const maxChunksToProcess = maxChunksStr ? parseInt(String(maxChunksStr), 10) : Infinity;
         const job_id = currentJobId || reqBody.job_id;
         if (!job_id) throw new Error("Missing job_id");
         currentJobId = job_id;
@@ -816,6 +818,7 @@ serve(async (req: Request) => {
                                 },
                                 {
                                     startBatchIndex: typeof lastBatchIndex === 'number' ? lastBatchIndex + 1 : 0,
+                                    maxBatches: maxChunksToProcess,
                                     onBatchResult: async (batchRes) => {
                                         const { batchIndex, items, candidateCount, totalBatches } = batchRes;
                                         // INCREMENTAL INSERT
@@ -1068,20 +1071,30 @@ serve(async (req: Request) => {
                             fileDebug.db_persisted = dbPersistedCount;
 
                             // 5. UPDATE EXTRACTION STATUS
-                            if (dbPersistedCount > 0) {
-                                await updateImportFileExtractionState(supabase, file.id, {
-                                    extraction_status: 'done',
-                                    extraction_items_inserted: dbPersistedCount,
-                                    extracted_completed_at: new Date().toISOString()
-                                }, 'stage_b_success');
+                            const lastProcessedIdx = stageBResult.batches?.[stageBResult.batches.length - 1]?.batch_index ?? (typeof lastBatchIndex === 'number' ? lastBatchIndex : -1);
+                            const isFileDone = lastProcessedIdx >= ((stageBResult.total_batches || 1) - 1);
+
+                            if (isFileDone) {
+                                if (dbPersistedCount > 0) {
+                                    await updateImportFileExtractionState(supabase, file.id, {
+                                        extraction_status: 'done',
+                                        extraction_items_inserted: dbPersistedCount,
+                                        extracted_completed_at: new Date().toISOString()
+                                    }, 'stage_b_success');
+                                } else {
+                                    // If 0 items but success, mark as done with zero items reason
+                                    await updateImportFileExtractionState(supabase, file.id, {
+                                        extraction_status: 'done',
+                                        extraction_items_inserted: 0,
+                                        extraction_reason: 'stage_b_zero_items',
+                                        extracted_completed_at: new Date().toISOString()
+                                    }, 'stage_b_zero');
+                                }
                             } else {
-                                // If 0 items but success, mark as done with zero items reason
+                                // Apenas atualiza heartbeat para continuar processando no próximo chunk
                                 await updateImportFileExtractionState(supabase, file.id, {
-                                    extraction_status: 'done',
-                                    extraction_items_inserted: 0,
-                                    extraction_reason: 'stage_b_zero_items',
-                                    extracted_completed_at: new Date().toISOString()
-                                }, 'stage_b_zero');
+                                    extraction_status: 'processing',
+                                }, 'stage_b_partial');
                             }
 
                         } else {
@@ -1271,32 +1284,39 @@ serve(async (req: Request) => {
             const allBatchesDone = lastPersistedBatch >= totalBatches - 1;
             const isComplete = dbCount >= COMPLETENESS_MIN_VALID_ITEMS && allBatchesDone;
 
-            await supabase.from("import_jobs").update({
-                status: isComplete ? "done" : "waiting_user",
-                current_step: isComplete ? "done" : "waiting_user_partial",
-                stage: isComplete ? "ready_to_finalize" : "processing",
-                progress: isComplete ? 100 : Math.min(99, Math.round(((lastPersistedBatch + 1) / totalBatches) * 100)),
-                document_context: {
-                    ...(jobData.document_context || {}),
-                    ocr_fallback_executed: true,
-                    inserted_items_count: dbCount,
-                    debug_info: createSafeDebugInfo(debugSummary)
-                }
-            }).eq("id", job_id);
+            if (allBatchesDone) {
+                await supabase.from("import_jobs").update({
+                    status: isComplete ? "done" : "waiting_user",
+                    current_step: isComplete ? "done" : "waiting_user_partial",
+                    stage: isComplete ? "ready_to_finalize" : "processing",
+                    progress: isComplete ? 100 : 99,
+                    document_context: {
+                        ...(jobData.document_context || {}),
+                        ocr_fallback_executed: true,
+                        inserted_items_count: dbCount,
+                        debug_info: createSafeDebugInfo(debugSummary)
+                    }
+                }).eq("id", job_id);
 
-            if (isComplete) {
-                fetch(`${SUPABASE_URL}/functions/v1/import-finalize-budget`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
-                    body: JSON.stringify({ job_id })
-                }).catch(() => { });
+                if (isComplete) {
+                    fetch(`${SUPABASE_URL}/functions/v1/import-finalize-budget`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+                        body: JSON.stringify({ job_id })
+                    }).catch(() => { });
+                }
+            } else {
+                await supabase.from("import_jobs").update({
+                    progress: Math.min(99, Math.round(((lastPersistedBatch + 1) / totalBatches) * 100)),
+                    heartbeat_at: new Date().toISOString()
+                }).eq("id", job_id);
             }
 
             return jsonResponse({
                 ok: true,
                 items: dbCount,
                 allBatchesDone,
-                status: isComplete ? "done" : "waiting_user"
+                status: allBatchesDone ? (isComplete ? "done" : "waiting_user") : "continued"
             });
         } else {
             // No items in DB, check Stage B metadata for diagnostics
