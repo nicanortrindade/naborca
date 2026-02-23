@@ -112,18 +112,18 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
             if (result.finalStatus === 'success') {
                 setUploadStep('Concluído! Aguardando finalização do orçamento...');
 
-                // Poll until BOTH stage = 'finalized' AND result_budget_id IS NOT NULL.
-                // This prevents a premature redirect that leaves the review page with a
-                // disabled "Gerar Orçamento" button (job done but finalize RPC not yet run).
-                //
-                // Fast-path: if the outer polling engine already received result_budget_id
-                // AND the job reached 'finalized' we still go through the same poll to
-                // confirm both conditions, but the first iteration will pass immediately.
+                // Auto-finalization flow:
+                // 1. Poll until stage = 'extraction_complete' (or already 'finalized')
+                // 2. When extraction_complete detected, auto-call import-finalize-budget
+                // 3. Then poll until stage = 'finalized' AND result_budget_id is present
+                // 4. Redirect to import review/budget page
                 let attempts = 0;
                 const maxAttempts = 120; // 120 × 3 s = 360 s max wait
+                let finalizationTriggered = false;
+
                 const pollBudget = async (): Promise<void> => {
                     if (attempts >= maxAttempts || controller.signal.aborted) {
-                        // Timeout safety valve — redirect anyway so user is never stuck
+                        // Timeout safety valve — redirect to review so user is never stuck
                         console.warn('[UI-IMPORT] pollBudget timeout — redirecting as fallback', { jobId, attempts });
                         clearImportSession();
                         navigate(toRelativePath(`/importacoes/${jobId}`));
@@ -138,10 +138,11 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         .single();
 
                     const isFinalized = jobData?.stage === 'finalized';
+                    const isExtractionComplete = jobData?.stage === 'extraction_complete';
                     const hasBudgetId = !!jobData?.result_budget_id;
 
+                    // ✅ Fully finalized with budget — redirect immediately
                     if (isFinalized && hasBudgetId) {
-                        // ✅ Both conditions met — safe to redirect
                         clearImportSession();
                         await new Promise(r => setTimeout(r, 600));
                         if (!controller.signal.aborted) {
@@ -151,11 +152,38 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         return;
                     }
 
-                    // Not ready yet — update progress text and keep polling
+                    // Auto-finalize: extraction done, trigger import-finalize-budget once
+                    if (isExtractionComplete && !finalizationTriggered) {
+                        finalizationTriggered = true;
+                        setUploadStep('Extração concluída! Gerando orçamento automaticamente...');
+                        console.log('[UI-IMPORT] extraction_complete detected — auto-triggering finalization', { jobId });
+
+                        try {
+                            await supabase.functions.invoke('import-finalize-budget', {
+                                body: { job_id: jobId }
+                            });
+                        } catch (finalizeErr) {
+                            // Fire-and-forget: log but don't block — poll will pick up the result
+                            console.warn('[UI-IMPORT] Auto-finalize call failed, will keep polling', finalizeErr);
+                        }
+                    }
+
+                    // If finalization was triggered but taking too long, redirect to review
+                    if (finalizationTriggered && attempts > 40) {
+                        console.warn('[UI-IMPORT] pollBudget: finalization triggered but no result after 120s — redirecting to review');
+                        clearImportSession();
+                        navigate(toRelativePath(`/importacoes/${jobId}`));
+                        onClose();
+                        return;
+                    }
+
+                    // Update progress text
                     if (isFinalized && !hasBudgetId) {
                         setUploadStep('Finalizado! Aguardando ID do orçamento...');
-                    } else {
+                    } else if (finalizationTriggered) {
                         setUploadStep(`Finalizando orçamento... (${attempts})`);
+                    } else {
+                        setUploadStep(`Aguardando conclusão da extração... (${attempts})`);
                     }
 
                     await new Promise(r => setTimeout(r, 3000));

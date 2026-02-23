@@ -1277,7 +1277,7 @@ serve(async (req: Request) => {
                 await supabase.from("import_jobs").update({
                     status: isComplete ? "done" : "waiting_user",
                     current_step: isComplete ? "done" : "waiting_user_partial",
-                    stage: isComplete ? "ready_to_finalize" : "processing",
+                    stage: isComplete ? "extraction_complete" : "processing",
                     progress: isComplete ? 100 : 99,
                     document_context: {
                         ...(jobData.document_context || {}),
