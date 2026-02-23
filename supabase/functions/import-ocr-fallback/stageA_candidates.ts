@@ -307,9 +307,11 @@ export function generateCandidatesStageA(text: string, options: {
             // Coletar fragmentos de descrição (sem valores, sem nova âncora)
             const descFragments: string[] = [];
             let j = si + 1;
+            let foundHeader = false;
             for (; j < Math.min(si + 5, limit); j++) {
                 const nxt = lines[j].trim();
                 if (!nxt || nxt.length < 3) break;
+                if (REGEX_BANKS_HEADER.test(nxt)) { foundHeader = true; break; }
                 if (REGEX_ITEM_PATH.test(nxt) || REGEX_CODE_START.test(nxt)) break;
                 if (/^\s*[\d.,\s%]+\s*$/.test(nxt)) break;
                 if (REGEX_UNIT.test(nxt) && nxt.length < 15) break;
@@ -317,7 +319,7 @@ export function generateCandidatesStageA(text: string, options: {
                 if (REGEX_IS_SECTION_TITLE.test(nxt)) break;
                 descFragments.push(nxt);
             }
-            if (descFragments.length === 0) continue;
+            if (foundHeader || descFragments.length === 0) continue;
 
             const mergedDesc = `${pathPart}.${bankPart}${codePart} ${descFragments.join(' ')}`;
 
@@ -507,10 +509,12 @@ export function generateCandidatesStageA(text: string, options: {
                 let mergedDescription = line;
                 let mergeOffset = 0;
 
+                let foundHeaderS3 = false;
                 for (let m = 1; m <= 3; m++) {
                     if (i + m >= limit) break;
                     const nextL = lines[i + m].trim();
                     if (nextL.length < 5) break; // empty or near-empty line = separator
+                    if (REGEX_BANKS_HEADER.test(nextL)) { foundHeaderS3 = true; break; }
 
                     const isNewItem = REGEX_ITEM_PATH.test(nextL) || REGEX_CODE_START.test(nextL);
                     const isIsolatedUnit = REGEX_UNIT.test(nextL) && nextL.length < 15;
@@ -522,6 +526,8 @@ export function generateCandidatesStageA(text: string, options: {
                     mergedDescription += ' ' + nextL;
                     mergeOffset = m;
                 }
+
+                if (foundHeaderS3) continue;
 
                 // Scan window W=4 from end of merged description
                 let foundUnit = false;
@@ -593,6 +599,33 @@ export function generateCandidatesStageA(text: string, options: {
                     warnings: ['fallback_line_candidate'],
                     debug_heuristic: ['S4_fallback']
                 });
+            }
+        }
+
+        // --- POST-SYNTHETIC MERGE PASS ---
+        // Se dois candidatos consecutivos têm o mesmo composition_code, 
+        // mescla a descrição do segundo no primeiro e descarta o segundo.
+        for (let m = 0; m < candidates.length - 1; m++) {
+            const curr = candidates[m];
+            const nxt = candidates[m + 1];
+
+            if (curr.kind === 'synthetic_line' && nxt.kind === 'synthetic_line') {
+                const codeC = curr.extracted_signals.code;
+                const codeN = nxt.extracted_signals.code;
+
+                if (codeC && codeN && codeC === codeN) {
+                    // Merge nxt into curr
+                    curr.snippet += " " + nxt.snippet;
+                    curr.evidence += " || " + nxt.evidence;
+                    if (nxt.extracted_signals.description_fragment) {
+                        curr.extracted_signals.description_fragment = (curr.extracted_signals.description_fragment || "") + " " + nxt.extracted_signals.description_fragment;
+                    }
+                    if (curr.line_range && nxt.line_range) {
+                        curr.line_range[1] = Math.max(curr.line_range[1], nxt.line_range[1]);
+                    }
+                    candidates.splice(m + 1, 1);
+                    m--; // Re-checar o item atual com o novo sucessor
+                }
             }
         }
     }
