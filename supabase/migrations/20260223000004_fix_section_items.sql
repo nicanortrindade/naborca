@@ -259,16 +259,23 @@ BEGIN -- 1. Setup & Validation
             CONTINUE; -- Skip inserting this as a real item
         END IF;
 
-        -- Skip multiline duplicate (same item_path, same price, same qty, no code)
-        IF v_clean_code = '0' 
-           AND v_item.composition_code IS NULL
+        -- Skip multiline duplicate (same item_path, same price/qty as previous item, no code OR no values)
+        IF v_item.composition_code IS NULL
            AND v_item.item_path IS NOT NULL
-           AND EXISTS (
-               SELECT 1 FROM public.import_ai_items
-               WHERE job_id = p_job_id
-                 AND item_path = v_item.item_path
-                 AND composition_code IS NOT NULL
-                 AND idx < v_item.idx
+           AND (
+               -- Case 1: no values at all
+               (COALESCE(v_item.unit_price, 0) = 0 AND COALESCE(v_item.quantity, 0) = 0)
+               OR
+               -- Case 2: same values as a previous item with code on same path
+               EXISTS (
+                   SELECT 1 FROM public.import_ai_items
+                   WHERE job_id = p_job_id
+                     AND item_path = v_item.item_path
+                     AND composition_code IS NOT NULL
+                     AND idx < v_item.idx
+                     AND ABS(COALESCE(unit_price, 0) - COALESCE(v_item.unit_price, 0)) < 0.01
+                     AND ABS(COALESCE(quantity, 0) - COALESCE(v_item.quantity, 0)) < 0.01
+               )
            ) THEN
             CONTINUE;
         END IF;
