@@ -734,7 +734,6 @@ const BudgetEditor = () => {
         // 0. Pre-process: Virtual Parenting for Imported Items (Fix Orphans)
         let lastL1: any = null;
         let lastL2: any = null;
-        let lastL3: any = null;
 
         const fixedItems = [...allItems].sort(sorter).map(item => {
             const newItem = { ...item };
@@ -743,16 +742,11 @@ const BudgetEditor = () => {
             if (newItem.level === 1) {
                 lastL1 = newItem;
                 lastL2 = null;
-                lastL3 = null;
             } else if (newItem.level === 2) {
                 lastL2 = newItem;
-                lastL3 = null;
                 if (!newItem.parentId && lastL1) newItem.parentId = lastL1.id;
-            } else if (newItem.level === 3) {
-                lastL3 = newItem;
+            } else if (newItem.level >= 3) {
                 if (!newItem.parentId && lastL2) newItem.parentId = lastL2.id;
-            } else if (newItem.level >= 4) {
-                if (!newItem.parentId && lastL3) newItem.parentId = lastL3.id;
             }
             return newItem;
         });
@@ -774,25 +768,18 @@ const BudgetEditor = () => {
 
             // Add Subetapas and their Items
             subetapas.forEach(sub => {
-                const level3Items = fixedItems.filter(i => i.level === 3 && i.parentId === sub.id);
+                const subItems = fixedItems.filter(i => i.level >= 3 && i.parentId === sub.id);
 
                 // Subetapa com total já calculado
                 flatList.push({
                     ...sub,
                     calculatedTotal: sub.finalPrice || 0,
-                    _children: level3Items
+                    _children: subItems
                 });
 
                 // Adicionar itens (valores já calculados)
-                level3Items.forEach((item3: any) => {
-                    flatList.push(item3);
-
-                    if (item3.type === 'group') {
-                        const level4Items = fixedItems.filter(i => i.level === 4 && i.parentId === item3.id);
-                        level4Items.forEach((item4: any) => {
-                            flatList.push(item4);
-                        });
-                    }
+                subItems.forEach((item: any) => {
+                    flatList.push(item);
                 });
             });
         });
@@ -2935,26 +2922,21 @@ const BudgetEditor = () => {
 
                                 const isNivel1 = item.rowType === 'etapa' || item.level === 1; // Fallback to level if rowType missing
                                 const isNivel2 = item.rowType === 'subetapa' || item.level === 2;
-                                const isNivel3 = item.level === 3 && item.type === 'group';
-                                const isItem = !isNivel1 && !isNivel2 && !isNivel3;
+                                const isItem = item.rowType === 'item' || (item.level !== 1 && item.level !== 2);
 
                                 // Aplicar cores de fundo
                                 const rowBg = isNivel1
                                     ? "bg-[#1e3a8a] text-white" // Azul Escuro (Etapa)
                                     : isNivel2
                                         ? "bg-[#dbeafe] text-blue-900" // Azul Claro (Subetapa)
-                                        : isNivel3
-                                            ? "bg-[#f0f9ff] text-slate-700 border-l-4 border-l-sky-400"
-                                            : "bg-white hover:bg-slate-50"; // Branco (Item)
+                                        : "bg-white hover:bg-slate-50"; // Branco (Item)
 
                                 // Estilo do texto da descrição
                                 const textStyle = isNivel1
                                     ? "font-black uppercase tracking-wide text-[12px]" // Mais destaque nível 1
                                     : isNivel2
                                         ? "font-bold uppercase text-[11px]" // Destaque nível 2
-                                        : isNivel3
-                                            ? "font-semibold uppercase text-[11px] text-sky-700"
-                                            : "font-normal text-slate-700"; // Normal nível 3/4
+                                        : "font-normal text-slate-700"; // Normal nível 3
 
                                 return (
                                     <tr
@@ -3054,9 +3036,7 @@ const BudgetEditor = () => {
                                                             "cursor-pointer hover:underline truncate block w-full",
                                                             textStyle,
                                                             isNivel2 && "pl-6", // Indent Level 2
-                                                            isNivel3 && "pl-10",
-                                                            isItem && item.level === 3 && "pl-10",
-                                                            isItem && item.level === 4 && "pl-14"
+                                                            isItem && "pl-10"   // Indent Level 3
                                                         )}
                                                         onClick={() => handleStartEdit(item)}
                                                     >
@@ -3067,9 +3047,7 @@ const BudgetEditor = () => {
                                                         "truncate block w-full",
                                                         textStyle,
                                                         isNivel2 && "pl-6",
-                                                        isNivel3 && "pl-10",
-                                                        isItem && item.level === 3 && "pl-10",
-                                                        isItem && item.level === 4 && "pl-14"
+                                                        isItem && "pl-10"
                                                     )}>
                                                         {item.description}
                                                     </span>
