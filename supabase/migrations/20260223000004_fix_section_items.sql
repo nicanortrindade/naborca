@@ -280,6 +280,25 @@ BEGIN -- 1. Setup & Validation
             CONTINUE;
         END IF;
 
+        -- Check 3: Skip coded multiline duplicate (same item_path, same code, same values, higher idx)
+        IF v_item.composition_code IS NOT NULL
+           AND v_item.item_path IS NOT NULL
+           AND (
+               (COALESCE(v_item.unit_price, 0) = 0 AND COALESCE(v_item.quantity, 0) = 0)
+               OR
+               EXISTS (
+                   SELECT 1 FROM public.import_ai_items
+                   WHERE job_id = p_job_id
+                     AND item_path = v_item.item_path
+                     AND composition_code = v_item.composition_code
+                     AND idx < v_item.idx
+                     AND ABS(COALESCE(unit_price, 0) - COALESCE(v_item.unit_price, 0)) < 0.01
+                     AND ABS(COALESCE(quantity, 0) - COALESCE(v_item.quantity, 0)) < 0.01
+               )
+           ) THEN
+            CONTINUE;
+        END IF;
+
         INSERT INTO public.budget_items (budget_id, user_id, level, parent_id, description, unit, quantity, unit_price, 
             total_price, final_price, type, source, code, source_import_item_id, order_index, hydration_details)
         VALUES (v_budget_id, v_job.user_id, 3, v_parent_id, v_clean_description, COALESCE(v_item.unit, 'UN'), 
