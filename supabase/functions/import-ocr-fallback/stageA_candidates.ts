@@ -63,8 +63,8 @@ export interface StageAResult {
 }
 
 const DEFAULT_CAPS: StageACaps = {
-    max_lines_scanned: 2500,
-    max_candidates: 300,
+    max_lines_scanned: 6000,
+    max_candidates: 800,
     max_evidence_chars: 1200
 };
 
