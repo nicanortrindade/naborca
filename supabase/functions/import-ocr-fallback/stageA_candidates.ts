@@ -474,7 +474,7 @@ export function generateCandidatesStageA(text: string, options: {
                     line.match(REGEX_ST_ALPHA) ||
                     line.match(REGEX_ST_ROMAN);
 
-                if (matchTitle && extractNumbers(line).length === 0) {
+                if (matchTitle) {
                     stats.heuristics_hit['ST_section_title'] = (stats.heuristics_hit['ST_section_title'] || 0) + 1;
                     const prefix = matchTitle[1];
                     const titleText = matchTitle[2].trim();

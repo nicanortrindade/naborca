@@ -2,6 +2,9 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { AnalyticReportParser } from './analyticParser.ts';
 
+// Type shim for EdgeRuntime fire-and-forget
+declare const EdgeRuntime: any;
+
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -141,30 +144,62 @@ Deno.serve(async (req) => {
             enable_structure_parser_v1: enable_structure_parser_v1 === true
         };
 
-        // Executa finalização diretamente via RPC
-        const { data: rpcData, error: rpcError } = await adminClient.rpc('finalize_import_to_budget', {
-            p_job_id: job_id,
-            p_user_id: targetUserId,
-            p_params: params,
-            p_analytic_data: analyticData
-        });
+        // Dispara RPC de forma assíncrona (fire-and-forget) para evitar timeout da Edge Function
+        EdgeRuntime.waitUntil(
+            (async () => {
+                try {
+                    const { data: rpcData, error: rpcError } = await adminClient.rpc('finalize_import_to_budget', {
+                        p_job_id: job_id,
+                        p_user_id: targetUserId,
+                        p_params: params,
+                        p_analytic_data: analyticData
+                    });
 
-        if (rpcError) {
-            const msg = typeof rpcError === 'string' ? rpcError : (rpcError.message || JSON.stringify(rpcError));
-            console.error(`[FinalizeBudget] RPC error:`, msg);
-            return new Response(JSON.stringify({ ok: false, reason: 'rpc_error', details: msg }), {
-                status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-        }
+                    if (rpcError) {
+                        console.error(`[FinalizeBudget] RPC error:`, rpcError.message);
+                        return;
+                    }
 
-        if (!rpcData || rpcData.ok === false) {
-            return new Response(JSON.stringify({ ok: false, reason: rpcData?.reason || 'rpc_returned_false', details: rpcData?.details || null }), {
-                status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-        }
+                    if (!rpcData || rpcData.ok === false) {
+                        console.error(`[FinalizeBudget] RPC returned false:`, rpcData?.reason);
+                        return;
+                    }
 
-        console.log(`[FinalizeBudget] RPC concluído: budget_id=${rpcData.budget_id}`);
-        return new Response(JSON.stringify(rpcData), {
+                    console.log(`[FinalizeBudget] RPC concluído: budget_id=${rpcData.budget_id}, stage=${rpcData.stage}`);
+
+                    // Disparar hydration-worker após RPC concluir
+                    if (rpcData.budget_id) {
+                        const hydrationPayload = {
+                            budget_id: rpcData.budget_id,
+                            job_id: job_id,
+                            user_id: targetUserId,
+                            uf: params.uf,
+                            competence: params.competence,
+                            desonerado: params.desonerado
+                        };
+
+                        console.log(`[FinalizeBudget] Dispatching hydration-worker for budget ${rpcData.budget_id}`);
+
+                        await fetch(`${supabaseUrl}/functions/v1/hydration-worker`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${supabaseServiceKey}`,
+                                'Content-Type': 'application/json',
+                                'x-internal-call': 'true'
+                            },
+                            body: JSON.stringify(hydrationPayload)
+                        }).catch((err: any) => {
+                            console.error('[FinalizeBudget] Failed to dispatch hydration-worker:', err?.message);
+                        });
+                    }
+                } catch (err: any) {
+                    console.error('[FinalizeBudget] Async RPC failed:', err?.message);
+                }
+            })()
+        );
+
+        // Retorna imediatamente sem esperar o RPC
+        return new Response(JSON.stringify({ ok: true, status: 'processing', job_id: job_id }), {
             status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
 

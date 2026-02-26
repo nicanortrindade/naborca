@@ -138,12 +138,13 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         .single();
 
                     const isFinalized = jobData?.stage === 'finalized';
+                    const isPendingHydration = jobData?.stage === 'pending_hydration';
                     const isExtractionComplete =
                         jobData?.stage === 'extraction_complete' ||
                         (jobData?.status === 'done' && !jobData?.result_budget_id);
                     const hasBudgetId = !!jobData?.result_budget_id;
 
-                    // ✅ Fully finalized with budget — redirect immediately
+                    // Redireciona quando finalizado com budget_id
                     if (isFinalized && hasBudgetId) {
                         clearImportSession();
                         await new Promise(r => setTimeout(r, 600));
@@ -154,18 +155,20 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         return;
                     }
 
-                    // Auto-finalize: extraction done, trigger import-finalize-budget once
+                    // Mostra progresso enquanto hydration roda
+                    if (isPendingHydration && hasBudgetId) {
+                        setUploadStep('Vinculando itens às bases de preços...');
+                    }
+
+                    // Dispara finalização uma vez quando extração completa
                     if (isExtractionComplete && !finalizationTriggered) {
                         finalizationTriggered = true;
                         setUploadStep('Extração concluída! Gerando orçamento automaticamente...');
-                        console.log('[UI-IMPORT] extraction_complete detected — auto-triggering finalization', { jobId });
-
                         try {
                             await supabase.functions.invoke('import-finalize-budget', {
                                 body: { job_id: jobId }
                             });
                         } catch (finalizeErr) {
-                            // Fire-and-forget: log but don't block — poll will pick up the result
                             console.warn('[UI-IMPORT] Auto-finalize call failed, will keep polling', finalizeErr);
                         }
                     }
@@ -180,7 +183,9 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                     }
 
                     // Update progress text
-                    if (isFinalized && !hasBudgetId) {
+                    if (isPendingHydration && hasBudgetId) {
+                        setUploadStep('Vinculando itens às bases de preços...');
+                    } else if (isFinalized && !hasBudgetId) {
                         setUploadStep('Finalizado! Aguardando ID do orçamento...');
                     } else if (finalizationTriggered) {
                         setUploadStep(`Finalizando orçamento... (${attempts})`);
