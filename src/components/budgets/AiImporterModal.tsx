@@ -165,9 +165,19 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         finalizationTriggered = true;
                         setUploadStep('Extração concluída! Gerando orçamento automaticamente...');
                         try {
-                            await supabase.functions.invoke('import-finalize-budget', {
-                                body: { job_id: jobId }
+                            const { data: finalizeData, error: finalizeError } = await supabase.functions.invoke('import-finalize-budget', {
+                                body: {
+                                    job_id: jobId,
+                                    uf: 'BA',
+                                    competence: new Date().toISOString().slice(0, 7),
+                                    desonerado: true,
+                                    enable_structure_parser_v1: true
+                                }
                             });
+                            console.log('[UI-IMPORT] finalize response:', { finalizeData, finalizeError });
+                            if (finalizeError) {
+                                console.error('[UI-IMPORT] finalize error:', finalizeError);
+                            }
                         } catch (finalizeErr) {
                             console.warn('[UI-IMPORT] Auto-finalize call failed, will keep polling', finalizeErr);
                         }
