@@ -138,7 +138,9 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         .single();
 
                     const isFinalized = jobData?.stage === 'finalized';
-                    const isExtractionComplete = jobData?.stage === 'extraction_complete';
+                    const isExtractionComplete =
+                        jobData?.stage === 'extraction_complete' ||
+                        (jobData?.status === 'done' && !jobData?.result_budget_id);
                     const hasBudgetId = !!jobData?.result_budget_id;
 
                     // ✅ Fully finalized with budget — redirect immediately
