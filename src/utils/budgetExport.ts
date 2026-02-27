@@ -717,7 +717,7 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
     const processedItems = hydratedItems.map(item => {
         const i: any = item;
         const level = getHierarchyLevel(item.itemNumber);
-        const isGroup = level < 3 || item.type === 'group';
+        const isGroup = item.type === 'group';
 
         // Item already hydrated by adjustExportItems
         // We just need to conform to the structure expected by the manual grouping logic below
