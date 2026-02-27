@@ -2985,11 +2985,6 @@ const BudgetEditor = () => {
                                     <tr
                                         key={item.id}
                                         id={`item-${item.id}`}
-                                        draggable={!isMobile}
-                                        onDragStart={(e) => handleDragStart(e, index)}
-                                        onDragOver={(e) => handleDragOver(e, index)}
-                                        onDrop={(e) => handleDrop(e, index)}
-                                        onDragEnd={() => setDragOverIndex(null)}
                                         className={clsx(
                                             "border-b border-slate-300 transition-colors group",
                                             rowBg,
@@ -3036,10 +3031,17 @@ const BudgetEditor = () => {
                                         </td>
 
                                         {/* Item Number */}
-                                        <td className={clsx(
-                                            "p-1 px-2 text-center border-r border-slate-300 font-mono font-bold whitespace-nowrap cursor-grab active:cursor-grabbing",
-                                            isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-blue-900" : "text-slate-700"
-                                        )}>
+                                        <td
+                                            draggable={!isMobile}
+                                            onDragStart={(e) => handleDragStart(e, index)}
+                                            onDragOver={(e) => handleDragOver(e, index)}
+                                            onDrop={(e) => handleDrop(e, index)}
+                                            onDragEnd={() => setDragOverIndex(null)}
+                                            className={clsx(
+                                                "p-1 px-2 text-center border-r border-slate-300 font-mono font-bold whitespace-nowrap cursor-grab active:cursor-grabbing",
+                                                isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-blue-900" : "text-slate-700"
+                                            )}
+                                        >
                                             {hierarchicalNumber}
                                         </td>
 
