@@ -30,8 +30,8 @@ Each budget line in the source document follows this fixed column order:
 
 Numbers in Brazilian format use DOT as thousand separator and COMMA as decimal separator.
 Example: "78,0097,5044.622,831,5766 %" means:
-  - unit_price (sem BDI): "78,00"
-  - unit_price (com BDI): "97,50"  <- USE THIS as unit_price
+  - unit_price (sem BDI): "78,00" <- USE THIS as unit_price
+  - unit_price (com BDI): "97,50"  <- IGNORE this value
   - total: "44.622,83"
   - weight: "1,5766 %" (IGNORE)
 
@@ -42,7 +42,7 @@ Only return null for a numeric field if it is genuinely absent from the entire c
 CRITICAL RULE - CONTEXT FIELDS:
 - context_after contains THIS item's numeric values (unit, quantity, unit_price, total). ALWAYS prefer context_after for numeric extraction.
 - context_before contains the PREVIOUS item's values. NEVER use context_before as the source for this item's unit_price or total_price.
-- If context_after contains "X BDI 1" pattern, the number before "BDI 1" is the unit_price (com BDI). The number before that is unit_price (sem BDI). IGNORE both values from context_before entirely for numeric fields.
+- If context_after contains "X BDI 1" pattern, the number before "BDI 1" is unit_price com BDI — IGNORE IT. Use the number before that as unit_price (sem BDI). The number before that is unit_price (sem BDI). IGNORE both values from context_before entirely for numeric fields.
 
 EXTRACTION RULES:
 1. MANDATORY EXTRACTION: Extract an item if the snippet describes a service, work, constructive element, or budget stage.
@@ -106,10 +106,15 @@ EXTRACTION RULES:
       NOTE: Do NOT classify as "synthetic_item" if no numeric values are present, even if confidence is low.
       Set confidence_score to 0.4 or below when numeric values are absent.
 
-   d) No code AND no numeric values AND description contains a hierarchical number prefix
-      (e.g. "1", "1.1", "2.3.1") → "composition"
+    d) No code AND no numeric values AND description contains a hierarchical number prefix
+       (e.g. "1", "1.1", "2.3.1") → "composition" (section title, no price)
 
-   e) Default for any priced line with values → "synthetic_item"
+    e) No code AND has numeric values (quantity, unit_price or total_price present) →
+       "synthetic_item" — MANDATORY: extract quantity and unit_price (sem BDI) even without
+       a code. These are valid budget items that reference prices without a database code.
+       Set code = null, price_source = null.
+
+    f) Default for any priced line with values → "synthetic_item"
 7. HIERARCHY: Use item_path to reconstruct the hierarchy from the item number prefix (e.g. "9.2.1" -> item_path: "9.2.1").
 7b. **FORMAT B — CONCATENATED LINE PARSING (MANDATORY)**:
     Some PDFs collapse all columns into a single OCR line with no separators:
@@ -156,6 +161,17 @@ EXTRACTION RULES:
     Set item_path from the numeric prefix if present, null otherwise.
     NEVER discard these as garbage.
     NEVER return description as null or empty for these items.
+
+8d. **STOP WORDS — DISCARD THESE LINES (MANDATORY)**:
+    If a candidate description matches any of these patterns, set kind = "composition",
+    code = null, unit = null, quantity = null, unit_price = null, total_price = null,
+    AND add warning "stop_word_detected" so the SQL parser skips it:
+    - "Total sem BDI"
+    - "Total Geral"  
+    - "Total com BDI"
+    - "TOTAL"
+    - "Subtotal"
+    These are footer/summary rows from the PDF, NOT budget items.
 9. **PRICE SOURCE EXTRACTION (MANDATORY)**:
    - price_source: identifique a fonte de preço do item. Procure por nomes como SINAPI, ORSE, SICRO, SBC, EMOP, SETOP, SEINFRA, IOPES, CPU, CDHU, AGESUL, AGETOP, Próprio. Retorne apenas o nome do banco sem data ou versão. Se não identificado, retorne null.
 10. **DEDUPLICATION — PARALLEL COLUMNS (MANDATORY)**:
@@ -336,8 +352,8 @@ async function persistStageBMetaAtomic(
 // ------------------------------------------------------------------
 function generateStageBDedupKey(item: StageBItem): string {
     const clean = (s: string | null | undefined) => (s || '').trim().toUpperCase();
-    // Key: CODE|DESC|UNIT|QTY|TOTAL
-    return `${clean(item.code)}|${clean(item.description)}|${clean(item.unit)}|${clean(item.quantity)}|${clean(item.total_price)}`;
+    // FIX 3: inclui item_path para permitir mesmo código em seções diferentes
+    return `${clean(item.item_path)}|${clean(item.code)}|${clean(item.description)}|${clean(item.unit)}|${clean(item.quantity)}|${clean(item.total_price)}`;
 }
 
 // ------------------------------------------------------------------
