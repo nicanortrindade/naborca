@@ -1907,17 +1907,52 @@ const BudgetEditor = () => {
         }
 
         try {
-            if (!budget || !items) return;
+            if (!budget) return;
 
-            // Força refresh dos dados antes de exportar
-            await loadBudget();
+            // Busca itens frescos direto do banco
+            const freshRawItems = await BudgetItemService.getByBudgetId(budgetId, { pageSize: 1000 });
+            const freshOrganized = organizeHierarchy(freshRawItems);
+
+            // Aplica os mesmos cálculos do visibleRows (adjustmentFactors + BDI)
+            const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
+            let totalFinalAdj = 0;
+            const freshAdjusted = freshOrganized.map(item => {
+                const isGroup = item.type === 'group';
+                const adjusted = getAdjustedItemValues(
+                    { unitPrice: item.unitPrice || 0, description: item.description, type: item.type },
+                    { materialFactor, laborFactor, bdiFactor },
+                    budget.bdi || 0
+                );
+                const quantity = item.quantity || 0;
+                const finalPrice = quantity * adjusted.finalPrice;
+                if (!isGroup && item.level >= 3) totalFinalAdj += finalPrice;
+                return { ...item, _adjusted: adjusted, _amounts: { unitPrice: adjusted.unitPrice, finalPrice: adjusted.finalPrice, totalPrice: quantity * adjusted.unitPrice, totalFinal: finalPrice } };
+            });
+            const freshRows = freshAdjusted.map((item, idx) => {
+                const isGroup = item.type === 'group';
+                const { unitPrice, finalPrice, totalPrice, totalFinal } = item._amounts;
+                return {
+                    ...item,
+                    kind: isGroup ? 'GROUP' : 'ITEM',
+                    itemNumber: getItemNumber(idx),
+                    code: isGroup ? '' : (item.code || ''),
+                    source: isGroup ? '' : (item.source || ''),
+                    unit: isGroup ? '' : (item.unit || ''),
+                    quantity: isGroup ? undefined : item.quantity,
+                    unitPrice: isGroup ? undefined : unitPrice,
+                    unitPriceWithBDI: isGroup ? undefined : finalPrice,
+                    totalPrice: isGroup ? 0 : totalPrice,
+                    finalPrice: isGroup ? 0 : totalFinal,
+                    total: totalFinal,
+                    pesoRaw: totalFinalAdj > 0 ? (totalFinal / totalFinalAdj) : 0
+                };
+            });
 
             // Importar funções de exportação
             const { exportPDFSynthetic, exportPDFAnalytic } = await import('../utils/budgetExport');
 
-            // Flatten rows for export using visibleRows (SSOT)
-            // Como visibleRows já é flat, apenas carregamos composição se necessário
-            const exportItems = await Promise.all(visibleRows.map(async (row) => {
+            // Flatten rows for export using freshRows (dados frescos, não visibleRows)
+            const exportItems = await Promise.all(freshRows.map(async (row) => {
                 // Fetch composition RAW
                 const compositionRaw = type === 'analytic'
                     ? await BudgetItemCompositionService.getByBudgetItemId(row.id!)
