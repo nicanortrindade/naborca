@@ -3019,7 +3019,9 @@ const BudgetEditor = () => {
                                                                             item.source === 'SBC' ? "bg-amber-100 text-amber-700" :
                                                                                 item.source ? "bg-slate-100 text-slate-600" : "bg-gray-50 text-gray-400"
                                                 )}>
-                                                    {item.source || 'IMPORT'}
+                                                    {item.source === 'AI_EXTRACTED_CODE' ? 'IMPORT' :
+                                                        item.source === 'IMPORTADO' ? 'IMPORT' :
+                                                            item.source || 'IMPORT'}
                                                 </span>
                                             )}
                                         </td>
