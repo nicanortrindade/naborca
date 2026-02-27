@@ -1934,7 +1934,7 @@ const BudgetEditor = () => {
                 return {
                     ...item,
                     kind: isGroup ? 'GROUP' : 'ITEM',
-                    itemNumber: getItemNumber(idx),
+                    itemNumber: item.hydrationDetails?.pathKey || item.itemNumber || getItemNumber(idx),
                     code: isGroup ? '' : (item.code || ''),
                     source: isGroup ? '' : (item.source || ''),
                     unit: isGroup ? '' : (item.unit || ''),
