@@ -1909,6 +1909,9 @@ const BudgetEditor = () => {
         try {
             if (!budget || !items) return;
 
+            // Força refresh dos dados antes de exportar
+            await loadBudget();
+
             // Importar funções de exportação
             const { exportPDFSynthetic, exportPDFAnalytic } = await import('../utils/budgetExport');
 
