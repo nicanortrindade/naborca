@@ -766,6 +766,11 @@ const BudgetEditor = () => {
                 calculatedTotal: etapa.finalPrice || 0
             });
 
+            const directItems = fixedItems.filter(i => i.level >= 3 && i.parentId === etapa.id);
+            directItems.forEach((item: any) => {
+                flatList.push(item);
+            });
+
             // Add Subetapas and their Items
             subetapas.forEach(sub => {
                 const subItems = fixedItems.filter(i => i.level >= 3 && i.parentId === sub.id);
