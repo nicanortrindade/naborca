@@ -150,6 +150,8 @@ export function detectDocTypeHints(text: string, fileMeta?: any): StageAResult['
 
 // Regex Patterns
 const REGEX_ITEM_PATH = /^\s*(\d{1,3}(\.\d{1,3}){1,6})\s+(.{5,})$/; // "1.2.3 Description"
+// Captura títulos de seção de nível 1: "1 SERVIÇOS PRELIMINARES" ou "19 URBANIZAÇÃO"
+const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s{1,}([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-]{8,})$/;
 const REGEX_CODE_START = /^(\d{4,10}|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/; // "94321 Description" or "CPU123 Desc" or "2451 Desc"
 const REGEX_UNIT = /\b(UN|und|m²|m2|m³|m3|kg|h|vb|m)\b/i;
 const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\d{1,4})?\b/g; // 1.234,56 or 1234.56
@@ -510,6 +512,30 @@ export function generateCandidatesStageA(text: string, options: {
                 };
                 candidates.push(cand);
                 continue; // Winner takes line
+            }
+
+            // Testa título de seção nível 1 (ex: "1  SERVIÇOS PRELIMINARES E INDIRETOS")
+            const matchSection = line.match(REGEX_SECTION_TITLE);
+            if (matchSection) {
+                candidates.push({
+                    id: generateShortId(),
+                    kind: 'synthetic_line',
+                    source: 'ocr_heuristic_v1', // conform to type
+                    confidence: 0.8,
+                    line_no: originalLineNo,
+                    evidence: line,
+                    snippet: line,
+                    context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
+                    context_after: lines.slice(i + 1, Math.min(limit, i + 2)).join('\n'),
+                    extracted_signals: {
+                        item_path: matchSection[1],
+                        description_fragment: matchSection[2].trim(),
+                    },
+                    raw_numbers: [],
+                    warnings: ['section_title_candidate'],
+                    debug_heuristic: ['S_TITLE']
+                } as any);
+                continue;
             }
 
             // ST: Section Title — prefixo numérico/alfabético/romano sem código nem valores

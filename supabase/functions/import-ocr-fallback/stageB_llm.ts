@@ -212,6 +212,30 @@ Se o documento mostra "3.1 PILARES" seguido de um item 92762, o item_path é 3.1
 Se o documento mostra "3.2 VIGAS" seguido de um item 92762, o item_path é 3.2.N.
 Nunca consolide dois itens iguais de seções diferentes em um único item_path.
 
+EXEMPLO OBRIGATÓRIO — código 92762 (CA-50 10mm):
+Se o PDF mostra a sequência:
+  3.1 PILARES
+  3.1.1 92423 Fôrma pilares
+  3.1.2 92762 Armação CA-50 10mm  ← item_path DEVE ser 3.1.2
+  3.1.3 92763 Armação CA-50 12,5mm
+Então 92762 tem item_path=3.1.2. Se 92762 aparecer depois em Vigas (3.2),
+terá item_path=3.2.X. São dois itens distintos com o mesmo código.
+
+REGRA CRÍTICA — DUPLICATAS DE QUADRO ELÉTRICO (QGBT):
+Em orçamentos de instalações elétricas, os itens do QGBT (Quadro Geral de Baixa Tensão)
+frequentemente aparecem listados duas vezes no PDF: uma vez na planilha geral e outra
+vez no detalhamento do quadro. Quando o mesmo código (ex: CPU2618, CPU2619, CPU2621,
+CPU2622, CPU2623, CPU2624, CPU2625, CPU2626, CPU2627) aparece duas vezes na mesma
+seção com a mesma quantidade e preço unitário, extraia APENAS A PRIMEIRA OCORRÊNCIA
+e ignore a segunda. Nunca gere dois itens com o mesmo código e mesma quantidade
+dentro da mesma seção principal (mesmo primeiro dígito do item_path).
+
+REGRA — UNIDADES COMPOSTAS:
+Quando a unidade de um item é composta como "M2XMÊS", "UNXMÊS", "M²XMÊS",
+trate como unidade válida e extraia quantity e unit_price da linha seguinte
+(context_after). Nunca deixe quantity=null para itens com unidade composta —
+esses itens sempre têm quantidade na linha imediatamente abaixo no PDF.
+
 RULE — UNIQUE ITEM_PATH (MANDATORY):
 Each item MUST have a unique item_path. When two or more items appear on the same OCR line,
 the OCR text will contain a distinct numeric prefix for each item. Extract each item's own item_path
@@ -1120,6 +1144,13 @@ export async function executeStageB(
             const existingHasData = existing.quantity != null && existing.unit_price != null;
             if (currentHasData && !existingHasData) {
                 mergeMap.set(key, item);
+            } else if (currentHasData && existingHasData) {
+                // ambos têm dados — prefere o com descrição mais longa (mais completa)
+                const currentDescLen = (item.description || '').length;
+                const existingDescLen = (existing.description || '').length;
+                if (currentDescLen > existingDescLen) {
+                    mergeMap.set(key, item);
+                }
             }
         }
     }
