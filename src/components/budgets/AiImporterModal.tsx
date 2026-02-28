@@ -285,6 +285,7 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         doc_role: role,
                         original_filename: file.name,
                         content_type: file.type,
+                        file_size_bytes: file.size,
                         storage_bucket: 'imports',
                         storage_path: storagePath
                     })

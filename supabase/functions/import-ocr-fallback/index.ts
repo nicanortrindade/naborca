@@ -718,11 +718,14 @@ serve(async (req: Request) => {
                 const pdfData = await extractPdfText(buffer);
                 const realLen = pdfData?.text?.length || 0;
 
-                // Salva extracted_text no banco para uso posterior pelo AnalyticReportParser
-                if (pdfData?.text && file.doc_role === 'analytical') {
+                // Salva extracted_text no banco
+                if (pdfData?.text) {
                     await supabase.from('import_files').update({
                         extracted_text: pdfData.text
                     }).eq('id', file.id);
+                }
+
+                if (pdfData?.text && file.doc_role === 'analytical') {
                     // Analytical file: só precisa do texto extraído, não do Stage A/B
                     await updateImportFileExtractionState(supabase, file.id, {
                         extraction_status: 'done',
