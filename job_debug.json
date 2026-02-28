@@ -1,0 +1,29 @@
+{
+  "id": "4bc3e5fc-fd8b-4f1b-bb32-cdf141f68cff",
+  "created_at": "2026-02-23T22:39:26.052621+00:00",
+  "updated_at": "2026-02-23T23:02:04.390945+00:00",
+  "user_id": "6c3c24cd-5392-4238-9374-2f439c462e87",
+  "status": "done",
+  "doc_role": "unknown",
+  "document_context": {
+    "debug_info": {
+      "stage": "delegation_done",
+      "last_checkpoint": "delegation_done"
+    }
+  },
+  "is_desonerado": null,
+  "progress": 20,
+  "current_step": "dispatched_to_worker",
+  "error_message": null,
+  "artifacts": {},
+  "stage": "finalized",
+  "stage_updated_at": "2026-02-23T22:39:26.052621+00:00",
+  "last_error": null,
+  "heartbeat_at": "2026-02-23T23:00:39.966+00:00",
+  "extraction_attempts": 0,
+  "extraction_retryable": true,
+  "extraction_next_retry_at": "2026-02-23T22:49:02.004853+00:00",
+  "extraction_last_reason": "watchdog_timeout_processing",
+  "result_budget_id": "1e890721-8d45-49cc-acd1-4e55951bf9ab",
+  "finalized_at": "2026-02-23T23:02:04.390945+00:00"
+}

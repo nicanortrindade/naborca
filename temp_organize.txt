@@ -1,0 +1,261 @@
+﻿
+> temp_budget_editor.ts:729:   
+ const organizeHierarchy = 
+(allItems: any[]) => {
+  temp_budget_editor.ts:730:   
+     if (!allItems) return [];
+  temp_budget_editor.ts:731:
+  temp_budget_editor.ts:732:   
+     const sorter = (a: any, 
+b: any) => (a.order || 0) - 
+(b.order || 0);
+  temp_budget_editor.ts:733:
+  temp_budget_editor.ts:734:   
+     // 0. Pre-process: 
+Virtual Parenting for Imported 
+Items (Fix Orphans)
+  temp_budget_editor.ts:735:   
+     let lastL1: any = null;
+  temp_budget_editor.ts:736:   
+     let lastL2: any = null;
+  temp_budget_editor.ts:737:
+  temp_budget_editor.ts:738:   
+     const fixedItems = [...all
+Items].sort(sorter).map(item 
+=> {
+  temp_budget_editor.ts:739:   
+         const newItem = { 
+...item };
+  temp_budget_editor.ts:740:
+  temp_budget_editor.ts:741:   
+         // Track parents 
+based on visual order
+  temp_budget_editor.ts:742:   
+         if (newItem.level === 
+1) {
+  temp_budget_editor.ts:743:   
+             lastL1 = newItem;
+  temp_budget_editor.ts:744:   
+             lastL2 = null;
+  temp_budget_editor.ts:745:   
+         } else if 
+(newItem.level === 2) {
+  temp_budget_editor.ts:746:   
+             lastL2 = newItem;
+  temp_budget_editor.ts:747:   
+             if 
+(!newItem.parentId && lastL1) 
+newItem.parentId = lastL1.id;
+  temp_budget_editor.ts:748:   
+         } else if 
+(newItem.level >= 3) {
+  temp_budget_editor.ts:749:   
+             if 
+(!newItem.parentId && lastL2) 
+newItem.parentId = lastL2.id;
+  temp_budget_editor.ts:750:   
+         }
+  temp_budget_editor.ts:751:   
+         return newItem;
+  temp_budget_editor.ts:752:   
+     });
+  temp_budget_editor.ts:753:
+  temp_budget_editor.ts:754:   
+     // 1. Get Etapas (Level 1)
+  temp_budget_editor.ts:755:   
+     const etapas = 
+fixedItems.filter(i => i.level 
+=== 1);
+  temp_budget_editor.ts:756:   
+     const flatList: any[] = 
+[];
+  temp_budget_editor.ts:757:
+  temp_budget_editor.ts:758:   
+     etapas.forEach(etapa => {
+  temp_budget_editor.ts:759:   
+         // Find subetapas 
+(Level 2)
+  temp_budget_editor.ts:760:   
+         const subetapas = 
+fixedItems.filter(i => i.level 
+=== 2 && i.parentId === 
+etapa.id);
+  temp_budget_editor.ts:761:
+  temp_budget_editor.ts:762:   
+         // REGRA 3: Os 
+valores j├í est├úo calculados 
+- usar finalPrice do item 
+diretamente
+  temp_budget_editor.ts:763:   
+         // calculatedTotal 
+j├í foi definido no 
+recalculateItemHierarchy
+  temp_budget_editor.ts:764:   
+         flatList.push({
+  temp_budget_editor.ts:765:   
+             ...etapa,
+  temp_budget_editor.ts:766:   
+             calculatedTotal: 
+etapa.finalPrice || 0
+  temp_budget_editor.ts:767:   
+         });
+  temp_budget_editor.ts:768:
+  temp_budget_editor.ts:769:   
+         // Add Subetapas and 
+their Items
+  temp_budget_editor.ts:770:   
+         subetapas.forEach(sub 
+=> {
+  temp_budget_editor.ts:771:   
+             const subItems = 
+fixedItems.filter(i => i.level 
+>= 3 && i.parentId === sub.id);
+  temp_budget_editor.ts:772:
+  temp_budget_editor.ts:773:   
+             // Subetapa com 
+total j├í calculado
+  temp_budget_editor.ts:774:   
+             flatList.push({
+  temp_budget_editor.ts:775:   
+                 ...sub,
+  temp_budget_editor.ts:776:   
+                 
+calculatedTotal: 
+sub.finalPrice || 0,
+  temp_budget_editor.ts:777:   
+                 _children: 
+subItems
+  temp_budget_editor.ts:778:   
+             });
+  temp_budget_editor.ts:779:
+  temp_budget_editor.ts:780:   
+             // Adicionar 
+itens (valores j├í calculados)
+  temp_budget_editor.ts:781:   
+             
+subItems.forEach((item: any) 
+=> {
+  temp_budget_editor.ts:782:   
+                 
+flatList.push(item);
+  temp_budget_editor.ts:783:   
+             });
+  temp_budget_editor.ts:784:   
+         });
+  temp_budget_editor.ts:785:   
+     });
+  temp_budget_editor.ts:786:
+  temp_budget_editor.ts:787:   
+     // SAFETY NET: Show 
+Orphans instead of hiding them
+  temp_budget_editor.ts:788:   
+     const visibleIds = new 
+Set(flatList.map(i => i.id));
+  temp_budget_editor.ts:789:   
+     const orphans = 
+fixedItems.filter(i => i.id && 
+!visibleIds.has(i.id));
+  temp_budget_editor.ts:790:
+  temp_budget_editor.ts:791:   
+     if (orphans.length > 0) {
+  temp_budget_editor.ts:792:   
+         console.warn("Orphans 
+detected:", orphans.length);
+  temp_budget_editor.ts:793:   
+         orphans.forEach(item 
+=> {
+  temp_budget_editor.ts:794:   
+             flatList.push({
+  temp_budget_editor.ts:795:   
+                 ...item,
+  temp_budget_editor.ts:796:   
+                 description: 
+(item.description && typeof 
+item.description === 'string' 
+&& item.description.startsWith(
+'['))
+  temp_budget_editor.ts:797:   
+                     ? 
+item.description
+  temp_budget_editor.ts:798:   
+                     : 
+`[ÔÜá´©Å VINCULAR] 
+${item.description || 'Item 
+sem descri├º├úo'}`,
+  temp_budget_editor.ts:799:   
+                 isOrphan: true
+  temp_budget_editor.ts:800:   
+             });
+  temp_budget_editor.ts:801:   
+         });
+  temp_budget_editor.ts:802:   
+     }
+  temp_budget_editor.ts:803:
+  temp_budget_editor.ts:804:   
+     return flatList;
+  temp_budget_editor.ts:805:   
+ };
+  temp_budget_editor.ts:806:
+  temp_budget_editor.ts:807:   
+ // REGRA 3: Calculate Global 
+Total (Only Level 3+ Items 
+using finalPrice)
+  temp_budget_editor.ts:808:   
+ // finalPrice j├í inclui: 
+quantity * unitPrice * (1 + 
+BDI)
+  temp_budget_editor.ts:809:   
+ // Totais j├í calculados no 
+useMemo do visibleRows
+  temp_budget_editor.ts:810:   
+ // Removido l├│gica 
+redundante de 
+totalBaseRaw/applyAdjustment
+  temp_budget_editor.ts:811:
+  temp_budget_editor.ts:812:
+  temp_budget_editor.ts:813:   
+ // Sync Total Global if needed
+  temp_budget_editor.ts:814:   
+ useEffect(() => {
+  temp_budget_editor.ts:815:   
+     if (!budget || !items) 
+return;
+  temp_budget_editor.ts:816:
+  temp_budget_editor.ts:817:   
+     // REGRA 3: Total global 
+= totalFinal ajustado (SSOT)
+  temp_budget_editor.ts:818:   
+     const currentTotalGlobal 
+= totalFinal;
+  temp_budget_editor.ts:819:
+  temp_budget_editor.ts:820:   
+     const dbTotal = 
+safeNumber(budget.totalValue);
+  temp_budget_editor.ts:821:
+  temp_budget_editor.ts:822:   
+     // Sync if diff > 1 cent
+  temp_budget_editor.ts:823:   
+     if (Math.abs(dbTotal - 
+currentTotalGlobal) > 0.01) {
+  temp_budget_editor.ts:824:   
+         const timer = 
+setTimeout(() => {
+  temp_budget_editor.ts:825:   
+             
+console.log("Syncing Budget 
+Total...", currentTotalGlobal);
+  temp_budget_editor.ts:826:   
+             // Optimistic 
+update local
+  temp_budget_editor.ts:827:   
+             setBudget((prev: 
+any) => prev ? { ...prev, 
+totalValue: currentTotalGlobal 
+} : null);
+  temp_budget_editor.ts:828:
+  temp_budget_editor.ts:829:   
+             BudgetService.upda
+te(budget.id!, { totalValue: 
+currentTotalGlobal })
+
+

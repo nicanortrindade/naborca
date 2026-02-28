@@ -1,0 +1,34 @@
+﻿[AnalyticParser] Parsed 1 compositions with 3 total items.
+{
+  "UNKNOWN": {
+    "code": "UNKNOWN",
+    "description": "OBRAS",
+    "unit": "UNXM├èS",
+    "items": [
+      {
+        "code": "DIVERSOS",
+        "description": "",
+        "type": "composition",
+        "unit": "H",
+        "coefficient": 1.32,
+        "price": 24.37
+      },
+      {
+        "code": "DIVERSOS",
+        "description": "",
+        "type": "composition",
+        "unit": "H",
+        "coefficient": 1.32,
+        "price": 25.56
+      },
+      {
+        "code": "A.12.000.021099",
+        "description": "CONTAINER DEP├ôSITO, M├ôDULO MET├üLICO EM A├çO GALVANIZADO DE 6,0X2,3X2,5M",
+        "type": "insumo",
+        "unit": "UNXM├èS",
+        "coefficient": 1,
+        "price": 869.79
+      }
+    ]
+  }
+}

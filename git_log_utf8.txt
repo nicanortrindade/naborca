@@ -1,0 +1,10 @@
+﻿16b7b7b feat: suporte a hierarquia N4 no BudgetEditor
+2591530 fix(api): add Check 3 to skip coded multiline duplicate items
+43b70ba fix(api): improve duplicate filter in budget finalizer to handle subcases
+224f9c9 feat(api): add skip logic for section items and duplicate lines in budget finalizer
+76a4840 feat: enable force_rehydrate functionality in import-finalize-budget
+6aa39af fix(analyticParser): apply regex improvements to decouple item code and bank
+0d6b867 feat(analyticParser): complete state-machine rewrite for robust glued regex parsing
+75edcf0 fix(extraction): filter project headers/section totals, strip glued units, enforce unique item_path
+16b9b65 fix(parser): rewrite AnalyticReportParser for OCR glued-text format
+6e71ddf fix(import-ocr-fallback): return continued for ocr-worker to process next batches

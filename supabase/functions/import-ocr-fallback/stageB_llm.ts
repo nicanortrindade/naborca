@@ -1102,22 +1102,42 @@ export async function executeStageB(
         }
     };
 
-    // [STAGE-B-LOG-5] FAIL FAST -> NOW PERMISSIVE
-    if (allItems.length === 0) {
-        console.warn("[STAGE-B] Zero items produced (valid result, not error). Preserving debug info.");
-        warnings.push("STAGE_B_ZERO_ITEMS_RETURNED");
+    // MERGE RULE: para mesmo pathPrefix+code, manter o item com quantity/unit_price preenchidos
+    const mergeMap = new Map<string, StageBItem>();
+    const allItems_merged: StageBItem[] = [];
+    for (const item of allItems) {
+        const prefix = (item.item_path || '').split('.')[0];
+        const key = `${prefix}|${(item.composition_code || '').trim().toUpperCase()}`;
+        if (!item.composition_code) {
+            allItems_merged.push(item);
+            continue;
+        }
+        const existing = mergeMap.get(key);
+        if (!existing) {
+            mergeMap.set(key, item);
+        } else {
+            const currentHasData = item.quantity != null && item.unit_price != null;
+            const existingHasData = existing.quantity != null && existing.unit_price != null;
+            if (currentHasData && !existingHasData) {
+                mergeMap.set(key, item);
+            }
+        }
     }
 
+    // Atualizar uniqueItems com o resultado do merge
+    const mergedResults = [...allItems_merged, ...Array.from(mergeMap.values())];
+
+    // Agora o item_count e os items do resultado usarão a lista mergeada
     const result: StageBOutput = {
         version: "v1",
         generated_at: new Date().toISOString(),
         model: MODEL_NAME,
         request_id: requestId,
-        items: uniqueItems,
-        item_count: uniqueItems.length,
+        items: mergedResults,
+        item_count: mergedResults.length,
         total_batches: totalBatchesCalculated,
         batches: batches,
-        warnings: warnings, // Changed from warnings to allWarnings
+        warnings: warnings,
         stats: {
             candidates_total: candidates.length,
             candidates_used: stats.candidates_used,
