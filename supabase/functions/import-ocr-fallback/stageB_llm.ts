@@ -1158,6 +1158,19 @@ export async function executeStageB(
     // Atualizar uniqueItems com o resultado do merge
     const mergedResults = [...allItems_merged, ...Array.from(mergeMap.values())];
 
+    // DEDUP QGBT: remove segunda ocorrência de mesmo code+quantity+unit_price na mesma seção
+    const qgbtSeen = new Set<string>();
+    const deduped: StageBItem[] = [];
+    for (const item of mergedResults) {
+        const prefix = (item.item_path || '').split('.')[0];
+        const key = `${prefix}|${(item.code || '').trim().toUpperCase()}|${item.quantity}|${item.unit_price}`;
+        if (item.code && qgbtSeen.has(key)) continue;
+        if (item.code) qgbtSeen.add(key);
+        deduped.push(item);
+    }
+    mergedResults.length = 0;
+    mergedResults.push(...deduped);
+
     // Agora o item_count e os items do resultado usarão a lista mergeada
     const result: StageBOutput = {
         version: "v1",

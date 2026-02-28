@@ -148,12 +148,26 @@ Deno.serve(async (req) => {
         EdgeRuntime.waitUntil(
             (async () => {
                 try {
-                    const { data: rpcData, error: rpcError } = await adminClient.rpc('finalize_import_to_budget', {
+                    let rpcResult = await adminClient.rpc('finalize_import_to_budget', {
                         p_job_id: job_id,
                         p_user_id: targetUserId,
                         p_params: params,
                         p_analytic_data: analyticData
                     });
+
+                    // Auto-finalize loop: keep calling until done=true
+                    while (rpcResult.data && !rpcResult.data.done) {
+                        console.log(`[FinalizeBudget] RPC not done yet, continuing...`);
+                        rpcResult = await adminClient.rpc('finalize_import_to_budget', {
+                            p_job_id: job_id,
+                            p_user_id: targetUserId,
+                            p_params: params,
+                            p_analytic_data: analyticData
+                        });
+                    }
+
+                    const rpcData = rpcResult.data;
+                    const rpcError = rpcResult.error;
 
                     if (rpcError) {
                         console.error(`[FinalizeBudget] RPC error:`, rpcError.message);

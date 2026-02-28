@@ -209,10 +209,56 @@ BEGIN
                             v_parent_id := v_n1_id;
                             v_level := 3;
                         END IF;
-                    -- Quando path tem 3+ segmentos (ex: "1.1.1")
-                    ELSIF v_path_depth >= 3 THEN
-                        v_parent_id := v_n2_id;
-                        v_level := 3;
+                    -- Quando path tem exatamente 3 segmentos (ex: "1.1.1")
+                    ELSIF v_path_depth = 3 THEN
+                        -- É um título de grupo N3 (sem código e sem preço)
+                        IF v_item.composition_code IS NULL
+                           AND COALESCE(v_item.unit_price, 0) = 0
+                           AND COALESCE(v_item.quantity, 0) = 0 THEN
+                            -- Busca ou cria N3
+                            SELECT id INTO v_n3_id FROM public.budget_items
+                            WHERE budget_id = v_budget_id
+                              AND level = 3
+                              AND hydration_details->>'path_key' = v_n3_key;
+
+                            IF v_n3_id IS NULL THEN
+                                INSERT INTO public.budget_items
+                                    (budget_id, user_id, level, parent_id, description, type, order_index, hydration_details)
+                                VALUES (v_budget_id, v_job.user_id, 3, v_n2_id,
+                                    v_clean_description, 'group', v_items_processed,
+                                    jsonb_build_object('parser', 'v1', 'path_key', v_n3_key))
+                                RETURNING id INTO v_n3_id;
+                            ELSE
+                                -- Renomeia o grupo N3 genérico se existir
+                                UPDATE public.budget_items
+                                SET description = v_clean_description
+                                WHERE id = v_n3_id
+                                  AND (description LIKE 'SUBGRUPO %');
+                            END IF;
+                            CONTINUE;
+                        ELSE
+                            -- É um item real sob N2
+                            v_parent_id := v_n2_id;
+                            v_level := 4;
+                        END IF;
+                    -- Quando path tem 4+ segmentos (ex: "1.1.1.1")
+                    ELSIF v_path_depth >= 4 THEN
+                        -- Busca ou cria N3 para servir de pai
+                        SELECT id INTO v_n3_id FROM public.budget_items
+                        WHERE budget_id = v_budget_id
+                          AND level = 3
+                          AND hydration_details->>'path_key' = v_n3_key;
+
+                        IF v_n3_id IS NULL THEN
+                            INSERT INTO public.budget_items
+                                (budget_id, user_id, level, parent_id, description, type, order_index, hydration_details)
+                            VALUES (v_budget_id, v_job.user_id, 3, v_n2_id,
+                                'SUBGRUPO ' || v_n3_key, 'group', v_items_processed,
+                                jsonb_build_object('parser', 'v1', 'path_key', v_n3_key))
+                            RETURNING id INTO v_n3_id;
+                        END IF;
+                        v_parent_id := v_n3_id;
+                        v_level := 4;
                     END IF;
                 END;
 
@@ -338,7 +384,7 @@ BEGIN
         -- Inserir item com hydration_status = 'pending_review' (será hidratado de forma assíncrona)
         INSERT INTO public.budget_items (budget_id, user_id, level, parent_id, description, unit, quantity, unit_price,
             total_price, final_price, type, source, code, source_import_item_id, order_index, hydration_details, hydration_status)
-        VALUES (v_budget_id, v_job.user_id, 3, v_parent_id, v_clean_description, COALESCE(v_item.unit, 'UN'),
+        VALUES (v_budget_id, v_job.user_id, v_level, v_parent_id, v_clean_description, COALESCE(v_item.unit, 'UN'),
             COALESCE(v_item.quantity, 1), COALESCE(v_item.unit_price, 0),
             (COALESCE(v_item.quantity, 1) * COALESCE(v_item.unit_price, 0)),
             (COALESCE(v_item.quantity, 1) * COALESCE(v_item.unit_price, 0)),
