@@ -204,6 +204,14 @@ If item_path is not explicitly present in the candidate text, infer it from cont
 3. If no hierarchical number is found anywhere in the candidate context, leave item_path as null.
 Do NOT invent item_path numbers that have no basis in the candidate context.
 
+REGRA CRÍTICA — AÇO ESTRUTURAL EM MÚLTIPLAS SUB-ETAPAS:
+Quando o mesmo código de aço (ex: 92762 CA-50 10mm) aparece em sub-etapas diferentes
+(ex: Pilares 3.1 e Vigas 3.2), o item_path deve ser determinado pela sub-etapa
+imediatamente anterior no documento — nunca inferido pelo código do material.
+Se o documento mostra "3.1 PILARES" seguido de um item 92762, o item_path é 3.1.N.
+Se o documento mostra "3.2 VIGAS" seguido de um item 92762, o item_path é 3.2.N.
+Nunca consolide dois itens iguais de seções diferentes em um único item_path.
+
 RULE — UNIQUE ITEM_PATH (MANDATORY):
 Each item MUST have a unique item_path. When two or more items appear on the same OCR line,
 the OCR text will contain a distinct numeric prefix for each item. Extract each item's own item_path
@@ -357,7 +365,8 @@ async function persistStageBMetaAtomic(
 function generateStageBDedupKey(item: StageBItem): string {
     const clean = (s: string | null | undefined) => (s || '').trim().toUpperCase();
     const pathPrefix = (item.item_path || '').split('.')[0];
-    return `${pathPrefix}|${clean(item.code)}|${clean(item.unit)}|${clean(item.quantity)}`;
+    // FIX A: ignora description para eliminar duplicatas de linha quebrada no PDF
+    return `${pathPrefix}|${clean(item.code)}|${clean(item.unit)}|${String(item.quantity ?? '')}|${String(item.unit_price ?? '')}`;
 }
 
 // ------------------------------------------------------------------
@@ -793,6 +802,25 @@ ${JSON.stringify(candidatesContext, null, 2)}
                 // Strict Zod Check
                 const safe = StageBItemSchema.safeParse(item);
                 if (safe.success) {
+                    // FIX B: rejeita fragmentos de linha — unidades soltas ou continuações de descrição
+                    const FRAGMENT_PATTERN = /^(M|KG|UN|M²|M³|M2|M3|MÊS|MES|UNXMÊS|UNXMES|H|ML)$/i;
+                    const isFragment = !safe.data.code &&
+                        (!safe.data.description ||
+                            safe.data.description.trim().length < 10 ||
+                            FRAGMENT_PATTERN.test(safe.data.description.trim()));
+                    if (isFragment) {
+                        rejectedCount++;
+                        rejectedItems.push({
+                            batch_index: batchIndex,
+                            index: idx,
+                            candidate_id: safe.data.evidence?.candidate_id ?? null,
+                            reason: 'FRAGMENT_REJECTED',
+                            error_message: 'Fragment line: bare unit or short description without code',
+                            candidate_excerpt: safe.data.description?.substring(0, 50) || 'NO_DESC',
+                            raw_output_excerpt: JSON.stringify(raw).substring(0, 300)
+                        });
+                        continue;
+                    }
                     validatedItems.push(safe.data);
                 } else {
                     rejectedCount++;
