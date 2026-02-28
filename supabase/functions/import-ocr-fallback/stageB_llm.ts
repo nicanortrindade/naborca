@@ -352,8 +352,8 @@ async function persistStageBMetaAtomic(
 // ------------------------------------------------------------------
 function generateStageBDedupKey(item: StageBItem): string {
     const clean = (s: string | null | undefined) => (s || '').trim().toUpperCase();
-    // FIX 3: inclui item_path para permitir mesmo código em seções diferentes
-    return `${clean(item.item_path)}|${clean(item.code)}|${clean(item.description)}|${clean(item.unit)}|${clean(item.quantity)}|${clean(item.total_price)}`;
+    const pathPrefix = (item.item_path || '').split('.')[0];
+    return `${pathPrefix}|${clean(item.code)}|${clean(item.unit)}|${clean(item.quantity)}`;
 }
 
 // ------------------------------------------------------------------
