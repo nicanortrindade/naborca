@@ -150,7 +150,7 @@ export function detectDocTypeHints(text: string, fileMeta?: any): StageAResult['
 
 // Regex Patterns
 const REGEX_ITEM_PATH = /^\s*(\d{1,3}(\.\d{1,3}){1,6})\s+(.{5,})$/; // "1.2.3 Description"
-const REGEX_CODE_START = /^(\d{5,10}|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/; // "94321 Description" or "CPU123 Desc"
+const REGEX_CODE_START = /^(\d{4,10}|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/; // "94321 Description" or "CPU123 Desc" or "2451 Desc"
 const REGEX_UNIT = /\b(UN|und|m²|m2|m³|m3|kg|h|vb|m)\b/i;
 const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\d{1,4})?\b/g; // 1.234,56 or 1234.56
 // Guard: detecta linhas que são títulos de seção e NÃO devem ser consumidas pelo S0
@@ -433,6 +433,55 @@ export function generateCandidatesStageA(text: string, options: {
             let hitS2 = false;
             let hitS3 = false;
             let hitS4 = false;
+
+            // ST-EMBEDDED: detecta título N1/N2 embutido na mesma linha/célula que um item
+            // Ex: "FUNDAÇÃO\n LOCAÇÃO CONVENCIONAL DE OBRA..." ou "9.1 REVESTIMENTO\n PISO..."
+            const embeddedTitleMatch = line.match(/^([A-Z0-9ÀÁÂÃÉÊÍÓÔÕÚÇ][A-Z0-9ÀÁÂÃÉÊÍÓÔÕÚÇ\s.]{3,})\n\s*(.+)$/);
+            if (embeddedTitleMatch) {
+                const titlePart = embeddedTitleMatch[1].trim();
+                const itemPart = embeddedTitleMatch[2].trim();
+                // Só processa se o título tiver tamanho mínimo
+                if (titlePart.length >= 4) {
+                    // Candidato 1: título de seção
+                    candidates.push({
+                        id: generateShortId(),
+                        kind: 'synthetic_line',
+                        source: 'ocr_heuristic_v1',
+                        confidence: 0.75,
+                        line_no: originalLineNo,
+                        evidence: titlePart,
+                        snippet: titlePart,
+                        context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
+                        context_after: itemPart,
+                        extracted_signals: {
+                            description_fragment: titlePart
+                        },
+                        raw_numbers: [],
+                        warnings: ['section_title_candidate', 'embedded_title'],
+                        debug_heuristic: ['ST_EMBEDDED_TITLE']
+                    });
+
+                    // Candidato 2: o item que estava colado
+                    candidates.push({
+                        id: generateShortId(),
+                        kind: 'synthetic_line',
+                        source: 'ocr_heuristic_v1',
+                        confidence: 0.65,
+                        line_no: originalLineNo,
+                        evidence: itemPart,
+                        snippet: itemPart,
+                        context_before: titlePart,
+                        context_after: lines.slice(i + 1, Math.min(limit, i + 3)).join('\n'),
+                        extracted_signals: {
+                            description_fragment: itemPart
+                        },
+                        raw_numbers: extractNumbers(itemPart).map(v => ({ value: v, text: String(v), lineNo: originalLineNo })),
+                        warnings: [],
+                        debug_heuristic: ['ST_EMBEDDED_ITEM']
+                    });
+                    continue;
+                }
+            }
 
             // S1: Item Path
             const matchPath = line.match(REGEX_ITEM_PATH);
