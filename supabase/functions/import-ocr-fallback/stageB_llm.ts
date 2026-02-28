@@ -44,6 +44,9 @@ CRITICAL RULE - CONTEXT FIELDS:
 - context_before contains the PREVIOUS item's values. NEVER use context_before as the source for this item's unit_price or total_price.
 - If context_after contains "X BDI 1" pattern, the number before "BDI 1" is unit_price com BDI — IGNORE IT. Use the number before that as unit_price (sem BDI). The number before that is unit_price (sem BDI). IGNORE both values from context_before entirely for numeric fields.
 
+CRITICAL RULE — UNIT PRICE EXTRACTION:
+When quantity is successfully extracted but unit_price is null or zero, ALWAYS scan the next 3 lines in context_after for a numeric value that could be unit_price. The unit_price is typically the first standalone Brazilian-format number (using comma as decimal separator) that appears after the quantity value. Never return unit_price as null if there are numeric values present in context_after.
+
 EXTRACTION RULES:
 1. MANDATORY EXTRACTION: Extract an item if the snippet describes a service, work, constructive element, or budget stage.
 2. EVIDENCE REQUIRED: Cite the exact text that justifies each field in the evidence object.
@@ -171,6 +174,7 @@ EXTRACTION RULES:
     - "Total com BDI"
     - "TOTAL"
     - "Subtotal"
+    - "INSTALAÇÕES HIDROSSANITÁRIAS" sem código (quando description = "INSTALAÇÕES HIDROSSANITÁRIAS" e code = null)
     These are footer/summary rows from the PDF, NOT budget items.
 9. **PRICE SOURCE EXTRACTION (MANDATORY)**:
    - price_source: identifique a fonte de preço do item. Procure por nomes como SINAPI, ORSE, SICRO, SBC, EMOP, SETOP, SEINFRA, IOPES, CPU, CDHU, AGESUL, AGETOP, Próprio. Retorne apenas o nome do banco sem data ou versão. Se não identificado, retorne null.
