@@ -1,4 +1,4 @@
-
+﻿
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { BudgetService } from '../lib/supabase-services/BudgetService';
@@ -37,7 +37,7 @@ import type {
 import type { ImportJob } from '../features/importer/types';
 
 /**
- * Normalizador único de recursos (insumos e composições)
+ * Normalizador ├║nico de recursos (insumos e composi├º├Áes)
  * Garante tipos consistentes INPUT/COMPOSITION e fallbacks seguros
  */
 type ResourceKind = 'insumo' | 'composition';
@@ -61,7 +61,7 @@ function normalizeResource(res: any, kind: ResourceKind): NormalizedResource {
         return {
             type: kind === 'insumo' ? 'INPUT' : 'COMPOSITION',
             code: '',
-            description: 'Recurso inválido',
+            description: 'Recurso inv├ílido',
             level: 0,
             unit: '',
             price: 0,
@@ -85,14 +85,14 @@ function normalizeResource(res: any, kind: ResourceKind): NormalizedResource {
     const code = res.codigo || res.code || res.id || '';
 
     // Extrair description com fallbacks (descricao, description, nome, name)
-    const description = res.descricao || res.description || res.nome || res.name || 'Sem descrição';
+    const description = res.descricao || res.description || res.nome || res.name || 'Sem descri├º├úo';
 
     // Extrair unit com fallbacks (unidade, unit, un)
     const unit = res.unidade || res.unit || res.un || 'UN';
 
     // Extrair price com fallbacks (preco, price, valor, custoTotal, total_cost)
     // Extrair price com fallbacks (preco, price, valor, custoTotal, total_cost)
-    // If explicit undefined/null, keep it to show "Sem preço"
+    // If explicit undefined/null, keep it to show "Sem pre├ºo"
     const priceRaw = res.preco ?? res.price ?? res.valor ?? res.custoTotal ?? res.total_cost ?? res.price_unit;
     const price = (priceRaw !== undefined && priceRaw !== null)
         ? (typeof priceRaw === 'number' ? priceRaw : parseFloat(priceRaw) || 0)
@@ -194,7 +194,7 @@ const BudgetEditor = () => {
 
             // B. Fallback: Try regex on name (Legacy/Weak link)
             if (budget?.name) {
-                const match = budget.name.match(/Importação IA - ([0-9a-fA-F-]{36})/);
+                const match = budget.name.match(/Importa├º├úo IA - ([0-9a-fA-F-]{36})/);
                 if (match && match[1]) {
                     const jobId = match[1];
                     const { data: jobByName } = await supabase.from('import_jobs' as any)
@@ -220,7 +220,7 @@ const BudgetEditor = () => {
     }, [sourceJob, items]);
 
     const checkPartialStatus = (job: any, currentItems: any[] = []) => {
-        // Verifica se usuário já dispensou este aviso
+        // Verifica se usu├írio j├í dispensou este aviso
         const dismissKey = job.id
             ? `naborca_dismiss_partial_${job.id}`
             : `naborca_dismiss_partial_budget_${budgetId}`;
@@ -231,9 +231,9 @@ const BudgetEditor = () => {
             return;
         }
 
-        // Lógica ROBUSTA de "Looks Incomplete"
+        // L├│gica ROBUSTA de "Looks Incomplete"
 
-        // 1. Status explícitos de falha parcial ou espera
+        // 1. Status expl├¡citos de falha parcial ou espera
         const partialStatuses = [
             'waiting_user_extraction_failed',
             'waiting_user_rate_limited',
@@ -241,15 +241,15 @@ const BudgetEditor = () => {
         ];
         const isPartialStatus = partialStatuses.includes(job.status);
 
-        // 2. Erros explícitos
+        // 2. Erros expl├¡citos
         const hasError = !!job.last_error;
 
-        // 3. Razões internas de incompleteza (document_context)
+        // 3. Raz├Áes internas de incompleteza (document_context)
         const reason = job.document_context?.debug_info?.reason;
         const incompleteReasons = ['no_items_after_tasks_done', 'timeout', 'worker_limit', 'low_completeness'];
         const hasReason = reason && incompleteReasons.includes(reason);
 
-        // 4. HEURÍSTICA DE ITENS (Para Jobs DONE mas parciais)
+        // 4. HEUR├ìSTICA DE ITENS (Para Jobs DONE mas parciais)
         let looksIncompleteByHeuristic = false;
 
         if (currentItems && currentItems.length > 0) {
@@ -304,8 +304,8 @@ const BudgetEditor = () => {
         loadSettings();
     }, [budgetId]);
 
-    // REGRA 1: Valores vêm PRONTOS do backend
-    // O frontend NÃO recalcula valores, apenas calcula peso (%) dinamicamente
+    // REGRA 1: Valores v├¬m PRONTOS do backend
+    // O frontend N├âO recalcula valores, apenas calcula peso (%) dinamicamente
 
     const loadBudget = async () => {
         try {
@@ -323,10 +323,10 @@ const BudgetEditor = () => {
                 }
             });
 
-            // 1. REPARAR HIERARQUIA (Garante parentIds corretos para agregação)
+            // 1. REPARAR HIERARQUIA (Garante parentIds corretos para agrega├º├úo)
             const repairedItems = repairHierarchy(viewItems || []);
 
-            // 2. ENGINE DE CÁLCULO PURO
+            // 2. ENGINE DE C├üLCULO PURO
             const result = calculateBudget(repairedItems, b.bdi || 0);
             setCalcResult(result);
 
@@ -344,11 +344,11 @@ const BudgetEditor = () => {
 
             setItems(hydratedItems);
 
-            // 4. ORGANIZAR (Apenas visual, agora que parentIds já foram corrigidos no passo 1)
+            // 4. ORGANIZAR (Apenas visual, agora que parentIds j├í foram corrigidos no passo 1)
             const organized = organizeHierarchy(hydratedItems);
             setItems(organized);
         } catch (error) {
-            console.error("Erro ao carregar orçamento:", error);
+            console.error("Erro ao carregar or├ºamento:", error);
         } finally {
             setLoading(false);
         }
@@ -359,15 +359,14 @@ const BudgetEditor = () => {
             const s = await CompanyService.get();
             setSettings(s);
         } catch (e) {
-            console.error("Erro ao carregar configurações:", e);
+            console.error("Erro ao carregar configura├º├Áes:", e);
         }
     };
 
     const [isAddingItem, setIsAddingItem] = useState(false);
     // NEW: Toggle State for Add Item Modal
-    const [addItemTab, setAddItemTab] = useState<'INS' | 'CPU'>('CPU'); // Alterado para CPU como padrão
-    const [isReordering, setIsReordering] = useState(false);
-    const [insertContext, setInsertContext] = useState<{ parentId?: string | null, afterIndex?: number } | null>(null);
+    const [addItemTab, setAddItemTab] = useState<'INS' | 'CPU'>('INS');
+
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedResource, setSelectedResource] = useState<any>(null);
     const [quantity, setQuantity] = useState(1);
@@ -382,9 +381,6 @@ const BudgetEditor = () => {
     const [originalTotal, setOriginalTotal] = useState(0);
     const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
     const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
-    // Inline Edit State
-    const [editingInlineId, setEditingInlineId] = useState<string | null>(null);
-    const [editingInlineText, setEditingInlineText] = useState("");
 
     // Estados de Busca e Filtros Multi-Base
     const [selectedBases, setSelectedBases] = useState<string[]>(() => {
@@ -397,7 +393,7 @@ const BudgetEditor = () => {
         localStorage.setItem('naborca_search_bases', JSON.stringify(selectedBases));
     }, [selectedBases]);
 
-    // Estados de Loading para Exportações e Ferramentas
+    // Estados de Loading para Exporta├º├Áes e Ferramentas
     const [isExportingAnalytic, setIsExportingAnalytic] = useState(false);
     const [isImporterOpen, setIsImporterOpen] = useState(false);
     const [isExportingZip, setIsExportingZip] = useState(false);
@@ -418,7 +414,6 @@ const BudgetEditor = () => {
 
     // BDI Calculator States
     const [showBDICalculator, setShowBDICalculator] = useState(false);
-    const [localBDI, setLocalBDI] = useState<string>(budget?.bdi?.toString() || '0');
     const [bdiCalc, setBdiCalc] = useState({
         ac: 3.5,
         r: 0.97,
@@ -433,13 +428,13 @@ const BudgetEditor = () => {
 
     const BDI_PRESETS = [
         {
-            name: "Construção de Rodovias e Ferrovias",
-            description: "(também para Recapeamento, Pavimentação e Praças)",
+            name: "Constru├º├úo de Rodovias e Ferrovias",
+            description: "(tamb├®m para Recapeamento, Pavimenta├º├úo e Pra├ºas)",
             ac: 4.67, sg: 0.74, r: 0.97, df: 1.21, l: 8.69
         },
         {
-            name: "Construção de Edifícios",
-            description: "(também para Reformas)",
+            name: "Constru├º├úo de Edif├¡cios",
+            description: "(tamb├®m para Reformas)",
             ac: 5.31, sg: 0.90, r: 1.10, df: 1.10, l: 8.96
         },
         {
@@ -511,7 +506,7 @@ const BudgetEditor = () => {
         const safeQuery = query?.trim();
 
         if (!safeQuery || safeQuery.length < 3) {
-            console.log('[EDITOR] tiny query → skip fetch');
+            console.log('[EDITOR] tiny query ÔåÆ skip fetch');
             setFilteredResources([]);
             return;
         }
@@ -550,7 +545,7 @@ const BudgetEditor = () => {
                 results = [...normUser, ...normPublic];
             }
 
-            // Deduplicação básica por código e fonte se necessário
+            // Deduplica├º├úo b├ísica por c├│digo e fonte se necess├írio
             const seen = new Set();
             const uniqueResults = results.filter(r => {
                 const key = `${r.source}-${r.code}`;
@@ -570,7 +565,7 @@ const BudgetEditor = () => {
     // Hook sugerido: Disparar busca assim que o modal abrir ou a tab mudar ou bases mudarem
     useEffect(() => {
         if (isAddingItem) {
-            console.log(`[MODAL] isAddingItem=true Tab=${addItemTab} Bases=${selectedBases} → trigger fetchResources`);
+            console.log(`[MODAL] isAddingItem=true Tab=${addItemTab} Bases=${selectedBases} ÔåÆ trigger fetchResources`);
             const priceContext = budget ? {
                 uf: budget.sinapiUf || 'BA',
                 competence: budget.sinapiCompetence,
@@ -582,7 +577,7 @@ const BudgetEditor = () => {
         }
     }, [isAddingItem, addItemTab, selectedBases, fetchResources]);
 
-    // Debounce para busca enquanto o modal está aberto, considerando a TAB e Bases
+    // Debounce para busca enquanto o modal est├í aberto, considerando a TAB e Bases
     useEffect(() => {
         if (!isAddingItem || !searchTerm) return;
 
@@ -604,7 +599,7 @@ const BudgetEditor = () => {
         const safeQuery = query?.trim();
 
         if (!safeQuery) {
-            console.log('[EDITOR] empty query (comp) → skip fetch');
+            console.log('[EDITOR] empty query (comp) ÔåÆ skip fetch');
             setCompositionFilteredResources([]);
             return;
         }
@@ -615,20 +610,20 @@ const BudgetEditor = () => {
                 CompositionService.search(safeQuery)
             ]);
 
-            // Usar normalizador único (mesmo fluxo do modal principal)
+            // Usar normalizador ├║nico (mesmo fluxo do modal principal)
             const normalizedInsumos = (insumos || []).map(i => normalizeResource(i, 'insumo'));
             const normalizedCompositions = (compositions || []).map(c => normalizeResource(c, 'composition'));
 
-            // Composições primeiro, depois insumos
+            // Composi├º├Áes primeiro, depois insumos
             setCompositionFilteredResources([...normalizedCompositions, ...normalizedInsumos]);
 
         } catch (e) {
-            console.error("[fetchCompResources] Erro ao buscar recursos para composição:", e);
+            console.error("[fetchCompResources] Erro ao buscar recursos para composi├º├úo:", e);
             setCompositionFilteredResources([]);
         }
     }, []);
 
-    // Hook para disparar busca assim que o modal de composição abrir
+    // Hook para disparar busca assim que o modal de composi├º├úo abrir
     useEffect(() => {
         if (showCompositionSearch) {
             fetchCompResources(compositionSearchTerm ?? '');
@@ -637,7 +632,7 @@ const BudgetEditor = () => {
         }
     }, [showCompositionSearch, fetchCompResources]);
 
-    // Debounce para busca na composição
+    // Debounce para busca na composi├º├úo
     useEffect(() => {
         if (!showCompositionSearch || !compositionSearchTerm) return;
 
@@ -654,7 +649,7 @@ const BudgetEditor = () => {
         }
     }, [showABC, items]);
 
-    // Lógica de Destaque e Ação Automática (Vindo da Revisão)
+    // L├│gica de Destaque e A├º├úo Autom├ítica (Vindo da Revis├úo)
     useEffect(() => {
         const itemToHighlight = searchParams.get('highlightItem');
         const action = searchParams.get('action');
@@ -668,7 +663,7 @@ const BudgetEditor = () => {
                 const element = document.getElementById(`item - ${id} `);
                 if (element) {
                     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    // Adicionar classe temporária para piscar
+                    // Adicionar classe tempor├íria para piscar
                     element.classList.add('ring-yellow-400', 'ring-4', 'bg-yellow-50');
                     setTimeout(() => {
                         element.classList.remove('ring-yellow-400', 'ring-4', 'bg-yellow-50');
@@ -729,8 +724,8 @@ const BudgetEditor = () => {
         return 0;
     };
 
-    // REGRA 1: organizeHierarchy APENAS organiza a exibição hierárquica
-    // Os valores (finalPrice, totalPrice, peso, calculatedTotal) já vêm calculados do recalculateItemHierarchy
+    // REGRA 1: organizeHierarchy APENAS organiza a exibi├º├úo hier├írquica
+    // Os valores (finalPrice, totalPrice, peso, calculatedTotal) j├í v├¬m calculados do recalculateItemHierarchy
     const organizeHierarchy = (allItems: any[]) => {
         if (!allItems) return [];
 
@@ -764,8 +759,8 @@ const BudgetEditor = () => {
             // Find subetapas (Level 2)
             const subetapas = fixedItems.filter(i => i.level === 2 && i.parentId === etapa.id);
 
-            // REGRA 3: Os valores já estão calculados - usar finalPrice do item diretamente
-            // calculatedTotal já foi definido no recalculateItemHierarchy
+            // REGRA 3: Os valores j├í est├úo calculados - usar finalPrice do item diretamente
+            // calculatedTotal j├í foi definido no recalculateItemHierarchy
             flatList.push({
                 ...etapa,
                 calculatedTotal: etapa.finalPrice || 0
@@ -780,14 +775,14 @@ const BudgetEditor = () => {
             subetapas.forEach(sub => {
                 const subItems = fixedItems.filter(i => i.level >= 3 && i.parentId === sub.id);
 
-                // Subetapa com total já calculado
+                // Subetapa com total j├í calculado
                 flatList.push({
                     ...sub,
                     calculatedTotal: sub.finalPrice || 0,
                     _children: subItems
                 });
 
-                // Adicionar itens (valores já calculados)
+                // Adicionar itens (valores j├í calculados)
                 subItems.forEach((item: any) => {
                     flatList.push(item);
                 });
@@ -805,7 +800,7 @@ const BudgetEditor = () => {
                     ...item,
                     description: (item.description && typeof item.description === 'string' && item.description.startsWith('['))
                         ? item.description
-                        : `[⚠️ VINCULAR] ${item.description || 'Item sem descrição'}`,
+                        : `[ÔÜá´©Å VINCULAR] ${item.description || 'Item sem descri├º├úo'}`,
                     isOrphan: true
                 });
             });
@@ -815,9 +810,9 @@ const BudgetEditor = () => {
     };
 
     // REGRA 3: Calculate Global Total (Only Level 3+ Items using finalPrice)
-    // finalPrice já inclui: quantity * unitPrice * (1 + BDI)
-    // Totais já calculados no useMemo do visibleRows
-    // Removido lógica redundante de totalBaseRaw/applyAdjustment
+    // finalPrice j├í inclui: quantity * unitPrice * (1 + BDI)
+    // Totais j├í calculados no useMemo do visibleRows
+    // Removido l├│gica redundante de totalBaseRaw/applyAdjustment
 
 
     // Sync Total Global if needed
@@ -843,18 +838,18 @@ const BudgetEditor = () => {
         }
     }, [items, budget?.id]); // Removed budget.totalValue/bdi from dependency to avoid loop
 
-    // A função getItemSubtotal foi removida pois os totais de grupo (finalPrice)
-    // agora são calculados diretamente na função prepareItemsForDisplay no carregamento.
+    // A fun├º├úo getItemSubtotal foi removida pois os totais de grupo (finalPrice)
+    // agora s├úo calculados diretamente na fun├º├úo prepareItemsForDisplay no carregamento.
 
-    // Calcular números hierárquicos (1, 1.1, 1.1.1, 2, 2.1...)
+    // Calcular n├║meros hier├írquicos (1, 1.1, 1.1.1, 2, 2.1...)
     const getItemNumber = (index: number): string => {
         if (!items) return "";
         const item = items[index];
 
-        // Se já tiver uma numeração explícita (vinda do banco), retorna ela
+        // Se j├í tiver uma numera├º├úo expl├¡cita (vinda do banco), retorna ela
         if (item.itemNumber) return String(item.itemNumber).trim();
 
-        // Fallback: cálculo dinâmico baseado no level (1-2-3)
+        // Fallback: c├ílculo din├ómico baseado no level (1-2-3)
         if (item.level === 1) {
             let count = 0;
             for (let i = 0; i <= index; i++) if (items[i].level === 1) count++;
@@ -881,7 +876,7 @@ const BudgetEditor = () => {
     const getNextOrder = () => (items?.length || 0) + 1;
 
     const handleAddTitle = async () => {
-        const title = window.prompt("Digite o nome da ETAPA (Nível 1)");
+        const title = window.prompt("Digite o nome da ETAPA (N├¡vel 1)");
         if (!title) return;
 
         try {
@@ -907,21 +902,21 @@ const BudgetEditor = () => {
     };
 
     const handleAddSubTitle = async (targetLevel: number = 2) => {
-        // Encontrar a última etapa (Nível 1) para ser o pai padrão
+        // Encontrar a ├║ltima etapa (N├¡vel 1) para ser o pai padr├úo
         // Logica: Add to last Level 1 found.
         const lastEtapa = [...items].reverse().find(i => i.level === 1);
 
         if (!lastEtapa) {
-            alert("Operação Bloqueada: Nenhuma ETAPA (Nível 1) encontrada. Adicione uma Etapa primeiro para conter esta Sub-etapa.");
+            alert("Opera├º├úo Bloqueada: Nenhuma ETAPA (N├¡vel 1) encontrada. Adicione uma Etapa primeiro para conter esta Sub-etapa.");
             return;
         }
 
         if (!lastEtapa.id) {
-            alert("Erro de Integridade: A Etapa pai não possui ID válido. Recarregue a página.");
+            alert("Erro de Integridade: A Etapa pai n├úo possui ID v├ílido. Recarregue a p├ígina.");
             return;
         }
 
-        const title = window.prompt(`Nova SUBETAPA (Nível ${targetLevel}) em "${lastEtapa.description}":`);
+        const title = window.prompt(`Nova SUBETAPA (N├¡vel ${targetLevel}) em "${lastEtapa.description}":`);
         if (!title) return;
 
         try {
@@ -943,7 +938,7 @@ const BudgetEditor = () => {
             await loadBudget();
         } catch (e: any) {
             console.error("Falha ao criar Sub-etapa:", e);
-            alert(`Erro ao salvar no banco: ${e.message || "Verifique sua conexão"}`);
+            alert(`Erro ao salvar no banco: ${e.message || "Verifique sua conex├úo"}`);
         }
     };
 
@@ -953,18 +948,18 @@ const BudgetEditor = () => {
             setLoading(true);
             console.log("[handleBindComposition]", { targetId: targetItem.id, resourceCode: resource.code });
 
-            // 1. Encontrar a pendência (Issue) associada
+            // 1. Encontrar a pend├¬ncia (Issue) associada
             const issue = await BudgetItemService.getHydrationIssue(String(targetItem.id));
 
             if (!issue) {
-                console.error("Pendência não encontrada na tabela import_hydration_issues.");
-                // Fallback: Se não achar issue, tenta atualizar manualmente (mas avisa)
-                // OU, prioriza segurança e barra. Vamos barrar pois o user exigiu paridade.
-                alert("Não foi possível localizar a pendência original deste item. Tente recarregar a página ou contate suporte.");
+                console.error("Pend├¬ncia n├úo encontrada na tabela import_hydration_issues.");
+                // Fallback: Se n├úo achar issue, tenta atualizar manualmente (mas avisa)
+                // OU, prioriza seguran├ºa e barra. Vamos barrar pois o user exigiu paridade.
+                alert("N├úo foi poss├¡vel localizar a pend├¬ncia original deste item. Tente recarregar a p├ígina ou contate suporte.");
                 return;
             }
 
-            // 2. Chamar RPC Oficial de Resolução (Paridade Backend)
+            // 2. Chamar RPC Oficial de Resolu├º├úo (Paridade Backend)
             await BudgetItemService.resolveHydrationIssue(issue.id, {
                 source_type: 'internal_db',
                 code: resource.code
@@ -980,7 +975,7 @@ const BudgetEditor = () => {
 
         } catch (e: any) {
             console.error("Erro ao vincular (RPC):", e);
-            alert(`Erro ao vincular composição: ${e.message || "Verifique sua conexão"}`);
+            alert(`Erro ao vincular composi├º├úo: ${e.message || "Verifique sua conex├úo"}`);
         } finally {
             setLoading(false);
         }
@@ -1002,12 +997,14 @@ const BudgetEditor = () => {
                 itemsCount: items.length
             });
 
-            // 1. Verificar se existe pelo menos uma ETAPA (Nível 1)
+            // 1. Verificar se existe pelo menos uma ETAPA (N├¡vel 1)
             const lastEtapa = [...items].reverse().find(i => i.level === 1);
 
-            let targetParentId: string | undefined | null = insertContext?.parentId ?? undefined;
+            // 2. Definir o Pai: Prioridade para a ├║ltima SUBETAPA (L2) DESTA etapa, sen├úo usa a pr├│pria ETAPA (L1)
+            let targetParentId: string | undefined = lastEtapa?.id;
 
-            if (!insertContext && lastEtapa) {
+            // Busca a ├║ltima subetapa que perten├ºa a esta etapa espec├¡fica
+            if (lastEtapa) {
                 const lastSubEtapa = [...items].reverse().find(i => i.level === 2 && i.parentId === lastEtapa.id);
                 if (lastSubEtapa && lastSubEtapa.id) {
                     targetParentId = lastSubEtapa.id;
@@ -1017,7 +1014,7 @@ const BudgetEditor = () => {
             // 3. Criar o Item na Subetapa ou Etapa Alvo
             const itemData: any = {
                 budgetId: budgetId,
-                order: getNextOrder(), // Será reordenado abaixo se for inserção contextual
+                order: getNextOrder(),
                 level: 3,
                 parentId: targetParentId,
                 itemNumber: "",
@@ -1026,17 +1023,18 @@ const BudgetEditor = () => {
                 unit: selectedResource.unit,
                 quantity: Number(quantity),
                 unitPrice: selectedResource.price,
+                // IMPORTANTE: Restaurar tipo original (material, labor, etc)
                 type: selectedResource.originalType || (addItemTab === 'CPU' ? 'service' : 'material'),
                 source: selectedResource.source,
                 itemType: addItemTab === 'CPU' ? 'composicao' : 'insumo',
+                // Linkage UUIDs - Priorizar ID do objeto se dispon├¡vel
                 compositionId: addItemTab === 'CPU' ? (selectedResource.id || selectedResource.raw?.id) : null,
                 insumoId: addItemTab === 'INS' ? (selectedResource.id || selectedResource.raw?.id) : null,
             };
 
-            // SE ESTIVER EM MODO DE VINCULAÇÃO (FIX PENDING)
+            // SE ESTIVER EM MODO DE VINCULA├ç├âO (FIX PENDING)
             if (bindingItem) {
                 await handleBindComposition(bindingItem, selectedResource);
-                setInsertContext(null);
                 return;
             }
 
@@ -1044,68 +1042,16 @@ const BudgetEditor = () => {
             const newItem = await BudgetItemService.create(itemData);
             console.log("[handleAddItem] Created successfully:", newItem.id);
 
-            // 4. Inserção Contextual (Reordenação Imediata)
-            if (insertContext && insertContext.afterIndex !== undefined && items) {
-                const newItems = [...items];
-                // Insere imediatamente após o índice do contexto (pode ser o próprio grupo ou o item atual)
-                newItems.splice(insertContext.afterIndex + 1, 0, newItem);
-
-                newItems.forEach((it, idx) => {
-                    it.order = idx + 1;
-                });
-
-                const repairedItems = repairHierarchy(newItems);
-
-                let c1 = 0; let c2 = 0; let c3 = 0;
-                const payload = repairedItems.map((item) => {
-                    if (item.level === 1) { c1++; c2 = 0; c3 = 0; }
-                    else if (item.level === 2) { c2++; c3 = 0; }
-                    else if (item.level >= 3) { c3++; }
-
-                    let itemNumberStr = "";
-                    if (item.level === 1) itemNumberStr = `${c1}`;
-                    else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
-                    else itemNumberStr = `${c1}.${c2}.${c3}`;
-
-                    const finalParentId = item.parentId && String(item.parentId).trim() !== "" && String(item.parentId).trim().toLowerCase() !== "null" ? String(item.parentId) : null;
-
-                    return { id: item.id!, order: item.order, parentId: finalParentId, itemNumber: itemNumberStr };
-                });
-
-                try {
-                    await (supabase as SupabaseClient<any>).rpc("reorder_budget_items", { items: payload });
-                } catch (e) {
-                    console.error("Contextual Reorder Error:", e);
-                }
-            }
-
             await loadBudget();
             setIsAddingItem(false);
             setSelectedResource(null);
-            setInsertContext(null);
             setQuantity(1);
             setSearchTerm('');
         } catch (e: any) {
             console.error("Erro ao adicionar item:", e);
-            alert(`Erro ao Adicionar Item: ${e.message || "Falha técnica"}`);
+            alert(`Erro ao Adicionar Item: ${e.message || "Falha t├®cnica"}`);
         } finally {
             setLoading(false);
-        }
-    };
-
-    const handleInlineEditSave = async (itemId: string, newText: string) => {
-        if (!newText.trim()) {
-            setEditingInlineId(null);
-            return;
-        }
-        try {
-            await BudgetItemService.update(itemId, { description: newText.trim() });
-            setItems(prevItems => prevItems.map(it => it.id === itemId ? { ...it, description: newText.trim() } : it));
-        } catch (e: any) {
-            console.error("Erro ao atualizar descrição:", e);
-            alert(`Erro ao atualizar nome: ${e.message}`);
-        } finally {
-            setEditingInlineId(null);
         }
     };
 
@@ -1121,29 +1067,11 @@ const BudgetEditor = () => {
     };
 
     const handleUpdateBDI = async (val: number) => {
-        // 1. Atualizar BDI no Orçamento
-        // O Backend recalcula automaticamente todos os preços finais dos itens
+        // 1. Atualizar BDI no Or├ºamento
+        // O Backend recalcula automaticamente todos os pre├ºos finais dos itens
         await BudgetService.update(budgetId, { bdi: val });
         loadBudget();
     };
-
-    // Sincroniza estado local do BDI quando o orçamento carregar ou atualizar pelo server
-    useEffect(() => {
-        if (budget?.bdi !== undefined) {
-            setLocalBDI(budget.bdi.toString());
-        }
-    }, [budget?.bdi]);
-
-    // Debounce para BDI
-    useEffect(() => {
-        const handler = setTimeout(() => {
-            const val = parseFloat(localBDI);
-            if (!isNaN(val) && val !== budget?.bdi && localBDI !== '') {
-                handleUpdateBDI(val);
-            }
-        }, 800);
-        return () => clearTimeout(handler);
-    }, [localBDI, budget?.bdi]);
 
     const handleUpdateEncargos = async (val: number, baseInfo?: { desonerado: boolean; id: string }) => {
         if (!budget) return;
@@ -1152,7 +1080,7 @@ const BudgetEditor = () => {
         const sinapiRegime = baseInfo?.desonerado ? 'DESONERADO' : 'NAO_DESONERADO';
         const sinapiContractType = tipoEncargo === 'horista' ? 'HORISTA' : 'MENSALISTA';
 
-        // LOG OBRIGATÓRIO: [ENCARGOS APPLY]
+        // LOG OBRIGAT├ôRIO: [ENCARGOS APPLY]
         console.log('[ENCARGOS APPLY]', {
             budgetId,
             uf: budget.sinapiUf || 'BA',
@@ -1244,14 +1172,14 @@ const BudgetEditor = () => {
             const failures = results.filter((r: any) => r?.error);
 
             if (failures.length > 0) {
-                alert(`Atenção: ${failures.length} itens não puderam ser atualizados.`);
+                alert(`Aten├º├úo: ${failures.length} itens n├úo puderam ser atualizados.`);
             } else {
                 await loadBudget();
-                alert("Numeração e Ordem recalculadas com sucesso!");
+                alert("Numera├º├úo e Ordem recalculadas com sucesso!");
             }
         } catch (error) {
             console.error("Erro geral ao reordenar:", error);
-            alert("Erro ao recalcular numeração.");
+            alert("Erro ao recalcular numera├º├úo.");
         } finally {
             setLoading(false);
         }
@@ -1273,6 +1201,7 @@ const BudgetEditor = () => {
         }
     };
 
+    const [isReordering, setIsReordering] = useState(false);
 
     // ===========================================
     // DRAG AND DROP HANDLERS
@@ -1319,10 +1248,10 @@ const BudgetEditor = () => {
         });
 
         if (invalid) {
-            console.warn("Drop inválido: item ficou sem pai após repairHierarchy", invalid);
-            alert("Movimento inválido: um item ficou sem pai ou estrutura inconsistente.\n\nTente soltar dentro de uma etapa/sub-etapa válida.");
+            console.warn("Drop inv├ílido: item ficou sem pai ap├│s repairHierarchy", invalid);
+            alert("Movimento inv├ílido: um item ficou sem pai ou estrutura inconsistente.\n\nTente soltar dentro de uma etapa/sub-etapa v├ílida.");
 
-            // Recarrega SSOT para não deixar UI em estado estranho
+            // Recarrega SSOT para n├úo deixar UI em estado estranho
             await loadBudget();
             setDraggedItemIndex(null);
             setDragOverIndex(null);
@@ -1365,7 +1294,7 @@ const BudgetEditor = () => {
             };
         });
 
-        // 5. Persistência via RPC (Batch Optimization)
+        // 5. Persist├¬ncia via RPC (Batch Optimization)
         try {
             setIsReordering(true);
             const { error } = await (supabase as SupabaseClient<any>).rpc("reorder_budget_items", {
@@ -1377,7 +1306,7 @@ const BudgetEditor = () => {
                 throw error;
             }
 
-            // Reload garante SSOT do backend (cálculos, etc)
+            // Reload garante SSOT do backend (c├ílculos, etc)
             await loadBudget();
         } catch (e) {
             console.error("Erro ao salvar ordem reorganizada:", e);
@@ -1440,7 +1369,7 @@ const BudgetEditor = () => {
                 ...cleanItem,
                 budgetId: budgetId,
                 order: (item.order || 0) + 1,
-                itemNumber: (item.itemNumber || '') + " (Cópia)"
+                itemNumber: (item.itemNumber || '') + " (C├│pia)"
             });
             // Recalculate Total
             const itemTotal = (item.type === 'group' ? 0 : item.totalPrice);
@@ -1566,7 +1495,7 @@ const BudgetEditor = () => {
             }
             consolidated = Object.values(tempConsolidated);
         } else {
-            // Serviços - Lista os itens diretos da planilha
+            // Servi├ºos - Lista os itens diretos da planilha
             for (const item of items) {
                 if (item.type === 'group') continue;
                 consolidated.push({
@@ -1636,7 +1565,7 @@ const BudgetEditor = () => {
                 totalGlobalFinal: totalFinal
             };
 
-            // BUG A FIX: Log de prova OBRIGATÓRIO
+            // BUG A FIX: Log de prova OBRIGAT├ôRIO
             console.log("[EXPORT TOTALS]", {
                 base: totalBase,
                 bdi: totalFinal - totalBase,
@@ -1684,7 +1613,7 @@ const BudgetEditor = () => {
                 totalGlobalFinal: totalFinal
             };
 
-            // Logs removidos para produção
+            // Logs removidos para produ├º├úo
 
             if (abcType === 'servicos') {
                 await exportABCServicosExcel(exportData);
@@ -1722,9 +1651,9 @@ const BudgetEditor = () => {
 
     const evaluateCalculation = (formula: string): number => {
         try {
-            // Limpa espaços e substitui vírgula por ponto
+            // Limpa espa├ºos e substitui v├¡rgula por ponto
             const clean = formula.replace(/\s+/g, '').replace(/,/g, '.');
-            // Apenas permite números e operadores básicos para segurança básica
+            // Apenas permite n├║meros e operadores b├ísicos para seguran├ºa b├ísica
             if (/[^0-9+\-*/().]/.test(clean)) return 0;
             // eslint-disable-next-line no-new-func
             return new Function(`return ${clean} `)() || 0;
@@ -1737,13 +1666,13 @@ const BudgetEditor = () => {
         e.preventDefault();
         if (!editingItem) return;
 
-        // Se houver memória de cálculo, recalcular a quantidade
+        // Se houver mem├│ria de c├ílculo, recalcular a quantidade
         let finalQuantity = editingItem.quantity;
         if (editingItem.calculationMemory) {
             finalQuantity = evaluateCalculation(editingItem.calculationMemory);
         }
 
-        // Se tiver composição, o preço unitário é a soma da composição
+        // Se tiver composi├º├úo, o pre├ºo unit├írio ├® a soma da composi├º├úo
         let finalUnitPrice = editingItem.unitPrice;
         if (itemComposition.length > 0) {
             finalUnitPrice = itemComposition.reduce((acc, c) => acc + c.totalPrice, 0);
@@ -1766,7 +1695,7 @@ const BudgetEditor = () => {
 
             await BudgetService.update(budgetId, { updatedAt: new Date() });
 
-            // Salvar composição
+            // Salvar composi├º├úo
             await BudgetItemCompositionService.deleteByBudgetItemId(editingItem.id);
             if (itemComposition.length > 0) {
                 await BudgetItemCompositionService.batchCreate(itemComposition.map(c => {
@@ -1839,34 +1768,8 @@ const BudgetEditor = () => {
             };
         });
 
-        // Post-pass: Callculate rollup totals for groups (Sections N1, Groups N2)
-        for (let i = adjustedItems.length - 1; i >= 0; i--) {
-            const item = adjustedItems[i];
-            const isGroup = item.type === 'group' || item.level === 1 || item.level === 2;
-
-            if (isGroup) {
-                let gTotalBase = 0;
-                let gTotalFinal = 0;
-                const myLevel = item.level;
-
-                for (let j = i + 1; j < adjustedItems.length; j++) {
-                    const child = adjustedItems[j];
-                    if (child.level <= myLevel) break; // Reached next sibling or upper level
-
-                    // Sum only leaves to avoid recursive double-counting
-                    const childIsGroup = child.type === 'group' || child.level === 1 || child.level === 2;
-                    if (!childIsGroup) {
-                        gTotalBase += (child._amounts.totalPrice || 0);
-                        gTotalFinal += (child._amounts.totalFinal || 0);
-                    }
-                }
-                item._amounts.totalPrice = gTotalBase;
-                item._amounts.totalFinal = gTotalFinal;
-            }
-        }
-
         return adjustedItems.map((item, idx) => {
-            const isGroup = item.type === 'group' || item.level === 1 || item.level === 2;
+            const isGroup = item.type === 'group';
             const itemNumber = getItemNumber(idx);
 
             // Values to display
@@ -1889,14 +1792,18 @@ const BudgetEditor = () => {
                 source: isGroup ? '' : (item.source || ''),
                 unit: isGroup ? '' : (item.unit || ''),
 
-                // Valores Numéricos AJUSTADOS (Source of Truth)
+                // Valores Num├®ricos AJUSTADOS (Source of Truth)
                 quantity: isGroup ? undefined : item.quantity,
                 unitPrice: isGroup ? undefined : unitPrice,        // Unit Base
                 unitPriceWithBDI: isGroup ? undefined : finalPrice, // Unit Final (com BDI + Ajuste)
 
                 // Totais
-                totalPrice: totalPrice,         // Group rollup works natively now
-                finalPrice: itemTotalFinal,     // Group rollup works natively now
+                totalPrice: isGroup ? 0 : totalPrice,   // Total Base
+                finalPrice: isGroup ? 0 : itemTotalFinal, // Total Final (Novo conceito: finalPrice agora ├® TOTAL final, n├úo unit) 
+                // Wait. In legacy code, finalPrice was TOTAL final?
+                // Legacy: `finalPrice = totalPriceAdj * bdiFactor`. Yes, it was TOTAL.
+                // My util `getAdjustedItemValues` returns `finalPrice` as UNIT FINAL.
+                // So I multiplied by Quantity above. Correct.
 
                 total: itemTotalFinal, // Alias para legacy grids
                 pesoRaw: pesoRaw
@@ -1922,9 +1829,9 @@ const BudgetEditor = () => {
 
 
     const validateAnalytics = async (): Promise<boolean> => {
-        // Bloqueio por Divergência de Preços (Anti-Desclassificação)
+        // Bloqueio por Diverg├¬ncia de Pre├ºos (Anti-Desclassifica├º├úo)
         if (budget?.metadata?.has_pricing_divergence) {
-            alert("⚠️ BLOQUEIO DE SEGURANÇA (LICITAÇÃO)\n\nO orçamento possui divergências entre valores sintéticos e analíticos (provavelmente devido a um ajuste global parcial).\n\nPara corrigir:\n1. Reutilize o Ajuste Global com a opção 'Aplicar também na analítica'.\n2. Ou ajuste os itens manualmente.\n\nEssa medida evita a desclassificação da proposta.");
+            alert("ÔÜá´©Å BLOQUEIO DE SEGURAN├çA (LICITA├ç├âO)\n\nO or├ºamento possui diverg├¬ncias entre valores sint├®ticos e anal├¡ticos (provavelmente devido a um ajuste global parcial).\n\nPara corrigir:\n1. Reutilize o Ajuste Global com a op├º├úo 'Aplicar tamb├®m na anal├¡tica'.\n2. Ou ajuste os itens manualmente.\n\nEssa medida evita a desclassifica├º├úo da proposta.");
             return false;
         }
 
@@ -1948,9 +1855,9 @@ const BudgetEditor = () => {
                     missing.push(item);
                 } else {
                     // 2. Check Divergence (Deep Check)
-                    const synthUnit = item.unitPrice || 0; // Já ajustado em visibleRows (Base Unit)
+                    const synthUnit = item.unitPrice || 0; // J├í ajustado em visibleRows (Base Unit)
 
-                    // Recalcular soma analítica ajustada
+                    // Recalcular soma anal├¡tica ajustada
                     const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
 
                     const analyticSum = children.reduce((acc, c) => {
@@ -1959,13 +1866,13 @@ const BudgetEditor = () => {
                             { materialFactor, laborFactor, bdiFactor },
                             budget.bdi || 0
                         );
-                        // Soma dos unitários base * quantidade
+                        // Soma dos unit├írios base * quantidade
                         return acc + (adj.unitPrice * c.quantity);
                     }, 0);
 
                     if (Math.abs(synthUnit - analyticSum) > 0.01) {
-                        // Divergência detectada
-                        // analyticSum aqui é BASE. expected também é BASE.
+                        // Diverg├¬ncia detectada
+                        // analyticSum aqui ├® BASE. expected tamb├®m ├® BASE.
                         divergent.push({ ...item, analyticSum, expected: synthUnit });
                     }
                 }
@@ -1980,7 +1887,7 @@ const BudgetEditor = () => {
             }
 
             if (divergent.length > 0) {
-                alert(`IMPOSSÍVEL EXPORTAR (Proteção de Licitação):\n\nIdentificamos ${divergent.length} composições com divergência de preço.\nTotal Sintético não bate com a soma Analítica.\n\nUse o botão "CORRIGIR AGORA" no alerta vermelho para resolver.`);
+                alert(`IMPOSS├ìVEL EXPORTAR (Prote├º├úo de Licita├º├úo):\n\nIdentificamos ${divergent.length} composi├º├Áes com diverg├¬ncia de pre├ºo.\nTotal Sint├®tico n├úo bate com a soma Anal├¡tica.\n\nUse o bot├úo "CORRIGIR AGORA" no alerta vermelho para resolver.`);
                 return false;
             }
 
@@ -2006,7 +1913,7 @@ const BudgetEditor = () => {
             const freshRawItems = await BudgetItemService.getByBudgetId(budgetId, { pageSize: 1000 });
             const freshOrganized = organizeHierarchy(freshRawItems);
 
-            // Aplica os mesmos cálculos do visibleRows (adjustmentFactors + BDI)
+            // Aplica os mesmos c├ílculos do visibleRows (adjustmentFactors + BDI)
             const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
             let totalFinalAdj = 0;
             const freshAdjusted = freshOrganized.map(item => {
@@ -2041,10 +1948,10 @@ const BudgetEditor = () => {
                 };
             });
 
-            // Importar funções de exportação
+            // Importar fun├º├Áes de exporta├º├úo
             const { exportPDFSynthetic, exportPDFAnalytic } = await import('../utils/budgetExport');
 
-            // Flatten rows for export using freshRows (dados frescos, não visibleRows)
+            // Flatten rows for export using freshRows (dados frescos, n├úo visibleRows)
             const exportItems = await Promise.all(freshRows.map(async (row) => {
                 // Fetch composition RAW
                 const compositionRaw = type === 'analytic'
@@ -2086,7 +1993,7 @@ const BudgetEditor = () => {
                 adjustmentSettings: budget.settings?.global_adjustment_v2
             };
 
-            // Logs removidos para produção
+            // Logs removidos para produ├º├úo
 
 
             if (type === 'synthetic') {
@@ -2141,7 +2048,7 @@ const BudgetEditor = () => {
                 };
             }));
 
-            // Logs removidos para produção
+            // Logs removidos para produ├º├úo
 
             const exportData = {
                 budgetName: budget.name,
@@ -2192,7 +2099,7 @@ const BudgetEditor = () => {
             }
 
             await loadBudget();
-            alert("Importação concluída com sucesso!");
+            alert("Importa├º├úo conclu├¡da com sucesso!");
         } catch (error) {
             console.error("Import error:", error);
             alert("Erro ao salvar itens importados.");
@@ -2212,13 +2119,13 @@ const BudgetEditor = () => {
 
         try {
             if (!budget || !items) {
-                alert('Não há dados para exportar');
+                alert('N├úo h├í dados para exportar');
                 return;
             }
 
             const { exportCompleteProject } = await import('../utils/budgetExport');
 
-            // Preparar itens com numeração e composições (Items RAW -> Adjusted)
+            // Preparar itens com numera├º├úo e composi├º├Áes (Items RAW -> Adjusted)
             const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
 
             const itemsWithNumbers = await Promise.all(items.map(async (item, idx) => {
@@ -2290,7 +2197,7 @@ const BudgetEditor = () => {
         return (
             <div className="flex flex-col items-center justify-center h-screen bg-slate-50 gap-4">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-                <p className="text-slate-500 font-medium animate-pulse">Carregando orçamento...</p>
+                <p className="text-slate-500 font-medium animate-pulse">Carregando or├ºamento...</p>
             </div>
         );
     }
@@ -2299,9 +2206,9 @@ const BudgetEditor = () => {
         return (
             <div className="flex flex-col items-center justify-center h-screen bg-slate-50 gap-4">
                 <AlertTriangle size={48} className="text-red-400" />
-                <h2 className="text-xl font-bold text-slate-700">Orçamento não encontrado</h2>
+                <h2 className="text-xl font-bold text-slate-700">Or├ºamento n├úo encontrado</h2>
                 <p className="text-slate-500 max-w-md text-center">
-                    Não foi possível carregar os dados deste orçamento. Verifique se o link está correto ou se você tem permissão para acessá-lo.
+                    N├úo foi poss├¡vel carregar os dados deste or├ºamento. Verifique se o link est├í correto ou se voc├¬ tem permiss├úo para acess├í-lo.
                 </p>
                 <div className="flex gap-4 mt-4">
                     <button
@@ -2323,24 +2230,24 @@ const BudgetEditor = () => {
 
 
 
-    // CÁLCULO DE TOTAIS VISUAIS - REGRA 4 e 5
-    // totalBase: Soma de totalPrice (que já é Base de Custo Direto)
+    // C├üLCULO DE TOTAIS VISUAIS - REGRA 4 e 5
+    // totalBase: Soma de totalPrice (que j├í ├® Base de Custo Direto)
 
     // Totais calculados anteriormente (acima)
 
     return (
         <div className="flex flex-col h-full overflow-hidden bg-background">
-            {/* Aviso Mobile - Modo Visualização */}
+            {/* Aviso Mobile - Modo Visualiza├º├úo */}
             {isMobile && (
                 <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 shrink-0">
                     <Eye size={14} className="text-amber-600" />
                     <p className="text-xs text-amber-700">
-                        <span className="font-semibold">Modo visualização.</span> Para edição completa, utilize um dispositivo maior.
+                        <span className="font-semibold">Modo visualiza├º├úo.</span> Para edi├º├úo completa, utilize um dispositivo maior.
                     </p>
                 </div>
             )}
 
-            {/* Warning de Extração Parcial (UX Importação) */}
+            {/* Warning de Extra├º├úo Parcial (UX Importa├º├úo) */}
             {showPartialBanner && items && items.length > 0 && (
                 <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-3 shrink-0 animate-in slide-in-from-top-2 relative z-30">
                     <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 max-w-7xl mx-auto">
@@ -2349,9 +2256,9 @@ const BudgetEditor = () => {
                                 <AlertTriangle size={18} />
                             </div>
                             <div>
-                                <h3 className="text-sm font-bold text-yellow-800">Extração parcial do documento</h3>
+                                <h3 className="text-sm font-bold text-yellow-800">Extra├º├úo parcial do documento</h3>
                                 <p className="text-xs text-yellow-700 mt-0.5 leading-relaxed max-w-2xl">
-                                    Este orçamento foi gerado automaticamente, mas nem todos os itens do arquivo foram identificados com 100% de precisão.
+                                    Este or├ºamento foi gerado automaticamente, mas nem todos os itens do arquivo foram identificados com 100% de precis├úo.
                                     Os valores podem estar subestimados.
                                 </p>
                             </div>
@@ -2368,7 +2275,7 @@ const BudgetEditor = () => {
                                     to={`/importacoes/${sourceJob.id}`}
                                     className="px-4 py-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 text-xs font-black rounded-lg transition-colors shadow-sm flex items-center gap-2 whitespace-nowrap"
                                 >
-                                    Melhorar extração (OCR)
+                                    Melhorar extra├º├úo (OCR)
                                 </Link>
                             )}
                         </div>
@@ -2376,19 +2283,19 @@ const BudgetEditor = () => {
                 </div>
             )}
 
-            {/* Warning de Divergência */}
+            {/* Warning de Diverg├¬ncia */}
             {(budget?.metadata?.has_pricing_divergence || divergentItems.length > 0) && (
                 <div className="bg-red-50 border-b border-red-200 px-4 py-3 flex items-center justify-between gap-4 shrink-0 animate-in slide-in-from-top-2">
                     <div className="flex items-center gap-3">
                         <AlertOctagon size={20} className="text-red-600" />
                         <div>
                             <p className="text-sm font-black text-red-700 uppercase tracking-wide">
-                                {divergentItems.length > 0 ? `${divergentItems.length} COMPOSIÇÕES DIVERGENTES` : "DIVERGÊNCIA CRÍTICA DETECTADA"}
+                                {divergentItems.length > 0 ? `${divergentItems.length} COMPOSI├ç├òES DIVERGENTES` : "DIVERG├èNCIA CR├ìTICA DETECTADA"}
                             </p>
                             <p className="text-xs text-red-600">
                                 {divergentItems.length > 0
-                                    ? "A soma analítica dos itens não bate com o valor sintético. Risco de desclassificação."
-                                    : "Valores analíticos desatualizados. Execute a validação para ver detalhes."}
+                                    ? "A soma anal├¡tica dos itens n├úo bate com o valor sint├®tico. Risco de desclassifica├º├úo."
+                                    : "Valores anal├¡ticos desatualizados. Execute a valida├º├úo para ver detalhes."}
                             </p>
                         </div>
                     </div>
@@ -2445,7 +2352,7 @@ const BudgetEditor = () => {
                             </div>
                         </div>
 
-                        {/* Linha 2: Total + Ações Prioritárias (Download) */}
+                        {/* Linha 2: Total + A├º├Áes Priorit├írias (Download) */}
                         <div className="flex items-center justify-between bg-slate-50 rounded-lg p-3">
                             <div className="flex flex-col">
                                 <p className="text-[10px] text-slate-400 font-semibold uppercase">Total Global (C/ BDI)</p>
@@ -2462,7 +2369,7 @@ const BudgetEditor = () => {
                                 <button
                                     onClick={() => handleExportPDF('synthetic')}
                                     className="w-10 h-10 flex items-center justify-center bg-blue-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform"
-                                    title="PDF Sintético"
+                                    title="PDF Sint├®tico"
                                 >
                                     <FileText size={18} />
                                 </button>
@@ -2470,7 +2377,7 @@ const BudgetEditor = () => {
                                     <button
                                         onClick={() => handleExportExcel('synthetic')}
                                         className="w-10 h-10 flex items-center justify-center bg-green-600 text-white rounded-lg shadow-sm active:scale-95 transition-transform"
-                                        title="Excel Sintético"
+                                        title="Excel Sint├®tico"
                                     >
                                         <FileSpreadsheet size={18} />
                                     </button>
@@ -2499,7 +2406,7 @@ const BudgetEditor = () => {
                     /* Desktop Header - Reorganizado */
                     <div className="flex items-center justify-between gap-0">
                         <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide flex-1 min-w-0 pr-2">
-                            {/* Seção Esquerda: Voltar + Info do Orçamento */}
+                            {/* Se├º├úo Esquerda: Voltar + Info do Or├ºamento */}
                             <div className="flex items-center gap-2 shrink-0">
                                 <button
                                     onClick={() => navigate('/budgets')}
@@ -2542,30 +2449,15 @@ const BudgetEditor = () => {
                                 </div>
                             </div>
 
-                            {/* Seção Central: BDI + Encargos */}
+                            {/* Se├º├úo Central: BDI + Encargos */}
                             <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 shrink-0 min-w-[140px]">
                                 <div className="text-center px-2 border-r border-slate-200">
                                     <label className="text-[9px] text-slate-400 font-bold uppercase block">BDI</label>
                                     <div className="flex items-center justify-center gap-0.5 whitespace-nowrap">
                                         <input
                                             type="number"
-                                            value={localBDI}
-                                            onChange={(e) => setLocalBDI(e.target.value)}
-                                            onBlur={(e) => {
-                                                const val = parseFloat(localBDI);
-                                                if (!isNaN(val) && val !== budget?.bdi && localBDI !== '') {
-                                                    handleUpdateBDI(val);
-                                                }
-                                            }}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    const val = parseFloat(localBDI);
-                                                    if (!isNaN(val) && val !== budget?.bdi && localBDI !== '') {
-                                                        handleUpdateBDI(val);
-                                                    }
-                                                    (e.target as HTMLInputElement).blur();
-                                                }
-                                            }}
+                                            value={budget.bdi || 0}
+                                            onChange={(e) => handleUpdateBDI(Number(e.target.value))}
                                             className="w-14 text-center text-sm font-bold text-slate-700 bg-transparent outline-none focus:ring-1 focus:ring-blue-400 rounded transition-all"
                                         />
                                         <span className="text-xs text-slate-400 font-bold">%</span>
@@ -2591,7 +2483,7 @@ const BudgetEditor = () => {
 
 
 
-                            {/* Seção Direita: Totais Corrigidos + Badge de Hidratação */}
+                            {/* Se├º├úo Direita: Totais Corrigidos + Badge de Hidrata├º├úo */}
                             <div className="flex flex-col gap-2 shrink-0">
                                 <div className="grid grid-cols-3 gap-0 bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-lg border border-slate-200 overflow-hidden shadow-sm">
                                     <div className="text-right border-r border-slate-200 p-2 min-w-[90px]">
@@ -2624,7 +2516,7 @@ const BudgetEditor = () => {
 
                         </div>
                         <div className="flex items-center gap-1 shrink-0 pl-1 relative z-50">
-                            <button onClick={handleReorderItems} className="p-2 text-slate-400 hover:text-green-600 hover:bg-slate-100 rounded-lg transition-colors" title="Recalcular Numeração e Ordem">
+                            <button onClick={handleReorderItems} className="p-2 text-slate-400 hover:text-green-600 hover:bg-slate-100 rounded-lg transition-colors" title="Recalcular Numera├º├úo e Ordem">
                                 <ListOrdered size={18} />
                             </button>
                             <button onClick={() => setShowAdjustmentModal(true)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors" title="Ajuste Global">
@@ -2636,25 +2528,25 @@ const BudgetEditor = () => {
                                     Exportar
                                     <ChevronDown size={12} />
                                 </button>
-                                {/* Dropdown com pt-1 invisível para criar "ponte" de hover */}
+                                {/* Dropdown com pt-1 invis├¡vel para criar "ponte" de hover */}
                                 <div className="absolute right-0 top-full pt-1 hidden group-hover:block z-50">
                                     <div className="bg-white border border-slate-200 rounded-lg shadow-xl w-48 py-1 animate-in fade-in slide-in-from-top-2">
                                         <button onClick={() => handleExportPDF('synthetic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-blue-600 flex items-center gap-2">
 
-                                            <FileText size={14} /> PDF Sintético
+                                            <FileText size={14} /> PDF Sint├®tico
                                         </button>
                                         <button onClick={() => handleExportPDF('analytic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-blue-600 flex items-center gap-2">
-                                            <FileText size={14} /> PDF Analítico (CPU)
+                                            <FileText size={14} /> PDF Anal├¡tico (CPU)
                                         </button>
                                         <div className="h-px bg-slate-100 my-1"></div>
                                         {FEATURES.excelExport && (
                                             <>
                                                 <button onClick={() => handleExportExcel('synthetic')} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center gap-2">
-                                                    <FileSpreadsheet size={14} /> Excel Sintético
+                                                    <FileSpreadsheet size={14} /> Excel Sint├®tico
                                                 </button>
                                                 <button onClick={() => handleExportExcel('analytic')} disabled={isExportingAnalytic} className="w-full text-left px-4 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-green-600 flex items-center justify-between gap-2">
                                                     <div className="flex items-center gap-2">
-                                                        <FileSpreadsheet size={14} /> Excel Analítico
+                                                        <FileSpreadsheet size={14} /> Excel Anal├¡tico
                                                     </div>
                                                     {isExportingAnalytic && <Loader size={12} className="animate-spin text-green-600" />}
                                                 </button>
@@ -2700,10 +2592,10 @@ const BudgetEditor = () => {
                             <button onClick={() => navigate(`/budgets/${budgetId}/schedule`)} className="p-2 text-slate-400 hover:text-indigo-500 hover:bg-slate-100 rounded-lg transition-colors" title="Cronograma" >
                                 <Calendar size={18} />
                             </button >
-                            <button onClick={() => navigate(`/budgets/${budgetId}/review`)} className="p-2 text-slate-400 hover:text-purple-600 hover:bg-slate-100 rounded-lg transition-colors" title="Revisão Final">
+                            <button onClick={() => navigate(`/budgets/${budgetId}/review`)} className="p-2 text-slate-400 hover:text-purple-600 hover:bg-slate-100 rounded-lg transition-colors" title="Revis├úo Final">
                                 <AlertTriangle size={18} />
                             </button>
-                            <button onClick={() => navigate(`/budgets/${budgetId}/scenarios`)} className="p-2 text-slate-400 hover:text-cyan-600 hover:bg-slate-100 rounded-lg transition-colors" title="Cenários">
+                            <button onClick={() => navigate(`/budgets/${budgetId}/scenarios`)} className="p-2 text-slate-400 hover:text-cyan-600 hover:bg-slate-100 rounded-lg transition-colors" title="Cen├írios">
                                 <TrendingUp size={18} />
                             </button>
                         </div >
@@ -2788,7 +2680,7 @@ const BudgetEditor = () => {
 
                         <div className="flex items-center gap-2">
                             <button
-                                onClick={() => { setInsertContext(null); setIsAddingItem(true); }}
+                                onClick={() => setIsAddingItem(true)}
                                 className="bg-accent hover:bg-accent/90 text-white text-xs font-semibold px-3 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5"
                             >
                                 <Plus size={14} /> NOVO ITEM
@@ -2811,7 +2703,7 @@ const BudgetEditor = () => {
                     <div className="px-6 py-2 bg-slate-50/50 border-b border-border flex items-center justify-between shrink-0">
                         <div className="flex items-center gap-2">
                             <button
-                                onClick={() => { setInsertContext(null); setIsAddingItem(true); }}
+                                onClick={() => setIsAddingItem(true)}
                                 className="bg-accent hover:bg-accent/90 text-white text-xs font-semibold px-3 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5"
                             >
                                 <Plus size={14} /> NOVO ITEM
@@ -2873,13 +2765,13 @@ const BudgetEditor = () => {
                         </div>
                         <div className="flex gap-6">
                             <div className="text-right">
-                                <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest leading-none mb-0.5">Diferença</p>
+                                <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest leading-none mb-0.5">Diferen├ºa</p>
                                 <p className={clsx("text-lg font-black leading-none", getImpact().value >= 0 ? "text-red-500" : "text-green-600")}>
                                     {getImpact().value >= 0 ? "+" : ""}{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(getImpact().value)}
                                 </p>
                             </div>
                             <div className="text-right border-l border-indigo-200 pl-6">
-                                <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest leading-none mb-0.5">Variação</p>
+                                <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest leading-none mb-0.5">Varia├º├úo</p>
                                 <p className={clsx("text-lg font-black leading-none", getImpact().percent >= 0 ? "text-red-500" : "text-green-600")}>
                                     {getImpact().percent >= 0 ? "+" : ""}{getImpact().percent.toFixed(2)}%
                                 </p>
@@ -2911,36 +2803,9 @@ const BudgetEditor = () => {
                                         )}
                                     >
                                         <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-2 w-full pr-2">
-                                                <span className="text-xs font-mono text-slate-400 shrink-0">{hierarchicalNumber}</span>
-                                                {editingInlineId === item.id ? (
-                                                    <input
-                                                        autoFocus
-                                                        className="font-bold uppercase text-sm bg-transparent border-b border-blue-400 outline-none w-full min-w-0"
-                                                        value={editingInlineText}
-                                                        onChange={e => setEditingInlineText(e.target.value)}
-                                                        onBlur={() => handleInlineEditSave(item.id!, editingInlineText)}
-                                                        onKeyDown={e => {
-                                                            if (e.key === 'Enter') handleInlineEditSave(item.id!, editingInlineText);
-                                                            if (e.key === 'Escape') setEditingInlineId(null);
-                                                        }}
-                                                        onFocus={e => e.target.select()}
-                                                    />
-                                                ) : (
-                                                    <span
-                                                        className="font-bold uppercase text-sm truncate cursor-text hover:bg-black/5 rounded transition-colors px-1 w-full relative group/inline"
-                                                        onDoubleClick={() => {
-                                                            setEditingInlineText(item.description);
-                                                            setEditingInlineId(item.id!);
-                                                        }}
-                                                        title="Duplo clique para editar"
-                                                    >
-                                                        {item.description}
-                                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/inline:opacity-100 text-slate-400 pointer-events-none transition-opacity">
-                                                            <Edit2 size={12} />
-                                                        </span>
-                                                    </span>
-                                                )}
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs font-mono text-slate-400">{hierarchicalNumber}</span>
+                                                <span className="font-bold uppercase text-sm">{item.description}</span>
                                             </div>
                                             <span className="text-sm font-bold">
                                                 {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalPrice * (1 + (budget.bdi || 0) / 100))}
@@ -3020,7 +2885,7 @@ const BudgetEditor = () => {
                                                 </div>
                                             </div>
                                             {item.code && (
-                                                <p className="text-[10px] text-slate-400 font-mono">Código: {item.code}</p>
+                                                <p className="text-[10px] text-slate-400 font-mono">C├│digo: {item.code}</p>
                                             )}
                                         </div>
                                     )}
@@ -3033,8 +2898,8 @@ const BudgetEditor = () => {
                                 <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
                                     <Search size={24} className="text-slate-300" />
                                 </div>
-                                <p className="font-medium text-slate-600">Orçamento Vazio</p>
-                                <p className="text-xs text-slate-400 mt-1">Adicione itens no desktop para começar</p>
+                                <p className="font-medium text-slate-600">Or├ºamento Vazio</p>
+                                <p className="text-xs text-slate-400 mt-1">Adicione itens no desktop para come├ºar</p>
                             </div>
                         )}
                     </div>
@@ -3062,14 +2927,15 @@ const BudgetEditor = () => {
                                 <th className="p-1 w-[20px] text-center border-r border-slate-300 bg-slate-200">#</th>
                                 <th className="p-1 w-[65px] text-center border-r border-slate-300">Item</th>
                                 <th className="p-1 w-[60px] text-center border-r border-slate-300">Banco</th>
-                                <th className="p-1 w-[70px] text-center border-r border-slate-300">Código</th>
-                                <th className="p-1 text-center border-r border-slate-300">Descrição</th>
-                                <th className="p-1 w-[90px] min-w-[90px] max-w-[90px] text-center border-r border-slate-300">Quant.</th>
-                                <th className="p-1 w-[80px] min-w-[80px] max-w-[80px] text-center border-r border-slate-300">Und</th>
+                                <th className="p-1 w-[70px] text-center border-r border-slate-300">C├│digo</th>
+                                <th className="p-1 text-center border-r border-slate-300">Descri├º├úo</th>
+                                <th className="p-1 w-[35px] text-center border-r border-slate-300">Und</th>
+                                <th className="p-1 w-[55px] text-center border-r border-slate-300">Quant.</th>
                                 <th className="p-1 w-[80px] text-center border-r border-slate-300">V. Unit</th>
                                 <th className="p-1 w-[80px] text-center border-r border-slate-300 bg-slate-50 font-bold">V. Unit (BDI)</th>
                                 <th className="p-1 w-[120px] text-center border-r border-slate-300 font-black">Total</th>
                                 <th className="p-1 w-[50px] text-center border-r border-slate-300">Peso</th>
+                                <th className="p-1 w-[65px] text-center bg-slate-200">A├º├Áes</th>
                             </tr>
                         </thead>
                         <tbody className="text-[11px] leading-tight">
@@ -3080,11 +2946,11 @@ const BudgetEditor = () => {
                                 if (item.level === 1) console.log(`[EDITOR RENDER] Etapa ${item.description}: Total=${item.total}`);
                                 const isGroup = item.kind === 'GROUP'; // ou item.type === 'group'
 
-                                // Leitura via campos canônicos
+                                // Leitura via campos can├┤nicos
                                 const displayTotal = item.total || 0;
                                 const peso = (item.pesoRaw || 0) * 100; // Converte para % visual da UI
 
-                                // Para exibição apenas do unitário com BDI (informativo)
+                                // Para exibi├º├úo apenas do unit├írio com BDI (informativo)
                                 const rawUnitPrice = item.unitPrice || 0;
                                 const unitPriceWithBDI = item.unitPriceWithBDI || 0;
 
@@ -3095,7 +2961,7 @@ const BudgetEditor = () => {
                                 // ===================================================================
                                 // Etapa: Azul Escuro, Branco
                                 // Subetapa: Azul Claro, Texto Escuro
-                                // Item: Branco, Texto Padrão
+                                // Item: Branco, Texto Padr├úo
 
                                 const isNivel1 = item.rowType === 'etapa' || item.level === 1; // Fallback to level if rowType missing
                                 const isNivel2 = item.rowType === 'subetapa' || item.level === 2;
@@ -3108,12 +2974,12 @@ const BudgetEditor = () => {
                                         ? "bg-[#dbeafe] text-blue-900" // Azul Claro (Subetapa)
                                         : "bg-white hover:bg-slate-50"; // Branco (Item)
 
-                                // Estilo do texto da descrição
+                                // Estilo do texto da descri├º├úo
                                 const textStyle = isNivel1
-                                    ? "font-black uppercase tracking-wide text-[12px]" // Mais destaque nível 1
+                                    ? "font-black uppercase tracking-wide text-[12px]" // Mais destaque n├¡vel 1
                                     : isNivel2
-                                        ? "font-bold uppercase text-[11px]" // Destaque nível 2
-                                        : "font-normal text-slate-700"; // Normal nível 3
+                                        ? "font-bold uppercase text-[11px]" // Destaque n├¡vel 2
+                                        : "font-normal text-slate-700"; // Normal n├¡vel 3
 
                                 return (
                                     <tr
@@ -3124,10 +2990,10 @@ const BudgetEditor = () => {
                                             rowBg,
                                             dragOverIndex === index && "border-t-2 border-t-blue-500",
                                             highlightedItemId === item.id && "bg-yellow-100 ring-2 ring-inset ring-yellow-400 z-10",
-                                            selectedItemIds.has(item.id!) && !isGroup && "bg-indigo-50" // Realce de seleção
+                                            selectedItemIds.has(item.id!) && !isGroup && "bg-indigo-50" // Realce de sele├º├úo
                                         )}
                                         onClick={(e) => {
-                                            // Seleção com CTRL/Click na linha
+                                            // Sele├º├úo com CTRL/Click na linha
                                             if ((e.ctrlKey || e.metaKey) && !isGroup) {
                                                 const newSelected = new Set(selectedItemIds);
                                                 if (newSelected.has(item.id!)) newSelected.delete(item.id!);
@@ -3200,7 +3066,7 @@ const BudgetEditor = () => {
                                             )}
                                         </td>
 
-                                        {/* Código */}
+                                        {/* C├│digo */}
                                         <td className={clsx(
                                             "p-1 px-1 text-center border-r border-slate-300 font-mono text-[10px]",
                                             isNivel1 ? "text-white/80 border-r-blue-700" : "text-slate-500"
@@ -3208,12 +3074,9 @@ const BudgetEditor = () => {
                                             {item.level >= 3 && (item.code || '-')}
                                         </td>
 
-                                        {/* Descrição */}
+                                        {/* Descri├º├úo */}
                                         <td className="p-1 border-r border-slate-300 relative group/desc">
-                                            <div className={clsx(
-                                                "flex items-center w-full min-h-[1.5rem]",
-                                                item.hydrationStatus === 'pending_review' && "pr-[90px]" // Espaço para o botão Vincular absoluto
-                                            )}>
+                                            <div className="flex items-center w-full min-h-[1.5rem]">
                                                 {!isGroup && !item.isLocked ? (
                                                     <span
                                                         className={clsx(
@@ -3226,53 +3089,19 @@ const BudgetEditor = () => {
                                                     >
                                                         {item.description}
                                                     </span>
-                                                ) : editingInlineId === item.id ? (
-                                                    <input
-                                                        autoFocus
-                                                        className={clsx(
-                                                            "bg-transparent border-b border-blue-400 outline-none w-full text-slate-900",
-                                                            textStyle,
-                                                            isNivel2 && "ml-6",
-                                                            isItem && "ml-10"
-                                                        )}
-                                                        value={editingInlineText}
-                                                        onChange={e => setEditingInlineText(e.target.value)}
-                                                        onBlur={() => handleInlineEditSave(item.id!, editingInlineText)}
-                                                        onKeyDown={e => {
-                                                            if (e.key === 'Enter') handleInlineEditSave(item.id!, editingInlineText);
-                                                            if (e.key === 'Escape') setEditingInlineId(null);
-                                                        }}
-                                                        onFocus={e => e.target.select()}
-                                                    />
                                                 ) : (
                                                     <span className={clsx(
-                                                        "truncate block w-full transition-colors relative group/inline",
-                                                        (isGroup || item.level === 1 || item.level === 2)
-                                                            ? "cursor-text hover:bg-black/10 rounded"
-                                                            : "",
+                                                        "truncate block w-full",
                                                         textStyle,
                                                         isNivel2 && "pl-6",
                                                         isItem && "pl-10"
-                                                    )}
-                                                        onDoubleClick={() => {
-                                                            if (isGroup || item.level === 1 || item.level === 2) {
-                                                                setEditingInlineText(item.description);
-                                                                setEditingInlineId(item.id!);
-                                                            }
-                                                        }}
-                                                        title={(isGroup || item.level === 1 || item.level === 2) ? "Duplo clique para editar" : ""}
-                                                    >
+                                                    )}>
                                                         {item.description}
-                                                        {(isGroup || item.level === 1 || item.level === 2) && (
-                                                            <span className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/inline:opacity-100 text-blue-400 pointer-events-none transition-opacity">
-                                                                <Edit2 size={12} />
-                                                            </span>
-                                                        )}
                                                     </span>
                                                 )}
 
 
-                                                {/* CTA: Vincular Composição (Quando Pendente) */}
+                                                {/* CTA: Vincular Composi├º├úo (Quando Pendente) */}
                                                 {item.hydrationStatus === 'pending_review' && (
                                                     <button
                                                         onClick={(e) => {
@@ -3282,14 +3111,14 @@ const BudgetEditor = () => {
                                                             setSearchTerm(item.code || '');
                                                             setIsAddingItem(true);
                                                         }}
-                                                        className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-300 transition-colors animate-pulse z-20"
-                                                        title="Este item foi importado mas não possui composição vinculada. Clique para selecionar uma composição."
+                                                        className="ml-2 inline-flex items-center gap-1 bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-300 transition-colors animate-pulse z-20 relative"
+                                                        title="Este item foi importado mas n├úo possui composi├º├úo vinculada. Clique para selecionar uma composi├º├úo."
                                                     >
                                                         <AlertTriangle size={10} /> Vincular
                                                     </button>
                                                 )}
 
-                                                {/* Tooltip Rico na Descrição */}
+                                                {/* Tooltip Rico na Descri├º├úo */}
                                                 <div className="hidden group-hover/desc:block absolute top-0 left-full ml-1 w-64 bg-slate-800 text-white text-xs p-3 rounded-lg shadow-xl z-50 pointer-events-none">
                                                     <p className="font-bold mb-1">{item.description}</p>
                                                     {item.notes && <p className="text-slate-300 italic text-[10px]">Nota: {item.notes}</p>}
@@ -3303,25 +3132,23 @@ const BudgetEditor = () => {
                                             )}
                                         </td>
 
+                                        {/* Unidade */}
+                                        <td className={clsx(
+                                            "p-1 text-center border-r border-slate-300",
+                                            isNivel1 ? "text-white/70" : "text-slate-500"
+                                        )}>
+                                            {!isGroup && item.unit}
+                                        </td>
+
                                         {/* Quantidade */}
                                         <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono px-2 w-[90px] min-w-[90px] max-w-[90px]",
+                                            "p-1 text-right border-r border-slate-300 font-mono px-2",
                                             isNivel1 ? "text-white" : "text-slate-700"
                                         )}>
                                             {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(item.quantity) : ''}
                                         </td>
 
-                                        {/* Unidade */}
-                                        <td className={clsx(
-                                            "p-1 text-center border-r border-slate-300 w-[80px] min-w-[80px] max-w-[80px]",
-                                            isNivel1 ? "text-white/70" : "text-slate-500"
-                                        )}>
-                                            <div className="truncate w-full px-1" title={!isGroup ? (item.unit || '') : ''}>
-                                                {!isGroup && (item.unit || '-')}
-                                            </div>
-                                        </td>
-
-                                        {/* Valor Unitário (Sem BDI) */}
+                                        {/* Valor Unit├írio (Sem BDI) */}
                                         <td className={clsx(
                                             "p-1 text-right border-r border-slate-300 font-mono px-2",
                                             isNivel1 ? "text-white" : "text-slate-600"
@@ -3336,7 +3163,7 @@ const BudgetEditor = () => {
                                             ) : ''}
                                         </td>
 
-                                        {/* Valor Unitário (Com BDI) - REQUISITADO */}
+                                        {/* Valor Unit├írio (Com BDI) - REQUISITADO */}
                                         <td className={clsx(
                                             "p-1 text-right border-r border-slate-300 font-mono font-bold px-2",
                                             isNivel1 ? "text-white bg-white/10" : "text-indigo-600 bg-indigo-50/30"
@@ -3344,85 +3171,58 @@ const BudgetEditor = () => {
                                             {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(unitPriceWithBDI) : ''}
                                         </td>
 
-                                        {/* Total - Usa finalPrice que já inclui BDI */}
+                                        {/* Total - Usa finalPrice que j├í inclui BDI */}
                                         {/* Total */}
                                         <td className={clsx(
                                             "p-1 text-right border-r border-slate-300 font-mono font-bold px-2 whitespace-nowrap min-w-[110px]",
                                             isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-[#1e3a8a] border-r-blue-200" : "text-slate-800"
                                         )}>
-                                            {/* Use finalPrice direto - já calculado pelo frontend */}
+                                            {/* Use finalPrice direto - j├í calculado pelo frontend */}
                                             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
                                                 displayTotal
                                             )}
                                         </td>
 
-                                        {/* Peso e Menu Flutuante de Ações */}
+                                        {/* Peso */}
                                         <td className={clsx(
-                                            "p-1 text-center border-r border-slate-300 text-[9px] relative",
+                                            "p-1 text-center border-r border-slate-300 text-[9px]",
                                             isNivel1 ? "text-white/70 border-r-blue-700" : "text-slate-400"
                                         )}>
                                             {peso.toFixed(2)}%
+                                        </td>
 
-                                            {/* Menu Flutuante de Ações */}
-                                            <div className="absolute right-full top-1/2 -translate-y-1/2 mr-2 bg-white shadow-xl border border-slate-200 rounded flex items-center py-1 px-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-all z-50 whitespace-nowrap text-slate-600 hidden group-hover:flex">
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setInsertContext({ parentId: isGroup ? item.id : item.parentId, afterIndex: index });
-                                                        setAddItemTab('CPU');
-                                                        setSearchTerm('');
-                                                        setIsAddingItem(true);
-                                                    }}
-                                                    className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]"
-                                                >
-                                                    <Database size={13} className="text-slate-700 mb-0.5" />
-                                                    <span className="text-[9px] font-bold">Composição</span>
-                                                </button>
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setInsertContext({ parentId: isGroup ? item.id : item.parentId, afterIndex: index });
-                                                        setAddItemTab('INS');
-                                                        setSearchTerm('');
-                                                        setIsAddingItem(true);
-                                                    }}
-                                                    className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]"
-                                                >
-                                                    <Box size={13} className="text-slate-700 mb-0.5" />
-                                                    <span className="text-[9px] font-bold">Insumo</span>
-                                                </button>
-
-                                                <div className="w-[1px] h-6 bg-slate-200 mx-0.5"></div>
-
+                                        {/* A├º├Áes */}
+                                        <td className="p-1 text-center">
+                                            <div className="grid grid-cols-2 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity w-fit mx-auto">
                                                 {!isGroup && !item.isLocked && (
                                                     <button
-                                                        onClick={(e) => { e.stopPropagation(); handleStartEdit(item); }}
-                                                        className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px] text-slate-500 hover:text-green-600"
+                                                        onClick={() => handleStartEdit(item)}
+                                                        className="p-1 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded"
+                                                        title="Editar item"
                                                     >
-                                                        <Edit2 size={13} className="mb-0.5" />
-                                                        <span className="text-[9px] font-bold">Editar</span>
+                                                        <Edit2 size={12} />
                                                     </button>
                                                 )}
                                                 <button
-                                                    onClick={(e) => { e.stopPropagation(); handleToggleLock(item); }}
-                                                    className={clsx("flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]", item.isLocked ? "text-amber-500" : "text-slate-500")}
+                                                    onClick={() => handleToggleLock(item)}
+                                                    className={clsx("p-1 rounded hover:bg-slate-200", item.isLocked ? "text-amber-500" : "text-slate-400")}
+                                                    title={item.isLocked ? "Desbloquear" : "Bloquear edi├º├úo"}
                                                 >
-                                                    {item.isLocked ? <Lock size={13} className="mb-0.5" /> : <Unlock size={13} className="mb-0.5" />}
-                                                    <span className="text-[9px] font-bold">{item.isLocked ? "Desbloq." : "Bloquear"}</span>
+                                                    {item.isLocked ? <Lock size={12} /> : <Unlock size={12} />}
                                                 </button>
                                                 <button
-                                                    onClick={(e) => { e.stopPropagation(); handleDuplicateItem(item); }}
-                                                    className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px] text-slate-500 hover:text-blue-600"
+                                                    onClick={() => handleDuplicateItem(item)}
+                                                    className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                                                    title="Duplicar"
                                                 >
-                                                    <Copy size={13} className="mb-0.5" />
-                                                    <span className="text-[9px] font-bold">Duplicar</span>
+                                                    <Copy size={12} />
                                                 </button>
                                                 <button
-                                                    onClick={(e) => { e.stopPropagation(); handleDeleteItem(item.id!); }}
-                                                    className="flex flex-col items-center justify-center px-1.5 hover:bg-red-50 rounded py-1 text-slate-500 hover:text-red-500 min-w-[50px]"
+                                                    onClick={() => handleDeleteItem(item.id!)}
+                                                    className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                                    title="Excluir"
                                                 >
-                                                    <Trash2 size={13} className="mb-0.5" />
-                                                    <span className="text-[9px] font-bold">Excluir</span>
+                                                    <Trash2 size={12} />
                                                 </button>
                                             </div>
                                         </td>
@@ -3431,14 +3231,14 @@ const BudgetEditor = () => {
                             })}
                             {items?.length === 0 && (
                                 <tr>
-                                    <td colSpan={12} className="py-20 text-center text-slate-400 bg-slate-50/30">
+                                    <td colSpan={13} className="py-20 text-center text-slate-400 bg-slate-50/30">
                                         <div className="flex flex-col items-center gap-3">
                                             <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center">
                                                 <Search size={24} className="text-slate-300" />
                                             </div>
                                             <div>
                                                 <p className="font-medium text-slate-600">Planilha Vazia</p>
-                                                <p className="text-xs text-slate-400 mt-1">Adicione o primeiro capítulo para começar</p>
+                                                <p className="text-xs text-slate-400 mt-1">Adicione o primeiro cap├¡tulo para come├ºar</p>
                                             </div>
                                         </div>
                                     </td>
@@ -3448,7 +3248,7 @@ const BudgetEditor = () => {
                         {/* Footer com Totais (Em Esquadro e Alinhado) */}
                         <tfoot className="bg-slate-50 border-t-2 border-slate-400 font-bold text-[11px]">
                             <tr className="bg-slate-50 border-t border-slate-300">
-                                <td colSpan={12} className="p-0">
+                                <td colSpan={13} className="p-0">
                                     <div className="flex justify-end p-6 bg-slate-50">
                                         <div className="w-full max-w-[420px] space-y-3">
                                             {/* Custo Total */}
@@ -3493,23 +3293,12 @@ const BudgetEditor = () => {
                                     <h3 className="text-xl font-bold text-slate-800">Localizar Insumo</h3>
                                     <p className="text-slate-500 text-sm">Pesquise no seu banco de dados (SINAPI, ORSE, etc)</p>
                                 </div>
-                                <button onClick={() => { setIsAddingItem(false); setInsertContext(null); }} className="text-slate-400 hover:text-slate-600"><ArrowLeft size={24} /></button>
+                                <button onClick={() => setIsAddingItem(false)} className="text-slate-400 hover:text-slate-600"><ArrowLeft size={24} /></button>
                             </div>
 
                             <div className="flex-1 min-h-0 flex flex-col">
                                 {/* TABS Toggle */}
                                 <div className="px-6 pt-4 pb-2 flex items-center justify-center gap-4">
-                                    <button
-                                        onClick={() => { setAddItemTab('CPU'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
-                                        className={clsx(
-                                            "px-4 py-2 text-xs font-bold rounded-lg border transition-all",
-                                            addItemTab === 'CPU'
-                                                ? "bg-amber-600 text-white border-amber-600 shadow-md"
-                                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                                        )}
-                                    >
-                                        [CPU] Composições
-                                    </button>
                                     <button
                                         onClick={() => { setAddItemTab('INS'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
                                         className={clsx(
@@ -3520,6 +3309,17 @@ const BudgetEditor = () => {
                                         )}
                                     >
                                         [INS] Insumos
+                                    </button>
+                                    <button
+                                        onClick={() => { setAddItemTab('CPU'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
+                                        className={clsx(
+                                            "px-4 py-2 text-xs font-bold rounded-lg border transition-all",
+                                            addItemTab === 'CPU'
+                                                ? "bg-amber-600 text-white border-amber-600 shadow-md"
+                                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                        )}
+                                    >
+                                        [CPU] Composi├º├Áes
                                     </button>
                                 </div>
 
@@ -3560,7 +3360,7 @@ const BudgetEditor = () => {
                                                 ? "border-amber-100 focus:border-amber-500 bg-amber-50/30"
                                                 : "border-slate-100 focus:border-blue-500"
                                         )}
-                                        placeholder={addItemTab === 'CPU' ? "Buscar Composição (CPU)..." : "Buscar Insumo (INS)..."}
+                                        placeholder={addItemTab === 'CPU' ? "Buscar Composi├º├úo (CPU)..." : "Buscar Insumo (INS)..."}
                                         value={searchTerm}
                                         onChange={(e) => setSearchTerm(e.target.value)}
                                     />
@@ -3616,14 +3416,14 @@ const BudgetEditor = () => {
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        <p className="font-bold text-slate-700 leading-snug line-clamp-2" title={res.description}>{res.description || 'Sem descrição'}</p>
+                                                        <p className="font-bold text-slate-700 leading-snug line-clamp-2" title={res.description}>{res.description || 'Sem descri├º├úo'}</p>
                                                     </div>
                                                     <div className="text-right shrink-0 bg-slate-50 p-2 rounded-lg">
-                                                        <p className="text-[10px] text-slate-400 uppercase font-black">Preço Ref.</p>
+                                                        <p className="text-[10px] text-slate-400 uppercase font-black">Pre├ºo Ref.</p>
                                                         <p className="font-black text-lg text-slate-800">
                                                             {(res.price !== undefined && res.price !== null)
                                                                 ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price)
-                                                                : <span className="text-sm text-slate-400 font-bold uppercase">Sem Preço</span>}
+                                                                : <span className="text-sm text-slate-400 font-bold uppercase">Sem Pre├ºo</span>}
                                                         </p>
                                                         <p className="text-[10px] text-slate-500 lowercase font-medium text-right mt-1">
                                                             / {res.unit || 'UN'}
@@ -3640,7 +3440,7 @@ const BudgetEditor = () => {
                                     <div className="flex-1 min-w-0 w-full">
                                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Item Selecionado</p>
                                         <p className="text-sm font-bold text-slate-700 truncate" title={selectedResource.description || ''}>
-                                            {selectedResource.description || 'Sem descrição'}
+                                            {selectedResource.description || 'Sem descri├º├úo'}
                                         </p>
                                     </div>
                                     <div className="flex items-center gap-4 w-full md:w-auto">
@@ -3669,7 +3469,7 @@ const BudgetEditor = () => {
                 )
             }
 
-            {/* Modal de Edição de Item */}
+            {/* Modal de Edi├º├úo de Item */}
             {
                 editingItem && (
                     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -3687,12 +3487,12 @@ const BudgetEditor = () => {
                                     {validateItemUnit(editingItem, itemComposition) && (
                                         <div className="bg-orange-100 text-orange-700 p-3 rounded-lg flex items-center gap-2 text-xs font-bold border border-orange-200">
                                             <AlertTriangle size={16} />
-                                            Unidade incompatível com a composição vinculada!
+                                            Unidade incompat├¡vel com a composi├º├úo vinculada!
                                         </div>
                                     )}
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         <div>
-                                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Descrição</label>
+                                            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Descri├º├úo</label>
                                             <textarea
                                                 className="w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm h-20 font-medium resize-none"
                                                 value={editingItem.description}
@@ -3720,7 +3520,7 @@ const BudgetEditor = () => {
                                                 />
                                             </div>
                                             <div>
-                                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Preço Unitário</label>
+                                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Pre├ºo Unit├írio</label>
                                                 <input
                                                     type="number"
                                                     step="0.01"
@@ -3737,7 +3537,7 @@ const BudgetEditor = () => {
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                             <div>
                                                 <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
-                                                    <Calculator size={14} className="text-blue-500" /> Memória de Cálculo
+                                                    <Calculator size={14} className="text-blue-500" /> Mem├│ria de C├ílculo
                                                 </label>
                                                 <input
                                                     type="text"
@@ -3773,8 +3573,8 @@ const BudgetEditor = () => {
                                                     <option value="SINAPI">SINAPI</option>
                                                     <option value="ORSE">ORSE</option>
                                                     <option value="SBC">SBC</option>
-                                                    <option value="COMPOSIÇÃO">PRÓPRIA (CPU)</option>
-                                                    <option value="PROPRIO">PRÓPRIO (INSUMO)</option>
+                                                    <option value="COMPOSI├ç├âO">PR├ôPRIA (CPU)</option>
+                                                    <option value="PROPRIO">PR├ôPRIO (INSUMO)</option>
                                                 </select>
                                             </div>
                                             <div>
@@ -3793,7 +3593,7 @@ const BudgetEditor = () => {
                                     <div className="pt-6 border-t font-bold">
                                         <div className="flex justify-between items-center mb-4">
                                             <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                                                Análise da Composição (CPU)
+                                                An├ílise da Composi├º├úo (CPU)
                                                 {itemComposition.length > 0 && <span className="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full">{itemComposition.length} itens</span>}
                                             </h4>
                                             <div className="flex gap-2">
@@ -3801,7 +3601,7 @@ const BudgetEditor = () => {
                                                     type="button"
                                                     onClick={() => {
                                                         // TODO: Migrar para CompositionService do Supabase
-                                                        alert("Funcionalidade em migração para o novo banco de dados!");
+                                                        alert("Funcionalidade em migra├º├úo para o novo banco de dados!");
                                                     }}
                                                     className="text-[10px] bg-green-50 hover:bg-green-100 text-green-600 px-3 py-1.5 rounded-lg flex items-center gap-2 transition-all font-black"
                                                 >
@@ -3822,11 +3622,11 @@ const BudgetEditor = () => {
                                                 <table className="w-full text-xs">
                                                     <thead className="bg-slate-800 text-white font-bold">
                                                         <tr>
-                                                            <th className="p-2 text-left">Código</th>
-                                                            <th className="p-2 text-left">Descrição</th>
+                                                            <th className="p-2 text-left">C├│digo</th>
+                                                            <th className="p-2 text-left">Descri├º├úo</th>
                                                             <th className="p-2 text-center">Unid.</th>
                                                             <th className="p-2 text-right">Coef.</th>
-                                                            <th className="p-2 text-right">Unitário</th>
+                                                            <th className="p-2 text-right">Unit├írio</th>
                                                             <th className="p-2 text-right">Total</th>
                                                             <th className="p-2 w-10"></th>
                                                         </tr>
@@ -3877,7 +3677,7 @@ const BudgetEditor = () => {
                                         ) : (
                                             <div className="text-center py-10 border-2 border-dashed border-slate-100 rounded-2xl bg-slate-50/30">
                                                 <Database size={32} className="mx-auto text-slate-200 mb-3" />
-                                                <p className="text-slate-400 text-sm">Este item não possui composição detalhada.</p>
+                                                <p className="text-slate-400 text-sm">Este item n├úo possui composi├º├úo detalhada.</p>
                                             </div>
                                         )}
                                     </div>
@@ -3935,7 +3735,7 @@ const BudgetEditor = () => {
 
                             <div className="p-6 bg-slate-50 border-t flex justify-end gap-3">
                                 <button type="button" onClick={() => { setEditingItem(null); setItemComposition([]); }} className="px-6 py-2.5 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition-all">Cancelar</button>
-                                <button form="edit-form" type="submit" className="px-8 py-3 bg-blue-600 text-white font-black rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200 active:scale-95 transition-all">Salvar Alterações</button>
+                                <button form="edit-form" type="submit" className="px-8 py-3 bg-blue-600 text-white font-black rounded-xl hover:bg-blue-700 shadow-lg shadow-blue-200 active:scale-95 transition-all">Salvar Altera├º├Áes</button>
                             </div>
                         </div>
                     </div>
@@ -3950,9 +3750,9 @@ const BudgetEditor = () => {
                             <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-orange-500 to-orange-600 text-white">
                                 <div>
                                     <h3 className="text-2xl font-black flex items-center gap-3">
-                                        <BarChart size={28} /> Curva ABC de {abcType === 'insumos' ? 'Insumos' : 'Serviços'}
+                                        <BarChart size={28} /> Curva ABC de {abcType === 'insumos' ? 'Insumos' : 'Servi├ºos'}
                                     </h3>
-                                    <p className="text-orange-100 text-xs mt-1 uppercase tracking-widest font-bold">Consolidação e impacto financeiro por {abcType === 'insumos' ? 'recurso' : 'serviço'}</p>
+                                    <p className="text-orange-100 text-xs mt-1 uppercase tracking-widest font-bold">Consolida├º├úo e impacto financeiro por {abcType === 'insumos' ? 'recurso' : 'servi├ºo'}</p>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <div className="bg-orange-700/50 p-1 rounded-lg flex mr-4">
@@ -3966,7 +3766,7 @@ const BudgetEditor = () => {
                                             onClick={() => setAbcType('servicos')}
                                             className={clsx("px-3 py-1 rounded-md text-sm font-bold transition-all", abcType === 'servicos' ? "bg-white text-orange-600 shadow-sm" : "text-white hover:bg-white/10")}
                                         >
-                                            SERVIÇOS
+                                            SERVI├çOS
                                         </button>
                                     </div>
 
@@ -4022,11 +3822,11 @@ const BudgetEditor = () => {
                                     <thead className="bg-slate-50 text-[10px] uppercase font-black text-slate-400 tracking-wider">
                                         <tr>
                                             <th className="p-4 text-left">Class.</th>
-                                            <th className="p-4 text-left">Código</th>
-                                            <th className="p-4 text-left">{abcType === 'insumos' ? 'Insumo' : 'Serviço'}</th>
+                                            <th className="p-4 text-left">C├│digo</th>
+                                            <th className="p-4 text-left">{abcType === 'insumos' ? 'Insumo' : 'Servi├ºo'}</th>
                                             <th className="p-4 text-center">Unid.</th>
                                             <th className="p-4 text-right">Qtde.</th>
-                                            <th className="p-4 text-right">Unitário</th>
+                                            <th className="p-4 text-right">Unit├írio</th>
                                             <th className="p-4 text-right">Valor Total</th>
                                             <th className="p-4 text-right">Peso (%)</th>
                                             <th className="p-4 text-right">Acum. (%)</th>
@@ -4078,7 +3878,7 @@ const BudgetEditor = () => {
                                     <h3 className="text-2xl font-black flex items-center gap-3">
                                         <Calculator size={28} /> Calculadora de BDI (TCU)
                                     </h3>
-                                    <p className="text-blue-100 text-xs mt-1 uppercase tracking-widest font-bold">Fórmula oficial para obras e serviços</p>
+                                    <p className="text-blue-100 text-xs mt-1 uppercase tracking-widest font-bold">F├│rmula oficial para obras e servi├ºos</p>
                                 </div>
                                 <button onClick={() => setShowBDICalculator(false)} className="p-2 hover:bg-white/20 rounded-full transition-colors">
                                     <X size={24} />
@@ -4088,7 +3888,7 @@ const BudgetEditor = () => {
 
                                 {/* BDI Presets */}
                                 <div className="mb-8 space-y-3">
-                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Escolha o Tipo de Obra (Pre-set Acórdão 2622/2013):</label>
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Escolha o Tipo de Obra (Pre-set Ac├│rd├úo 2622/2013):</label>
                                     <div className="grid grid-cols-1 gap-3">
                                         {BDI_PRESETS.map((p, idx) => (
                                             <button
@@ -4173,7 +3973,7 @@ const BudgetEditor = () => {
                                             onClick={handleApplyBDI}
                                             className="bg-blue-600 text-white px-6 py-3 rounded-xl font-black text-xs hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-95"
                                         >
-                                            APLICAR AO ORÇAMENTO
+                                            APLICAR AO OR├çAMENTO
                                         </button>
                                     </div>
                                 </div>
@@ -4203,7 +4003,7 @@ const BudgetEditor = () => {
                                             if (baseSem && baseCom) {
                                                 generateEncargosFullReport(settings, baseSem, baseCom);
                                             } else {
-                                                alert("Bases SINAPI não encontradas para comparação.");
+                                                alert("Bases SINAPI n├úo encontradas para compara├º├úo.");
                                             }
                                         }}
                                         className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all text-xs font-bold border border-white/20"
@@ -4255,7 +4055,7 @@ const BudgetEditor = () => {
                                                 <div>
                                                     <h4 className="text-slate-800 font-bold text-base">{base.nome}</h4>
                                                     <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">
-                                                        {base.fonte} • {base.desonerado ? 'Desonerado' : 'Não Desonerado'} • Ref: {base.dataReferencia}
+                                                        {base.fonte} ÔÇó {base.desonerado ? 'Desonerado' : 'N├úo Desonerado'} ÔÇó Ref: {base.dataReferencia}
                                                     </p>
                                                 </div>
                                                 <div className="text-right">
@@ -4274,7 +4074,7 @@ const BudgetEditor = () => {
                                                 ))}
                                             </div>
 
-                                            {/* Ações */}
+                                            {/* A├º├Áes */}
                                             <div className="flex gap-2 justify-end border-t border-slate-100 pt-3">
                                                 <button
                                                     onClick={() => generateEncargosReport(settings, base, tipoEncargo)}
