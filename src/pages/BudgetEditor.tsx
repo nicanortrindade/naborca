@@ -3119,11 +3119,8 @@ const BudgetEditor = () => {
                                     <tr
                                         key={item.id}
                                         id={`item-${item.id}`}
-                                        draggable={!isMobile}
-                                        onDragStart={(e) => handleDragStart(e, index)}
                                         onDragOver={(e) => handleDragOver(e, index)}
                                         onDrop={(e) => handleDrop(e, index)}
-                                        onDragEnd={() => setDragOverIndex(null)}
                                         className={clsx(
                                             "border-b border-slate-300 transition-colors group",
                                             rowBg,
@@ -3163,8 +3160,13 @@ const BudgetEditor = () => {
                                         </td>
 
                                         {/* Drag Handle */}
-                                        <td className="p-0 text-center border-r border-slate-300 cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600">
-                                            <div className="flex items-center justify-center h-full w-full">
+                                        <td className="p-0 text-center border-r border-slate-300">
+                                            <div
+                                                className="flex items-center justify-center h-full w-full cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600"
+                                                draggable={!isMobile}
+                                                onDragStart={(e) => handleDragStart(e, index)}
+                                                onDragEnd={() => setDragOverIndex(null)}
+                                            >
                                                 <GripVertical size={14} className="opacity-50 group-hover:opacity-100 transition-opacity" />
                                             </div>
                                         </td>
