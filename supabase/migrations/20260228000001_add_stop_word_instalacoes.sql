@@ -170,6 +170,8 @@ BEGIN
                               OR item_path = v_n1_key
                           )
                           AND composition_code IS NULL
+                          AND COALESCE(unit_price, 0) = 0
+                          AND COALESCE(quantity, 0) = 0
                           AND length(trim(description)) >= 5
                         ORDER BY idx ASC LIMIT 1;
 
@@ -201,6 +203,8 @@ BEGIN
                                       OR item_path = v_n2_key
                                   )
                                   AND composition_code IS NULL
+                                  AND COALESCE(unit_price, 0) = 0
+                                  AND COALESCE(quantity, 0) = 0
                                   AND length(trim(description)) >= 5
                                 ORDER BY idx ASC LIMIT 1;
                                 INSERT INTO public.budget_items
@@ -224,22 +228,18 @@ BEGIN
                         END IF;
 
                     -- Quando path tem 3+ segmentos (ex: "1.1.1")
-                    ELSIF v_path_depth >= 3 THEN
-                        -- Só aqui cria N2, pois o item realmente pertence a um subgrupo
+                    ELSIF v_path_depth = 3 THEN
                         SELECT id INTO v_n2_id FROM public.budget_items
-                        WHERE budget_id = v_budget_id
-                          AND level = 2
+                        WHERE budget_id = v_budget_id AND level = 2
                           AND hydration_details->>'path_key' = v_n2_key;
                         IF v_n2_id IS NULL THEN
-                            -- Inferir nome N2: primeiro tenta filhos, depois o próprio path
                             SELECT description INTO v_inferred_name
                             FROM public.import_ai_items
                             WHERE job_id = p_job_id
-                              AND (
-                                  item_path LIKE v_n2_key || '.%'
-                                  OR item_path = v_n2_key
-                              )
+                              AND (item_path LIKE v_n2_key || '.%' OR item_path = v_n2_key)
                               AND composition_code IS NULL
+                              AND COALESCE(unit_price, 0) = 0
+                              AND COALESCE(quantity, 0) = 0
                               AND length(trim(description)) >= 5
                             ORDER BY idx ASC LIMIT 1;
                             INSERT INTO public.budget_items
@@ -251,6 +251,53 @@ BEGIN
                         END IF;
                         v_parent_id := v_n2_id;
                         v_level := 3;
+
+                    ELSIF v_path_depth >= 4 THEN
+                        SELECT id INTO v_n2_id FROM public.budget_items
+                        WHERE budget_id = v_budget_id AND level = 2
+                          AND hydration_details->>'path_key' = v_n2_key;
+                        IF v_n2_id IS NULL THEN
+                            SELECT description INTO v_inferred_name
+                            FROM public.import_ai_items
+                            WHERE job_id = p_job_id
+                              AND (item_path LIKE v_n2_key || '.%' OR item_path = v_n2_key)
+                              AND composition_code IS NULL
+                              AND COALESCE(unit_price, 0) = 0
+                              AND COALESCE(quantity, 0) = 0
+                              AND length(trim(description)) >= 5
+                            ORDER BY idx ASC LIMIT 1;
+                            INSERT INTO public.budget_items
+                                (budget_id, user_id, level, parent_id, description, type, order_index, hydration_details)
+                            VALUES (v_budget_id, v_job.user_id, 2, v_n1_id,
+                                COALESCE(v_inferred_name, 'GRUPO ' || v_n2_key), 'group', v_items_processed,
+                                jsonb_build_object('parser', 'v1', 'path_key', v_n2_key))
+                            RETURNING id INTO v_n2_id;
+                        END IF;
+
+                        v_n3_key := v_path_parts[1] || '.' || v_path_parts[2] || '.' || v_path_parts[3];
+                        SELECT id INTO v_n3_id FROM public.budget_items
+                        WHERE budget_id = v_budget_id AND level = 3
+                          AND hydration_details->>'path_key' = v_n3_key
+                          AND type = 'group';
+                        IF v_n3_id IS NULL THEN
+                            SELECT description INTO v_inferred_name
+                            FROM public.import_ai_items
+                            WHERE job_id = p_job_id
+                              AND (item_path LIKE v_n3_key || '.%' OR item_path = v_n3_key)
+                              AND composition_code IS NULL
+                              AND COALESCE(unit_price, 0) = 0
+                              AND COALESCE(quantity, 0) = 0
+                              AND length(trim(description)) >= 5
+                            ORDER BY idx ASC LIMIT 1;
+                            INSERT INTO public.budget_items
+                                (budget_id, user_id, level, parent_id, description, type, order_index, hydration_details)
+                            VALUES (v_budget_id, v_job.user_id, 3, v_n2_id,
+                                COALESCE(v_inferred_name, 'GRUPO ' || v_n3_key), 'group', v_items_processed,
+                                jsonb_build_object('parser', 'v1', 'path_key', v_n3_key))
+                            RETURNING id INTO v_n3_id;
+                        END IF;
+                        v_parent_id := v_n3_id;
+                        v_level := 4;
                     END IF;
                 END;
 

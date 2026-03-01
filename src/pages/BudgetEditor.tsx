@@ -1273,7 +1273,6 @@ const BudgetEditor = () => {
         }
     };
 
-    const [isReordering, setIsReordering] = useState(false);
 
     // ===========================================
     // DRAG AND DROP HANDLERS
