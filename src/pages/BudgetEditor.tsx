@@ -3213,7 +3213,7 @@ const BudgetEditor = () => {
                                         {/* Descrição */}
                                         <td className="p-1 border-r border-slate-300 relative group/desc">
                                             <div className={clsx(
-                                                "flex items-center w-full min-h-[1.5rem]",
+                                                "w-full min-h-[1.75rem] py-1",
                                                 item.hydrationStatus === 'pending_review' && "pr-[90px]" // Espaço para o botão Vincular absoluto
                                             )}>
                                                 {!isGroup && !item.isLocked ? (
@@ -3224,6 +3224,7 @@ const BudgetEditor = () => {
                                                             isNivel2 && "pl-6", // Indent Level 2
                                                             isItem && "pl-10"   // Indent Level 3
                                                         )}
+                                                        style={{ whiteSpace: 'normal', overflowWrap: 'break-word', wordBreak: 'break-word' }}
                                                         onClick={() => handleStartEdit(item)}
                                                     >
                                                         {item.description}
@@ -3256,6 +3257,7 @@ const BudgetEditor = () => {
                                                         isNivel2 && "pl-6",
                                                         isItem && "pl-10"
                                                     )}
+                                                        style={{ whiteSpace: 'normal', overflowWrap: 'break-word', wordBreak: 'break-word' }}
                                                         onDoubleClick={() => {
                                                             if (isGroup || item.level === 1 || item.level === 2) {
                                                                 setEditingInlineText(item.description);
