@@ -3301,70 +3301,9 @@ const BudgetEditor = () => {
                                                     <AlertOctagon size={10} />
                                                 </div>
                                             )}
-                                        </td>
-
-                                        {/* Quantidade */}
-                                        <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono px-2 w-[90px] min-w-[90px] max-w-[90px]",
-                                            isNivel1 ? "text-white" : "text-slate-700"
-                                        )}>
-                                            {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(item.quantity) : ''}
-                                        </td>
-
-                                        {/* Unidade */}
-                                        <td className={clsx(
-                                            "p-1 text-center border-r border-slate-300 w-[80px] min-w-[80px] max-w-[80px]",
-                                            isNivel1 ? "text-white/70" : "text-slate-500"
-                                        )}>
-                                            <div className="truncate w-full px-1" title={!isGroup ? (item.unit || '') : ''}>
-                                                {!isGroup && (item.unit || '-')}
-                                            </div>
-                                        </td>
-
-                                        {/* Valor Unitário (Sem BDI) */}
-                                        <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono px-2",
-                                            isNivel1 ? "text-white" : "text-slate-600"
-                                        )}>
-                                            {!isGroup ? (
-                                                item.type === 'service' || item.type === 'composition' ? (
-                                                    <div className="flex items-center justify-end gap-1 group/calc cursor-help">
-                                                        <span>{new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)}</span>
-                                                        <Calculator size={8} className={isNivel1 ? "text-white/50" : "text-slate-300 opacity-0 group-hover/calc:opacity-100"} />
-                                                    </div>
-                                                ) : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)
-                                            ) : ''}
-                                        </td>
-
-                                        {/* Valor Unitário (Com BDI) - REQUISITADO */}
-                                        <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono font-bold px-2",
-                                            isNivel1 ? "text-white bg-white/10" : "text-indigo-600 bg-indigo-50/30"
-                                        )}>
-                                            {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(unitPriceWithBDI) : ''}
-                                        </td>
-
-                                        {/* Total - Usa finalPrice que já inclui BDI */}
-                                        {/* Total */}
-                                        <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono font-bold px-2 whitespace-nowrap min-w-[110px]",
-                                            isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-[#1e3a8a] border-r-blue-200" : "text-slate-800"
-                                        )}>
-                                            {/* Use finalPrice direto - já calculado pelo frontend */}
-                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
-                                                displayTotal
-                                            )}
-                                        </td>
-
-                                        {/* Peso e Menu Flutuante de Ações */}
-                                        <td className={clsx(
-                                            "p-1 text-center border-r border-slate-300 text-[9px] relative",
-                                            isNivel1 ? "text-white/70 border-r-blue-700" : "text-slate-400"
-                                        )}>
-                                            {peso.toFixed(2)}%
 
                                             {/* Menu Flutuante de Ações */}
-                                            <div className="absolute right-8 top-1/2 -translate-y-1/2 bg-white shadow-xl border border-slate-200 rounded flex items-center py-1 px-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-all z-50 whitespace-nowrap text-slate-600 hidden group-hover:flex">
+                                            <div className="absolute right-0 top-1/2 -translate-y-1/2 bg-white shadow-xl border border-slate-200 rounded flex items-center py-1 px-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-all z-50 whitespace-nowrap text-slate-600 hidden group-hover:flex">
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation();
@@ -3425,6 +3364,67 @@ const BudgetEditor = () => {
                                                     <span className="text-[9px] font-bold">Excluir</span>
                                                 </button>
                                             </div>
+                                        </td>
+
+                                        {/* Quantidade */}
+                                        <td className={clsx(
+                                            "p-1 text-right border-r border-slate-300 font-mono px-2 w-[90px] min-w-[90px] max-w-[90px]",
+                                            isNivel1 ? "text-white" : "text-slate-700"
+                                        )}>
+                                            {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(item.quantity) : ''}
+                                        </td>
+
+                                        {/* Unidade */}
+                                        <td className={clsx(
+                                            "p-1 text-center border-r border-slate-300 w-[80px] min-w-[80px] max-w-[80px]",
+                                            isNivel1 ? "text-white/70" : "text-slate-500"
+                                        )}>
+                                            <div className="truncate w-full px-1" title={!isGroup ? (item.unit || '') : ''}>
+                                                {!isGroup && (item.unit || '-')}
+                                            </div>
+                                        </td>
+
+                                        {/* Valor Unitário (Sem BDI) */}
+                                        <td className={clsx(
+                                            "p-1 text-right border-r border-slate-300 font-mono px-2",
+                                            isNivel1 ? "text-white" : "text-slate-600"
+                                        )}>
+                                            {!isGroup ? (
+                                                item.type === 'service' || item.type === 'composition' ? (
+                                                    <div className="flex items-center justify-end gap-1 group/calc cursor-help">
+                                                        <span>{new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)}</span>
+                                                        <Calculator size={8} className={isNivel1 ? "text-white/50" : "text-slate-300 opacity-0 group-hover/calc:opacity-100"} />
+                                                    </div>
+                                                ) : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)
+                                            ) : ''}
+                                        </td>
+
+                                        {/* Valor Unitário (Com BDI) - REQUISITADO */}
+                                        <td className={clsx(
+                                            "p-1 text-right border-r border-slate-300 font-mono font-bold px-2",
+                                            isNivel1 ? "text-white bg-white/10" : "text-indigo-600 bg-indigo-50/30"
+                                        )}>
+                                            {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(unitPriceWithBDI) : ''}
+                                        </td>
+
+                                        {/* Total - Usa finalPrice que já inclui BDI */}
+                                        {/* Total */}
+                                        <td className={clsx(
+                                            "p-1 text-right border-r border-slate-300 font-mono font-bold px-2 whitespace-nowrap min-w-[110px]",
+                                            isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-[#1e3a8a] border-r-blue-200" : "text-slate-800"
+                                        )}>
+                                            {/* Use finalPrice direto - já calculado pelo frontend */}
+                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                                                displayTotal
+                                            )}
+                                        </td>
+
+                                        {/* Peso */}
+                                        <td className={clsx(
+                                            "p-1 text-center border-r border-slate-300 text-[9px]",
+                                            isNivel1 ? "text-white/70 border-r-blue-700" : "text-slate-400"
+                                        )}>
+                                            {peso.toFixed(2)}%
                                         </td>
                                     </tr>
                                 );
