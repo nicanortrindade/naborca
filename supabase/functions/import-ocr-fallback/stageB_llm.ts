@@ -187,6 +187,16 @@ EXTRACTION RULES:
    - If the two occurrences have different unit_price or total_price, prefer the one with
      higher values (typically the updated pactuação).
    - Set kind to "synthetic_item" and add a warning: "DEDUP_PARALLEL_COLUMN".
+11. **PAGE/TABLE HEADERS (IGNORE)**:
+    - Ignore completely any lines that are page headers or table headers repeated mid-document. 
+      These lines contain patterns like: "PLANILHA DE ORÇAMENTO SINTÉTICO", "ItemCódigoBancoDescrição", 
+      "Und Quant. Valor Unit", or any combination of these column header words. 
+      Do NOT treat these as items. Continue extracting the next valid item line after them.
+12. **LINE CONTINUATIONS (MERGE)**:
+    - If a line starts with only "UN", "M", "KG", "m²", "m³", "CJ" followed by numbers and percentage signs 
+      (no item number, no code, no description), it is a continuation of the previous item's data row 
+      that was split by a page break. Associate the numeric values with the previous item if that item 
+      is missing quantity or unit_price. Do NOT create a new item for this line.
 
 CRITICAL RULE — CONTEXT PRIORITY:
 When extracting numeric fields (quantity, unit_price, total_price) for the current item:
@@ -247,6 +257,18 @@ Examples:
 If two items share the same hierarchical position, they should still have the same item_path,
 but NEVER assign the PREVIOUS item's item_path to the CURRENT item when the current item has its
 own explicit numeric prefix. Always use the number that directly precedes the item's code.
+
+REGRA CRÍTICA para item_path e composition_code:
+O raw_line pode conter o item_path colado diretamente com o composition_code sem espaço.
+Exemplos de separação correta:
+- "20.213764ORSE..." → item_path="20.2", composition_code="13764"
+- "20.33642ORSE..." → item_path="20.3", composition_code="3642"  
+- "3.192423SINAPI..." → item_path="3.1", composition_code="92423"
+- "1.1.14656ORSE..." → item_path="1.1.1", composition_code="4656"
+
+Regra: o item_path termina sempre no padrão N.N ou N.N.N (números separados por ponto).
+O composition_code começa imediatamente após o item_path, antes do banco (SINAPI/ORSE/Próprio).
+NUNCA inclua dígitos do composition_code dentro do item_path.
 
 CRITICAL RULE — SECTION TITLE CANDIDATES:
 When a candidate has warnings containing "section_title_candidate":
@@ -389,7 +411,15 @@ async function persistStageBMetaAtomic(
 function generateStageBDedupKey(item: StageBItem): string {
     const clean = (s: string | null | undefined) => (s || '').trim().toUpperCase();
     const pathPrefix = (item.item_path || '').split('.')[0];
-    // FIX A: ignora description para eliminar duplicatas de linha quebrada no PDF
+
+    // Quando não há código (títulos de seção/grupo), usa a descrição como discriminador
+    // para evitar que títulos colidam com itens normais na dedup
+    if (!item.code) {
+        const descKey = clean(item.description as string).slice(0, 40);
+        return `${item.item_path || ''}|NULL|${descKey}`;
+    }
+
+    // Para itens normais, mantém a key original baseada em código+quantidade+preço
     return `${pathPrefix}|${clean(item.code)}|${clean(item.unit)}|${String(item.quantity ?? '')}|${String(item.unit_price ?? '')}`;
 }
 
@@ -633,6 +663,23 @@ async function processCandidatesBatch(
             candidatesForLLM.push(c);
         }
     }
+
+    // LOG TEMPORÁRIO — remover após debug
+    console.log('[PATCH-B-RESULT]', JSON.stringify({
+        total_candidates: candidates.length,
+        bypassed: bypassedItems.length,
+        forLLM: candidatesForLLM.length,
+        first_5_warnings: candidates.slice(0, 5).map((c: any) => ({
+            id: c.id,
+            warnings: c.warnings,
+            warnings_type: typeof c.warnings,
+            is_array: Array.isArray(c.warnings),
+            has_section: Array.isArray(c.warnings) && c.warnings.includes('section_title_candidate')
+        })),
+        section_candidates: candidates.filter((c: any) =>
+            Array.isArray(c.warnings) && c.warnings.includes('section_title_candidate')
+        ).map((c: any) => ({ id: c.id, item_path: c.extracted_signals?.item_path, desc: c.extracted_signals?.description_fragment }))
+    }));
 
     // Se todos os candidatos do batch foram bypassed, retorna imediatamente
     if (candidatesForLLM.length === 0) {

@@ -149,9 +149,11 @@ export function detectDocTypeHints(text: string, fileMeta?: any): StageAResult['
 // ------------------------------------------------------------------
 
 // Regex Patterns
-const REGEX_ITEM_PATH = /^\s*(\d{1,3}(\.\d{1,3}){1,6})\s+(.{5,})$/; // "1.2.3 Description"
-// Captura títulos de seção de nível 1: "1 SERVIÇOS PRELIMINARES" ou "19 URBANIZAÇÃO"
-const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s{1,}([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-]{8,})$/;
+// Captura: " 1.2.2 90776..." (com espaço) E " 1.2.290776..." (sem espaço entre path e código)
+const REGEX_ITEM_PATH = /^\s*(\d{1,3}(?:\.\d{1,3}){1,6})\s*(.{5,})$/;
+// Captura: "1SERVIÇOS PRELIMINARES E INDIRETOS185.303,28" ou "1 SERVIÇOS..."
+// Remove o total financeiro colado no final (ex: 185.303,28)
+const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s*([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-()\.\°"']{5,}?)\s*(?:[\d.,]+\s*)?\r?$/;
 const REGEX_CODE_START = /^(\d{4,10}|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/; // "94321 Description" or "CPU123 Desc" or "2451 Desc"
 const REGEX_UNIT = /\b(UN|und|m²|m2|m³|m3|kg|h|vb|m)\b/i;
 const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\d{1,4})?\b/g; // 1.234,56 or 1234.56
@@ -398,13 +400,49 @@ export function generateCandidatesStageA(text: string, options: {
             si = j - 1;
         }
 
+        const pathCounters = new Map<string, number>();
+        function deduplicatePath(path: string): string {
+            const count = (pathCounters.get(path) || 0) + 1;
+            pathCounters.set(path, count);
+            if (count === 1) return path;
+            // incrementa o último segmento: "1.2.2" → "1.2.3"
+            const parts = path.split('.');
+            const last = parseInt(parts[parts.length - 1]) + (count - 1);
+            parts[parts.length - 1] = String(last);
+            return parts.join('.');
+        }
+
         for (let i = 0; i < limit; i++) {
             if (candidates.length >= caps.max_candidates) break;
 
-            const line = lines[i];
+            const line = lines[i].replace(/\r/g, '');
             const originalLineNo = mapOriginalLineNo[i];
 
-            // Skip garbage
+            // ETAPA 0: Sempre testa título N1 PRIMEIRO, antes de qualquer outra verificação
+            const matchSection = line.match(REGEX_SECTION_TITLE);
+            if (matchSection) {
+                candidates.push({
+                    id: generateShortId(),
+                    kind: 'synthetic_line',
+                    source: 'ocr_heuristic_v1',
+                    confidence: 0.8,
+                    line_no: originalLineNo,
+                    evidence: line,
+                    snippet: line,
+                    context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
+                    context_after: lines.slice(i + 1, Math.min(limit, i + 2)).join('\n'),
+                    extracted_signals: {
+                        item_path: matchSection[1],
+                        description_fragment: matchSection[2].trim(),
+                    },
+                    raw_numbers: [],
+                    warnings: ['section_title_candidate'],
+                    debug_heuristic: ['S_TITLE']
+                } as any);
+                continue;
+            }
+
+            // ETAPA 1: Só agora verifica linhas muito curtas, paginação, etc.
             if (line.length < 5) continue;
             if (/^(pag|pág|data|hora|emitido)/i.test(line)) continue;
             if (/^[_\-=.]{3,}$/.test(line)) continue;
@@ -414,10 +452,6 @@ export function generateCandidatesStageA(text: string, options: {
             // Ex: "Centro de Atenção Psicossocial...564,56m²25,00%71,46%07/10/2025"
             if (REGEX_PROJECT_TITLE_WITH_DATE_PCT.test(line)) continue;
 
-            // FILTER: Section total lines — single digit glued to uppercase text + trailing number
-            // Ex: "1SERVIÇOS PRELIMINARES E INDIRETOS185.303,28"
-            if (REGEX_SECTION_TOTAL.test(line)) continue;
-
             // FILTER: Bank header lines (e.g. "SINAPI (07/2025) - CPOS/CDHU (06/2025) - ...")
             // These are reference metadata, not budget items. Must be filtered on raw line.
             if (/SINAPI\s*\(\d{2}\/\d{4}\)|CPOS\/CDHU|ORSE\s*\(\d{2}\/\d{4}\)|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL/i.test(line) &&
@@ -425,10 +459,10 @@ export function generateCandidatesStageA(text: string, options: {
                 continue;
             }
 
-            // Resolve a seção ativa usando o mapa pré-calculado
+            // ETAPA 2: Resolve a seção ativa
             const lastSectionPath = resolveNearestSection(i);
 
-            // Pular linhas já consumidas pelo S0_multiline_merge
+            // ETAPA 3: Pular linhas já consumidas pelo S0_multiline_merge
             if (consumedLines.has(i)) continue;
 
             let hitS1 = false;
@@ -439,6 +473,13 @@ export function generateCandidatesStageA(text: string, options: {
             // ST-EMBEDDED: detecta título N1/N2 embutido na mesma linha/célula que um item
             // Ex: "FUNDAÇÃO\n LOCAÇÃO CONVENCIONAL DE OBRA..." ou "9.1 REVESTIMENTO\n PISO..."
             const embeddedTitleMatch = line.match(/^([A-Z0-9ÀÁÂÃÉÊÍÓÔÕÚÇ][A-Z0-9ÀÁÂÃÉÊÍÓÔÕÚÇ\s.]{3,})\n\s*(.+)$/);
+            // LOG TEMPORÁRIO
+            if (/^\s*\d{1,3}[A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ]/.test(line) && line.length < 120) {
+                console.log('[ST-EMBEDDED-TEST]', JSON.stringify({
+                    line: line.substring(0, 60),
+                    embeddedMatch: !!embeddedTitleMatch
+                }));
+            }
             if (embeddedTitleMatch) {
                 const titlePart = embeddedTitleMatch[1].trim();
                 const itemPart = embeddedTitleMatch[2].trim();
@@ -492,6 +533,19 @@ export function generateCandidatesStageA(text: string, options: {
                 stats.synthetic_heads_found++;
                 stats.heuristics_hit['S1'] = (stats.heuristics_hit['S1'] || 0) + 1;
 
+                let extracted_code: string | undefined = undefined;
+                let extracted_description = matchPath[2];
+
+                // Separa código colado no início do texto: "90776SINAPI..." ou "CPU2527Próprio..."
+                const REGEX_CODE_PREFIX = /^(\d{4,10}|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)?\s*(.+)$/;
+                const textoPart = matchPath[2]; // texto após o item_path
+                const codeMatch = textoPart.match(REGEX_CODE_PREFIX);
+                if (codeMatch) {
+                    // código estava colado ao item_path
+                    extracted_code = codeMatch[1];
+                    extracted_description = codeMatch[3];
+                }
+
                 const cand: StageACandidate = {
                     id: generateShortId(),
                     kind: 'synthetic_line',
@@ -504,39 +558,35 @@ export function generateCandidatesStageA(text: string, options: {
                     context_after: lines.slice(i + 1, Math.min(limit, i + 3)).join('\n'),
                     extracted_signals: {
                         item_path: matchPath[1],
-                        description_fragment: matchPath[3]
+                        code: extracted_code,
+                        description_fragment: extracted_description
                     },
                     raw_numbers: extractNumbers(line).map(v => ({ value: v, text: String(v), lineNo: originalLineNo })),
                     warnings: [],
                     debug_heuristic: ['S1_item_path']
                 };
+                if (cand.extracted_signals && cand.extracted_signals.item_path) {
+                    cand.extracted_signals.item_path = deduplicatePath(cand.extracted_signals.item_path);
+                }
                 candidates.push(cand);
                 continue; // Winner takes line
             }
 
-            // Testa título de seção nível 1 (ex: "1  SERVIÇOS PRELIMINARES E INDIRETOS")
-            const matchSection = line.match(REGEX_SECTION_TITLE);
-            if (matchSection) {
-                candidates.push({
-                    id: generateShortId(),
-                    kind: 'synthetic_line',
-                    source: 'ocr_heuristic_v1', // conform to type
-                    confidence: 0.8,
-                    line_no: originalLineNo,
-                    evidence: line,
-                    snippet: line,
-                    context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
-                    context_after: lines.slice(i + 1, Math.min(limit, i + 2)).join('\n'),
-                    extracted_signals: {
-                        item_path: matchSection[1],
-                        description_fragment: matchSection[2].trim(),
-                    },
-                    raw_numbers: [],
-                    warnings: ['section_title_candidate'],
-                    debug_heuristic: ['S_TITLE']
-                } as any);
-                continue;
+            // DIAGNÓSTICO TEMPORÁRIO — remover após debug
+            if (/^\s*\d{1,3}[A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ]/.test(line) && line.length < 120) {
+                console.log('[SECTION_DEBUG]', JSON.stringify({
+                    line: line,
+                    length: line.length,
+                    regexTest: REGEX_SECTION_TITLE.test(line),
+                    matchResult: line.match(REGEX_SECTION_TITLE),
+                    charCodes: [...line.slice(0, 5)].map(c => c.charCodeAt(0))
+                }));
             }
+
+
+
+            // 2. Só depois filtra como "section total" (linha que não é título)
+            if (REGEX_SECTION_TOTAL.test(line)) continue;
 
             // ST: Section Title — prefixo numérico/alfabético/romano sem código nem valores
             // Exemplos: "3 PAVIMENTAÇÃO", "1.4 DRENAGEM", "A - SERVIÇOS INICIAIS", "II - FUNDAÇÕES"
@@ -840,6 +890,19 @@ export function generateCandidatesStageA(text: string, options: {
 
     stats.candidates_found = candidates.length;
     stats.blocks_found = candidates.filter(c => c.kind === 'analytic_block').length;
+
+    // LOG TEMPORÁRIO
+    const sTitleCandidates = candidates.filter(c => c.warnings?.includes('section_title_candidate'));
+    console.log('[STAGE-A-STITLE]', JSON.stringify({
+        total: candidates.length,
+        s_title_count: sTitleCandidates.length,
+        s_titles: sTitleCandidates.map(c => ({
+            id: c.id,
+            warnings: c.warnings,
+            item_path: c.extracted_signals?.item_path,
+            desc: c.extracted_signals?.description_fragment
+        }))
+    }));
 
     return {
         version: "v1",

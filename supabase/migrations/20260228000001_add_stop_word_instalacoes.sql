@@ -53,6 +53,7 @@ DECLARE -- Context
     v_n1_id       uuid;
     v_n2_id       uuid;
     v_n3_id       uuid;
+    v_inferred_name text;
 BEGIN
     -- 0. Timeout local
     SET LOCAL statement_timeout = '120s';
@@ -160,49 +161,94 @@ BEGIN
                       AND hydration_details->>'path_key' = v_n1_key;
 
                     IF v_n1_id IS NULL THEN
+                        -- Inferir nome N1: primeiro tenta filhos, depois o próprio path
+                        SELECT description INTO v_inferred_name
+                        FROM public.import_ai_items
+                        WHERE job_id = p_job_id
+                          AND (
+                              item_path LIKE v_n1_key || '.%'
+                              OR item_path = v_n1_key
+                          )
+                          AND composition_code IS NULL
+                          AND length(trim(description)) >= 5
+                        ORDER BY idx ASC LIMIT 1;
+
                         INSERT INTO public.budget_items
                             (budget_id, user_id, level, description, type, order_index, hydration_details)
                         VALUES (v_budget_id, v_job.user_id, 1,
-                            'SEÇÃO ' || v_n1_key, 'group', v_items_processed,
+                            COALESCE(v_inferred_name, 'SEÇÃO ' || v_n1_key), 'group', v_items_processed,
                             jsonb_build_object('parser', 'v1', 'path_key', v_n1_key))
                         RETURNING id INTO v_n1_id;
                     END IF;
 
-                    -- Busca ou cria N2
-                    SELECT id INTO v_n2_id FROM public.budget_items
-                    WHERE budget_id = v_budget_id
-                      AND level = 2
-                      AND hydration_details->>'path_key' = v_n2_key;
-
-                    IF v_n2_id IS NULL THEN
-                        INSERT INTO public.budget_items
-                            (budget_id, user_id, level, parent_id, description, type, order_index, hydration_details)
-                        VALUES (v_budget_id, v_job.user_id, 2, v_n1_id,
-                            'GRUPO ' || v_n2_key, 'group', v_items_processed,
-                            jsonb_build_object('parser', 'v1', 'path_key', v_n2_key))
-                        RETURNING id INTO v_n2_id;
-                    END IF;
-
                     -- Quando path tem exatamente 2 segmentos (ex: "1.1" ou "2.1")
                     IF v_path_depth = 2 THEN
-                        -- É um título de grupo N2 (sem código e sem preço): skip para renomear grupo
-                        IF v_item.composition_code IS NULL 
-                           AND COALESCE(v_item.unit_price, 0) = 0 
+                        -- É um título de grupo N2 (sem código e sem preço): cria/renomeia grupo e faz skip
+                        IF v_item.composition_code IS NULL
+                           AND COALESCE(v_item.unit_price, 0) = 0
                            AND COALESCE(v_item.quantity, 0) = 0 THEN
-                            -- Renomeia o grupo N2 genérico se existir
-                            UPDATE public.budget_items
-                            SET description = v_clean_description
+                            SELECT id INTO v_n2_id FROM public.budget_items
                             WHERE budget_id = v_budget_id
-                              AND hydration_details->>'path_key' = v_n2_key
-                              AND (description LIKE 'GRUPO %');
+                              AND level = 2
+                              AND hydration_details->>'path_key' = v_n2_key;
+                            IF v_n2_id IS NULL THEN
+                                -- Inferir nome N2: primeiro tenta filhos, depois o próprio path
+                                SELECT description INTO v_inferred_name
+                                FROM public.import_ai_items
+                                WHERE job_id = p_job_id
+                                  AND (
+                                      item_path LIKE v_n2_key || '.%'
+                                      OR item_path = v_n2_key
+                                  )
+                                  AND composition_code IS NULL
+                                  AND length(trim(description)) >= 5
+                                ORDER BY idx ASC LIMIT 1;
+                                INSERT INTO public.budget_items
+                                    (budget_id, user_id, level, parent_id, description, type, order_index, hydration_details)
+                                VALUES (v_budget_id, v_job.user_id, 2, v_n1_id,
+                                    COALESCE(v_inferred_name, 'GRUPO ' || v_n2_key), 'group', v_items_processed,
+                                    jsonb_build_object('parser', 'v1', 'path_key', v_n2_key))
+                                RETURNING id INTO v_n2_id;
+                            ELSE
+                                UPDATE public.budget_items
+                                SET description = v_clean_description
+                                WHERE budget_id = v_budget_id
+                                  AND hydration_details->>'path_key' = v_n2_key
+                                  AND (description LIKE 'GRUPO %');
+                            END IF;
                             CONTINUE;
                         ELSE
-                            -- É um item real filho direto do N1 (seção sem subdivisão)
+                            -- É um item real filho direto do N1 (seção sem subdivisão, ex: 2.1, 2.2)
                             v_parent_id := v_n1_id;
                             v_level := 3;
                         END IF;
+
                     -- Quando path tem 3+ segmentos (ex: "1.1.1")
                     ELSIF v_path_depth >= 3 THEN
+                        -- Só aqui cria N2, pois o item realmente pertence a um subgrupo
+                        SELECT id INTO v_n2_id FROM public.budget_items
+                        WHERE budget_id = v_budget_id
+                          AND level = 2
+                          AND hydration_details->>'path_key' = v_n2_key;
+                        IF v_n2_id IS NULL THEN
+                            -- Inferir nome N2: primeiro tenta filhos, depois o próprio path
+                            SELECT description INTO v_inferred_name
+                            FROM public.import_ai_items
+                            WHERE job_id = p_job_id
+                              AND (
+                                  item_path LIKE v_n2_key || '.%'
+                                  OR item_path = v_n2_key
+                              )
+                              AND composition_code IS NULL
+                              AND length(trim(description)) >= 5
+                            ORDER BY idx ASC LIMIT 1;
+                            INSERT INTO public.budget_items
+                                (budget_id, user_id, level, parent_id, description, type, order_index, hydration_details)
+                            VALUES (v_budget_id, v_job.user_id, 2, v_n1_id,
+                                COALESCE(v_inferred_name, 'GRUPO ' || v_n2_key), 'group', v_items_processed,
+                                jsonb_build_object('parser', 'v1', 'path_key', v_n2_key))
+                            RETURNING id INTO v_n2_id;
+                        END IF;
                         v_parent_id := v_n2_id;
                         v_level := 3;
                     END IF;
@@ -277,43 +323,52 @@ BEGIN
             CONTINUE;
         END IF;
 
-        -- Skip multiline duplicate (same item_path, same price/qty as previous item, no code OR no values)
+        -- Skip: continuação de descrição longa (sem código, mesma qty/price de item já existente no mesmo path)
         IF v_item.composition_code IS NULL
            AND v_item.item_path IS NOT NULL
-           AND (
-               (COALESCE(v_item.unit_price, 0) = 0 AND COALESCE(v_item.quantity, 0) = 0)
-               OR
-               EXISTS (
-                   SELECT 1 FROM public.import_ai_items
-                   WHERE job_id = p_job_id
-                     AND item_path = v_item.item_path
-                     AND composition_code IS NOT NULL
-                     AND idx < v_item.idx
-                     AND ABS(COALESCE(unit_price, 0) - COALESCE(v_item.unit_price, 0)) < 0.01
-                     AND ABS(COALESCE(quantity, 0) - COALESCE(v_item.quantity, 0)) < 0.01
-               )
+           AND EXISTS (
+               SELECT 1 FROM public.import_ai_items
+               WHERE job_id = p_job_id
+                 AND item_path = v_item.item_path
+                 AND ABS(COALESCE(unit_price, 0) - COALESCE(v_item.unit_price, 0)) < 0.01
+                 AND ABS(COALESCE(quantity, 0) - COALESCE(v_item.quantity, 0)) < 0.01
+                 AND idx < v_item.idx
            ) THEN
             CONTINUE;
         END IF;
 
-        -- Check: Skip coded multiline duplicate
+        -- Skip: item sem quantidade quando já existe versão válida no mesmo path+código
         IF v_item.composition_code IS NOT NULL
            AND v_item.item_path IS NOT NULL
-           AND (
-               (COALESCE(v_item.unit_price, 0) = 0 AND COALESCE(v_item.quantity, 0) = 0)
-               OR
-               EXISTS (
-                   SELECT 1 FROM public.import_ai_items
-                   WHERE job_id = p_job_id
-                     AND item_path = v_item.item_path
-                     AND composition_code = v_item.composition_code
-                     AND idx < v_item.idx
-                     AND ABS(COALESCE(unit_price, 0) - COALESCE(v_item.unit_price, 0)) < 0.01
-                     AND ABS(COALESCE(quantity, 0) - COALESCE(v_item.quantity, 0)) < 0.01
-               )
+           AND COALESCE(v_item.quantity, 0) = 0
+           AND EXISTS (
+               SELECT 1 FROM public.import_ai_items
+               WHERE job_id = p_job_id
+                 AND item_path = v_item.item_path
+                 AND composition_code = v_item.composition_code
+                 AND quantity IS NOT NULL
+                 AND quantity > 0
+                 AND idx != v_item.idx
            ) THEN
             CONTINUE;
         END IF;
+
+        -- Skip: duplicata de batch — já passou registro válido com mesma chave antes
+        IF v_item.composition_code IS NOT NULL
+           AND v_item.item_path IS NOT NULL
+           AND COALESCE(v_item.quantity, 0) > 0
+           AND EXISTS (
+               SELECT 1 FROM public.import_ai_items
+               WHERE job_id = p_job_id
+                 AND item_path = v_item.item_path
+                 AND composition_code = v_item.composition_code
+                 AND quantity IS NOT NULL
+                 AND quantity > 0
+                 AND idx < v_item.idx
+           ) THEN
+            CONTINUE;
+        END IF;
+
 
         -- Garante fallback L2 lazy se parent_id ainda for NULL
         IF v_parent_id IS NULL THEN
@@ -336,14 +391,18 @@ BEGIN
         INSERT INTO public.budget_items (budget_id, user_id, level, parent_id, description, unit, quantity, unit_price,
             total_price, final_price, type, source, code, source_import_item_id, order_index, hydration_details, hydration_status)
         VALUES (v_budget_id, v_job.user_id, 3, v_parent_id, v_clean_description, COALESCE(v_item.unit, 'UN'),
-            COALESCE(v_item.quantity, 1), COALESCE(v_item.unit_price, 0),
-            (COALESCE(v_item.quantity, 1) * COALESCE(v_item.unit_price, 0)),
-            (COALESCE(v_item.quantity, 1) * COALESCE(v_item.unit_price, 0)),
+            COALESCE(v_item.quantity, 0), COALESCE(v_item.unit_price, 0),
+            (COALESCE(v_item.quantity, 0) * COALESCE(v_item.unit_price, 0)),
+            (COALESCE(v_item.quantity, 0) * COALESCE(v_item.unit_price, 0)),
             'insumo',
-            CASE WHEN v_item.composition_code IS NOT NULL THEN 'AI_EXTRACTED_CODE' ELSE 'IMPORTADO' END,
+            COALESCE(v_item.price_source, CASE WHEN v_item.composition_code IS NOT NULL THEN 'AI_EXTRACTED_CODE' ELSE 'IMPORTADO' END),
             v_clean_code, v_item.id, v_items_processed,
             jsonb_build_object('parser', CASE WHEN v_use_parser THEN 'v1' ELSE 'flat' END, 'path_key', v_numbering),
-            'pending_review')
+            CASE
+                WHEN COALESCE(v_item.quantity, 0) = 0 OR COALESCE(v_item.unit_price, 0) = 0
+                THEN 'pending_hydration'
+                ELSE 'pending_review'
+            END)
         RETURNING id INTO v_inserted_item_id;
 
     END LOOP;

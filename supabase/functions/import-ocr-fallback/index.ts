@@ -21,7 +21,7 @@ const OCR_EC2_URL = Deno.env.get("OCR_EC2_URL") ?? "";
 // -----------------------------
 const MIN_ITEMS_SUCCESS = 3;
 const MIN_TEXT_LEN_FOR_PARSE = 200;
-const STAGEB_BUILD_SIG = "stageb-docrole-fix-2026-02-22";
+const STAGEB_BUILD_SIG = 'section-title-crlf-fix-2026-03-01';
 
 // -----------------------------
 // SAFETY LIMITS
@@ -901,7 +901,27 @@ serve(async (req: Request) => {
                                                 for (const item of filteredItems) {
                                                     deduped.set(item.dedup_key, item);
                                                 }
-                                                const uniqueDbItems = Array.from(deduped.values());
+
+                                                // FIX: Para itens com mesmo composition_code + item_path,
+                                                // manter apenas o que tem quantity preenchida
+                                                const dedupedByPath = new Map<string, typeof filteredItems[0]>();
+                                                for (const item of Array.from(deduped.values())) {
+                                                    const pathKey = item.composition_code
+                                                        ? `${item.composition_code}|${item.item_path}`
+                                                        : `__no_code__|${item.item_path}`;
+                                                    const existing = dedupedByPath.get(pathKey);
+                                                    if (!existing) {
+                                                        dedupedByPath.set(pathKey, item);
+                                                    } else {
+                                                        const existingScore = (existing.quantity != null ? 1 : 0) + (existing.unit_price != null ? 1 : 0);
+                                                        const newScore = (item.quantity != null ? 1 : 0) + (item.unit_price != null ? 1 : 0);
+                                                        if (newScore > existingScore ||
+                                                            (newScore === existingScore && item.quantity != null && existing.quantity == null)) {
+                                                            dedupedByPath.set(pathKey, item);
+                                                        }
+                                                    }
+                                                }
+                                                const uniqueDbItems = Array.from(dedupedByPath.values());
 
                                                 console.log("[STAGE-B-DB-ATTEMPT] (Incremental)", {
                                                     file_id: file.id,

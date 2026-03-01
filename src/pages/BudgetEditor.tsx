@@ -365,8 +365,9 @@ const BudgetEditor = () => {
 
     const [isAddingItem, setIsAddingItem] = useState(false);
     // NEW: Toggle State for Add Item Modal
-    const [addItemTab, setAddItemTab] = useState<'INS' | 'CPU'>('INS');
-
+    const [addItemTab, setAddItemTab] = useState<'INS' | 'CPU'>('CPU'); // Alterado para CPU como padrão
+    const [isReordering, setIsReordering] = useState(false);
+    const [insertContext, setInsertContext] = useState<{ parentId?: string | null, afterIndex?: number } | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedResource, setSelectedResource] = useState<any>(null);
     const [quantity, setQuantity] = useState(1);
@@ -381,6 +382,9 @@ const BudgetEditor = () => {
     const [originalTotal, setOriginalTotal] = useState(0);
     const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
     const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+    // Inline Edit State
+    const [editingInlineId, setEditingInlineId] = useState<string | null>(null);
+    const [editingInlineText, setEditingInlineText] = useState("");
 
     // Estados de Busca e Filtros Multi-Base
     const [selectedBases, setSelectedBases] = useState<string[]>(() => {
@@ -414,6 +418,7 @@ const BudgetEditor = () => {
 
     // BDI Calculator States
     const [showBDICalculator, setShowBDICalculator] = useState(false);
+    const [localBDI, setLocalBDI] = useState<string>(budget?.bdi?.toString() || '0');
     const [bdiCalc, setBdiCalc] = useState({
         ac: 3.5,
         r: 0.97,
@@ -1000,11 +1005,9 @@ const BudgetEditor = () => {
             // 1. Verificar se existe pelo menos uma ETAPA (Nível 1)
             const lastEtapa = [...items].reverse().find(i => i.level === 1);
 
-            // 2. Definir o Pai: Prioridade para a última SUBETAPA (L2) DESTA etapa, senão usa a própria ETAPA (L1)
-            let targetParentId: string | undefined = lastEtapa?.id;
+            let targetParentId: string | undefined | null = insertContext?.parentId ?? undefined;
 
-            // Busca a última subetapa que pertença a esta etapa específica
-            if (lastEtapa) {
+            if (!insertContext && lastEtapa) {
                 const lastSubEtapa = [...items].reverse().find(i => i.level === 2 && i.parentId === lastEtapa.id);
                 if (lastSubEtapa && lastSubEtapa.id) {
                     targetParentId = lastSubEtapa.id;
@@ -1014,7 +1017,7 @@ const BudgetEditor = () => {
             // 3. Criar o Item na Subetapa ou Etapa Alvo
             const itemData: any = {
                 budgetId: budgetId,
-                order: getNextOrder(),
+                order: getNextOrder(), // Será reordenado abaixo se for inserção contextual
                 level: 3,
                 parentId: targetParentId,
                 itemNumber: "",
@@ -1023,11 +1026,9 @@ const BudgetEditor = () => {
                 unit: selectedResource.unit,
                 quantity: Number(quantity),
                 unitPrice: selectedResource.price,
-                // IMPORTANTE: Restaurar tipo original (material, labor, etc)
                 type: selectedResource.originalType || (addItemTab === 'CPU' ? 'service' : 'material'),
                 source: selectedResource.source,
                 itemType: addItemTab === 'CPU' ? 'composicao' : 'insumo',
-                // Linkage UUIDs - Priorizar ID do objeto se disponível
                 compositionId: addItemTab === 'CPU' ? (selectedResource.id || selectedResource.raw?.id) : null,
                 insumoId: addItemTab === 'INS' ? (selectedResource.id || selectedResource.raw?.id) : null,
             };
@@ -1035,6 +1036,7 @@ const BudgetEditor = () => {
             // SE ESTIVER EM MODO DE VINCULAÇÃO (FIX PENDING)
             if (bindingItem) {
                 await handleBindComposition(bindingItem, selectedResource);
+                setInsertContext(null);
                 return;
             }
 
@@ -1042,9 +1044,45 @@ const BudgetEditor = () => {
             const newItem = await BudgetItemService.create(itemData);
             console.log("[handleAddItem] Created successfully:", newItem.id);
 
+            // 4. Inserção Contextual (Reordenação Imediata)
+            if (insertContext && insertContext.afterIndex !== undefined && items) {
+                const newItems = [...items];
+                // Insere imediatamente após o índice do contexto (pode ser o próprio grupo ou o item atual)
+                newItems.splice(insertContext.afterIndex + 1, 0, newItem);
+
+                newItems.forEach((it, idx) => {
+                    it.order = idx + 1;
+                });
+
+                const repairedItems = repairHierarchy(newItems);
+
+                let c1 = 0; let c2 = 0; let c3 = 0;
+                const payload = repairedItems.map((item) => {
+                    if (item.level === 1) { c1++; c2 = 0; c3 = 0; }
+                    else if (item.level === 2) { c2++; c3 = 0; }
+                    else if (item.level >= 3) { c3++; }
+
+                    let itemNumberStr = "";
+                    if (item.level === 1) itemNumberStr = `${c1}`;
+                    else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
+                    else itemNumberStr = `${c1}.${c2}.${c3}`;
+
+                    const finalParentId = item.parentId && String(item.parentId).trim() !== "" && String(item.parentId).trim().toLowerCase() !== "null" ? String(item.parentId) : null;
+
+                    return { id: item.id!, order: item.order, parentId: finalParentId, itemNumber: itemNumberStr };
+                });
+
+                try {
+                    await (supabase as SupabaseClient<any>).rpc("reorder_budget_items", { items: payload });
+                } catch (e) {
+                    console.error("Contextual Reorder Error:", e);
+                }
+            }
+
             await loadBudget();
             setIsAddingItem(false);
             setSelectedResource(null);
+            setInsertContext(null);
             setQuantity(1);
             setSearchTerm('');
         } catch (e: any) {
@@ -1052,6 +1090,22 @@ const BudgetEditor = () => {
             alert(`Erro ao Adicionar Item: ${e.message || "Falha técnica"}`);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleInlineEditSave = async (itemId: string, newText: string) => {
+        if (!newText.trim()) {
+            setEditingInlineId(null);
+            return;
+        }
+        try {
+            await BudgetItemService.update(itemId, { description: newText.trim() });
+            setItems(prevItems => prevItems.map(it => it.id === itemId ? { ...it, description: newText.trim() } : it));
+        } catch (e: any) {
+            console.error("Erro ao atualizar descrição:", e);
+            alert(`Erro ao atualizar nome: ${e.message}`);
+        } finally {
+            setEditingInlineId(null);
         }
     };
 
@@ -1072,6 +1126,24 @@ const BudgetEditor = () => {
         await BudgetService.update(budgetId, { bdi: val });
         loadBudget();
     };
+
+    // Sincroniza estado local do BDI quando o orçamento carregar ou atualizar pelo server
+    useEffect(() => {
+        if (budget?.bdi !== undefined) {
+            setLocalBDI(budget.bdi.toString());
+        }
+    }, [budget?.bdi]);
+
+    // Debounce para BDI
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            const val = parseFloat(localBDI);
+            if (!isNaN(val) && val !== budget?.bdi && localBDI !== '') {
+                handleUpdateBDI(val);
+            }
+        }, 800);
+        return () => clearTimeout(handler);
+    }, [localBDI, budget?.bdi]);
 
     const handleUpdateEncargos = async (val: number, baseInfo?: { desonerado: boolean; id: string }) => {
         if (!budget) return;
@@ -1768,8 +1840,34 @@ const BudgetEditor = () => {
             };
         });
 
+        // Post-pass: Callculate rollup totals for groups (Sections N1, Groups N2)
+        for (let i = adjustedItems.length - 1; i >= 0; i--) {
+            const item = adjustedItems[i];
+            const isGroup = item.type === 'group' || item.level === 1 || item.level === 2;
+
+            if (isGroup) {
+                let gTotalBase = 0;
+                let gTotalFinal = 0;
+                const myLevel = item.level;
+
+                for (let j = i + 1; j < adjustedItems.length; j++) {
+                    const child = adjustedItems[j];
+                    if (child.level <= myLevel) break; // Reached next sibling or upper level
+
+                    // Sum only leaves to avoid recursive double-counting
+                    const childIsGroup = child.type === 'group' || child.level === 1 || child.level === 2;
+                    if (!childIsGroup) {
+                        gTotalBase += (child._amounts.totalPrice || 0);
+                        gTotalFinal += (child._amounts.totalFinal || 0);
+                    }
+                }
+                item._amounts.totalPrice = gTotalBase;
+                item._amounts.totalFinal = gTotalFinal;
+            }
+        }
+
         return adjustedItems.map((item, idx) => {
-            const isGroup = item.type === 'group';
+            const isGroup = item.type === 'group' || item.level === 1 || item.level === 2;
             const itemNumber = getItemNumber(idx);
 
             // Values to display
@@ -1798,12 +1896,8 @@ const BudgetEditor = () => {
                 unitPriceWithBDI: isGroup ? undefined : finalPrice, // Unit Final (com BDI + Ajuste)
 
                 // Totais
-                totalPrice: isGroup ? 0 : totalPrice,   // Total Base
-                finalPrice: isGroup ? 0 : itemTotalFinal, // Total Final (Novo conceito: finalPrice agora é TOTAL final, não unit) 
-                // Wait. In legacy code, finalPrice was TOTAL final?
-                // Legacy: `finalPrice = totalPriceAdj * bdiFactor`. Yes, it was TOTAL.
-                // My util `getAdjustedItemValues` returns `finalPrice` as UNIT FINAL.
-                // So I multiplied by Quantity above. Correct.
+                totalPrice: totalPrice,         // Group rollup works natively now
+                finalPrice: itemTotalFinal,     // Group rollup works natively now
 
                 total: itemTotalFinal, // Alias para legacy grids
                 pesoRaw: pesoRaw
@@ -2456,8 +2550,23 @@ const BudgetEditor = () => {
                                     <div className="flex items-center justify-center gap-0.5 whitespace-nowrap">
                                         <input
                                             type="number"
-                                            value={budget.bdi || 0}
-                                            onChange={(e) => handleUpdateBDI(Number(e.target.value))}
+                                            value={localBDI}
+                                            onChange={(e) => setLocalBDI(e.target.value)}
+                                            onBlur={(e) => {
+                                                const val = parseFloat(localBDI);
+                                                if (!isNaN(val) && val !== budget?.bdi && localBDI !== '') {
+                                                    handleUpdateBDI(val);
+                                                }
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    const val = parseFloat(localBDI);
+                                                    if (!isNaN(val) && val !== budget?.bdi && localBDI !== '') {
+                                                        handleUpdateBDI(val);
+                                                    }
+                                                    (e.target as HTMLInputElement).blur();
+                                                }
+                                            }}
                                             className="w-14 text-center text-sm font-bold text-slate-700 bg-transparent outline-none focus:ring-1 focus:ring-blue-400 rounded transition-all"
                                         />
                                         <span className="text-xs text-slate-400 font-bold">%</span>
@@ -2680,7 +2789,7 @@ const BudgetEditor = () => {
 
                         <div className="flex items-center gap-2">
                             <button
-                                onClick={() => setIsAddingItem(true)}
+                                onClick={() => { setInsertContext(null); setIsAddingItem(true); }}
                                 className="bg-accent hover:bg-accent/90 text-white text-xs font-semibold px-3 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5"
                             >
                                 <Plus size={14} /> NOVO ITEM
@@ -2703,7 +2812,7 @@ const BudgetEditor = () => {
                     <div className="px-6 py-2 bg-slate-50/50 border-b border-border flex items-center justify-between shrink-0">
                         <div className="flex items-center gap-2">
                             <button
-                                onClick={() => setIsAddingItem(true)}
+                                onClick={() => { setInsertContext(null); setIsAddingItem(true); }}
                                 className="bg-accent hover:bg-accent/90 text-white text-xs font-semibold px-3 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5"
                             >
                                 <Plus size={14} /> NOVO ITEM
@@ -2803,9 +2912,36 @@ const BudgetEditor = () => {
                                         )}
                                     >
                                         <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-xs font-mono text-slate-400">{hierarchicalNumber}</span>
-                                                <span className="font-bold uppercase text-sm">{item.description}</span>
+                                            <div className="flex items-center gap-2 w-full pr-2">
+                                                <span className="text-xs font-mono text-slate-400 shrink-0">{hierarchicalNumber}</span>
+                                                {editingInlineId === item.id ? (
+                                                    <input
+                                                        autoFocus
+                                                        className="font-bold uppercase text-sm bg-transparent border-b border-blue-400 outline-none w-full min-w-0"
+                                                        value={editingInlineText}
+                                                        onChange={e => setEditingInlineText(e.target.value)}
+                                                        onBlur={() => handleInlineEditSave(item.id!, editingInlineText)}
+                                                        onKeyDown={e => {
+                                                            if (e.key === 'Enter') handleInlineEditSave(item.id!, editingInlineText);
+                                                            if (e.key === 'Escape') setEditingInlineId(null);
+                                                        }}
+                                                        onFocus={e => e.target.select()}
+                                                    />
+                                                ) : (
+                                                    <span
+                                                        className="font-bold uppercase text-sm truncate cursor-text hover:bg-black/5 rounded transition-colors px-1 w-full relative group/inline"
+                                                        onDoubleClick={() => {
+                                                            setEditingInlineText(item.description);
+                                                            setEditingInlineId(item.id!);
+                                                        }}
+                                                        title="Duplo clique para editar"
+                                                    >
+                                                        {item.description}
+                                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/inline:opacity-100 text-slate-400 pointer-events-none transition-opacity">
+                                                            <Edit2 size={12} />
+                                                        </span>
+                                                    </span>
+                                                )}
                                             </div>
                                             <span className="text-sm font-bold">
                                                 {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalPrice * (1 + (budget.bdi || 0) / 100))}
@@ -2929,8 +3065,8 @@ const BudgetEditor = () => {
                                 <th className="p-1 w-[60px] text-center border-r border-slate-300">Banco</th>
                                 <th className="p-1 w-[70px] text-center border-r border-slate-300">Código</th>
                                 <th className="p-1 text-center border-r border-slate-300">Descrição</th>
-                                <th className="p-1 w-[35px] text-center border-r border-slate-300">Und</th>
-                                <th className="p-1 w-[55px] text-center border-r border-slate-300">Quant.</th>
+                                <th className="p-1 w-[90px] min-w-[90px] max-w-[90px] text-center border-r border-slate-300">Quant.</th>
+                                <th className="p-1 w-[80px] min-w-[80px] max-w-[80px] text-center border-r border-slate-300">Und</th>
                                 <th className="p-1 w-[80px] text-center border-r border-slate-300">V. Unit</th>
                                 <th className="p-1 w-[80px] text-center border-r border-slate-300 bg-slate-50 font-bold">V. Unit (BDI)</th>
                                 <th className="p-1 w-[120px] text-center border-r border-slate-300 font-black">Total</th>
@@ -3076,7 +3212,10 @@ const BudgetEditor = () => {
 
                                         {/* Descrição */}
                                         <td className="p-1 border-r border-slate-300 relative group/desc">
-                                            <div className="flex items-center w-full min-h-[1.5rem]">
+                                            <div className={clsx(
+                                                "flex items-center w-full min-h-[1.5rem]",
+                                                item.hydrationStatus === 'pending_review' && "pr-[90px]" // Espaço para o botão Vincular absoluto
+                                            )}>
                                                 {!isGroup && !item.isLocked ? (
                                                     <span
                                                         className={clsx(
@@ -3089,14 +3228,48 @@ const BudgetEditor = () => {
                                                     >
                                                         {item.description}
                                                     </span>
+                                                ) : editingInlineId === item.id ? (
+                                                    <input
+                                                        autoFocus
+                                                        className={clsx(
+                                                            "bg-transparent border-b border-blue-400 outline-none w-full text-slate-900",
+                                                            textStyle,
+                                                            isNivel2 && "ml-6",
+                                                            isItem && "ml-10"
+                                                        )}
+                                                        value={editingInlineText}
+                                                        onChange={e => setEditingInlineText(e.target.value)}
+                                                        onBlur={() => handleInlineEditSave(item.id!, editingInlineText)}
+                                                        onKeyDown={e => {
+                                                            if (e.key === 'Enter') handleInlineEditSave(item.id!, editingInlineText);
+                                                            if (e.key === 'Escape') setEditingInlineId(null);
+                                                        }}
+                                                        onFocus={e => e.target.select()}
+                                                    />
                                                 ) : (
                                                     <span className={clsx(
-                                                        "truncate block w-full",
+                                                        "truncate block w-full transition-colors relative group/inline",
+                                                        (isGroup || item.level === 1 || item.level === 2)
+                                                            ? "cursor-text hover:bg-black/10 rounded"
+                                                            : "",
                                                         textStyle,
                                                         isNivel2 && "pl-6",
                                                         isItem && "pl-10"
-                                                    )}>
+                                                    )}
+                                                        onDoubleClick={() => {
+                                                            if (isGroup || item.level === 1 || item.level === 2) {
+                                                                setEditingInlineText(item.description);
+                                                                setEditingInlineId(item.id!);
+                                                            }
+                                                        }}
+                                                        title={(isGroup || item.level === 1 || item.level === 2) ? "Duplo clique para editar" : ""}
+                                                    >
                                                         {item.description}
+                                                        {(isGroup || item.level === 1 || item.level === 2) && (
+                                                            <span className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/inline:opacity-100 text-blue-400 pointer-events-none transition-opacity">
+                                                                <Edit2 size={12} />
+                                                            </span>
+                                                        )}
                                                     </span>
                                                 )}
 
@@ -3111,7 +3284,7 @@ const BudgetEditor = () => {
                                                             setSearchTerm(item.code || '');
                                                             setIsAddingItem(true);
                                                         }}
-                                                        className="ml-2 inline-flex items-center gap-1 bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-300 transition-colors animate-pulse z-20 relative"
+                                                        className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-300 transition-colors animate-pulse z-20"
                                                         title="Este item foi importado mas não possui composição vinculada. Clique para selecionar uma composição."
                                                     >
                                                         <AlertTriangle size={10} /> Vincular
@@ -3132,20 +3305,22 @@ const BudgetEditor = () => {
                                             )}
                                         </td>
 
-                                        {/* Unidade */}
-                                        <td className={clsx(
-                                            "p-1 text-center border-r border-slate-300",
-                                            isNivel1 ? "text-white/70" : "text-slate-500"
-                                        )}>
-                                            {!isGroup && item.unit}
-                                        </td>
-
                                         {/* Quantidade */}
                                         <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono px-2",
+                                            "p-1 text-right border-r border-slate-300 font-mono px-2 w-[90px] min-w-[90px] max-w-[90px]",
                                             isNivel1 ? "text-white" : "text-slate-700"
                                         )}>
                                             {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(item.quantity) : ''}
+                                        </td>
+
+                                        {/* Unidade */}
+                                        <td className={clsx(
+                                            "p-1 text-center border-r border-slate-300 w-[80px] min-w-[80px] max-w-[80px]",
+                                            isNivel1 ? "text-white/70" : "text-slate-500"
+                                        )}>
+                                            <div className="truncate w-full px-1" title={!isGroup ? (item.unit || '') : ''}>
+                                                {!isGroup && (item.unit || '-')}
+                                            </div>
                                         </td>
 
                                         {/* Valor Unitário (Sem BDI) */}
@@ -3193,10 +3368,37 @@ const BudgetEditor = () => {
 
                                         {/* Ações */}
                                         <td className="p-1 text-center">
-                                            <div className="grid grid-cols-2 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity w-fit mx-auto">
+                                            <div className="flex flex-wrap justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity w-fit mx-auto">
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setInsertContext({ parentId: isGroup ? item.id : item.parentId, afterIndex: index });
+                                                        setAddItemTab('CPU');
+                                                        setSearchTerm('');
+                                                        setIsAddingItem(true);
+                                                    }}
+                                                    className="px-1.5 py-0.5 text-[9px] font-bold text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded"
+                                                    title="+ Composição (Abaixo deste item)"
+                                                >
+                                                    +CPU
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setInsertContext({ parentId: isGroup ? item.id : item.parentId, afterIndex: index });
+                                                        setAddItemTab('INS');
+                                                        setSearchTerm('');
+                                                        setIsAddingItem(true);
+                                                    }}
+                                                    className="px-1.5 py-0.5 text-[9px] font-bold text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                                                    title="+ Insumo (Abaixo deste item)"
+                                                >
+                                                    +INS
+                                                </button>
+
                                                 {!isGroup && !item.isLocked && (
                                                     <button
-                                                        onClick={() => handleStartEdit(item)}
+                                                        onClick={(e) => { e.stopPropagation(); handleStartEdit(item); }}
                                                         className="p-1 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded"
                                                         title="Editar item"
                                                     >
@@ -3204,21 +3406,21 @@ const BudgetEditor = () => {
                                                     </button>
                                                 )}
                                                 <button
-                                                    onClick={() => handleToggleLock(item)}
+                                                    onClick={(e) => { e.stopPropagation(); handleToggleLock(item); }}
                                                     className={clsx("p-1 rounded hover:bg-slate-200", item.isLocked ? "text-amber-500" : "text-slate-400")}
                                                     title={item.isLocked ? "Desbloquear" : "Bloquear edição"}
                                                 >
                                                     {item.isLocked ? <Lock size={12} /> : <Unlock size={12} />}
                                                 </button>
                                                 <button
-                                                    onClick={() => handleDuplicateItem(item)}
+                                                    onClick={(e) => { e.stopPropagation(); handleDuplicateItem(item); }}
                                                     className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded"
                                                     title="Duplicar"
                                                 >
                                                     <Copy size={12} />
                                                 </button>
                                                 <button
-                                                    onClick={() => handleDeleteItem(item.id!)}
+                                                    onClick={(e) => { e.stopPropagation(); handleDeleteItem(item.id!); }}
                                                     className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
                                                     title="Excluir"
                                                 >
@@ -3293,23 +3495,12 @@ const BudgetEditor = () => {
                                     <h3 className="text-xl font-bold text-slate-800">Localizar Insumo</h3>
                                     <p className="text-slate-500 text-sm">Pesquise no seu banco de dados (SINAPI, ORSE, etc)</p>
                                 </div>
-                                <button onClick={() => setIsAddingItem(false)} className="text-slate-400 hover:text-slate-600"><ArrowLeft size={24} /></button>
+                                <button onClick={() => { setIsAddingItem(false); setInsertContext(null); }} className="text-slate-400 hover:text-slate-600"><ArrowLeft size={24} /></button>
                             </div>
 
                             <div className="flex-1 min-h-0 flex flex-col">
                                 {/* TABS Toggle */}
                                 <div className="px-6 pt-4 pb-2 flex items-center justify-center gap-4">
-                                    <button
-                                        onClick={() => { setAddItemTab('INS'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
-                                        className={clsx(
-                                            "px-4 py-2 text-xs font-bold rounded-lg border transition-all",
-                                            addItemTab === 'INS'
-                                                ? "bg-blue-600 text-white border-blue-600 shadow-md"
-                                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                                        )}
-                                    >
-                                        [INS] Insumos
-                                    </button>
                                     <button
                                         onClick={() => { setAddItemTab('CPU'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
                                         className={clsx(
@@ -3320,6 +3511,17 @@ const BudgetEditor = () => {
                                         )}
                                     >
                                         [CPU] Composições
+                                    </button>
+                                    <button
+                                        onClick={() => { setAddItemTab('INS'); setSearchTerm(''); setFilteredResources([]); setSelectedResource(null); }}
+                                        className={clsx(
+                                            "px-4 py-2 text-xs font-bold rounded-lg border transition-all",
+                                            addItemTab === 'INS'
+                                                ? "bg-blue-600 text-white border-blue-600 shadow-md"
+                                                : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                        )}
+                                    >
+                                        [INS] Insumos
                                     </button>
                                 </div>
 
