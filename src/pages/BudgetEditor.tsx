@@ -3217,7 +3217,7 @@ const BudgetEditor = () => {
                                                 {!isGroup && !item.isLocked ? (
                                                     <span
                                                         className={clsx(
-                                                            "cursor-pointer hover:underline truncate block w-full",
+                                                            "cursor-pointer hover:underline whitespace-normal break-words block w-full leading-snug",
                                                             textStyle,
                                                             isNivel2 && "pl-6", // Indent Level 2
                                                             isItem && "pl-10"   // Indent Level 3
@@ -3246,7 +3246,7 @@ const BudgetEditor = () => {
                                                     />
                                                 ) : (
                                                     <span className={clsx(
-                                                        "truncate block w-full transition-colors relative group/inline",
+                                                        "whitespace-normal break-words block w-full transition-colors relative group/inline leading-snug",
                                                         (isGroup || item.level === 1 || item.level === 2)
                                                             ? "cursor-text hover:bg-black/10 rounded"
                                                             : "",
@@ -3288,12 +3288,6 @@ const BudgetEditor = () => {
                                                         <AlertTriangle size={10} /> Vincular
                                                     </button>
                                                 )}
-
-                                                {/* Tooltip Rico na Descrição */}
-                                                <div className="hidden group-hover/desc:block absolute top-0 left-full ml-1 w-64 bg-slate-800 text-white text-xs p-3 rounded-lg shadow-xl z-30 pointer-events-none">
-                                                    <p className="font-bold mb-1">{item.description}</p>
-                                                    {item.notes && <p className="text-slate-300 italic text-[10px]">Nota: {item.notes}</p>}
-                                                </div>
                                             </div>
 
                                             {validatePriceRange(item) !== 'normal' && !isGroup && (
