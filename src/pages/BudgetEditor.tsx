@@ -10,7 +10,7 @@ import { InsumoService } from '../lib/supabase-services/InsumoService';
 import { CompositionService } from '../lib/supabase-services/CompositionService';
 import { SinapiService } from '../lib/supabase-services/SinapiService';
 import { CompanyService } from '../lib/supabase-services/CompanyService';
-import { ArrowLeft, Box, Plus, Trash2, Search, X, Download, FileText, FileSpreadsheet, BarChart, Calculator, Percent, Lock, Unlock, Copy, RefreshCcw, AlertTriangle, TrendingUp, Save, Database, Calendar, Activity, Eye, ChevronDown, ChevronUp, AlertOctagon, Edit2, ListOrdered, Loader, Package } from 'lucide-react';
+import { ArrowLeft, Box, Plus, Trash2, Search, X, Download, FileText, FileSpreadsheet, BarChart, Calculator, Percent, Lock, Unlock, Copy, RefreshCcw, AlertTriangle, TrendingUp, Save, Database, Calendar, Activity, Eye, ChevronDown, ChevronUp, AlertOctagon, Edit2, ListOrdered, GripVertical, Loader, Package } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -3119,6 +3119,11 @@ const BudgetEditor = () => {
                                     <tr
                                         key={item.id}
                                         id={`item-${item.id}`}
+                                        draggable={!isMobile}
+                                        onDragStart={(e) => handleDragStart(e, index)}
+                                        onDragOver={(e) => handleDragOver(e, index)}
+                                        onDrop={(e) => handleDrop(e, index)}
+                                        onDragEnd={() => setDragOverIndex(null)}
                                         className={clsx(
                                             "border-b border-slate-300 transition-colors group",
                                             rowBg,
@@ -3157,20 +3162,15 @@ const BudgetEditor = () => {
                                             )}
                                         </td>
 
-                                        {/* Drag Handle (Restaurado para alinhar com coluna #) */}
+                                        {/* Drag Handle */}
                                         <td className="p-0 text-center border-r border-slate-300 cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600">
                                             <div className="flex items-center justify-center h-full w-full">
-                                                <ListOrdered size={12} />
+                                                <GripVertical size={14} className="opacity-50 group-hover:opacity-100 transition-opacity" />
                                             </div>
                                         </td>
 
                                         {/* Item Number */}
                                         <td
-                                            draggable={!isMobile}
-                                            onDragStart={(e) => handleDragStart(e, index)}
-                                            onDragOver={(e) => handleDragOver(e, index)}
-                                            onDrop={(e) => handleDrop(e, index)}
-                                            onDragEnd={() => setDragOverIndex(null)}
                                             className={clsx(
                                                 "p-1 px-2 text-center border-r border-slate-300 font-mono font-bold whitespace-nowrap cursor-grab active:cursor-grabbing",
                                                 isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-blue-900" : "text-slate-700"
@@ -3290,7 +3290,7 @@ const BudgetEditor = () => {
                                                 )}
 
                                                 {/* Tooltip Rico na Descrição */}
-                                                <div className="hidden group-hover/desc:block absolute top-0 left-full ml-1 w-64 bg-slate-800 text-white text-xs p-3 rounded-lg shadow-xl z-50 pointer-events-none">
+                                                <div className="hidden group-hover/desc:block absolute top-0 left-full ml-1 w-64 bg-slate-800 text-white text-xs p-3 rounded-lg shadow-xl z-30 pointer-events-none">
                                                     <p className="font-bold mb-1">{item.description}</p>
                                                     {item.notes && <p className="text-slate-300 italic text-[10px]">Nota: {item.notes}</p>}
                                                 </div>
@@ -3364,7 +3364,7 @@ const BudgetEditor = () => {
                                             {peso.toFixed(2)}%
 
                                             {/* Menu Flutuante de Ações */}
-                                            <div className="absolute right-full top-1/2 -translate-y-1/2 mr-2 bg-white shadow-xl border border-slate-200 rounded flex items-center py-1 px-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-all z-50 whitespace-nowrap text-slate-600 hidden group-hover:flex">
+                                            <div className="absolute right-8 top-1/2 -translate-y-1/2 bg-white shadow-xl border border-slate-200 rounded flex items-center py-1 px-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-all z-50 whitespace-nowrap text-slate-600 hidden group-hover:flex">
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation();
