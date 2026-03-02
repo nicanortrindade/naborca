@@ -591,7 +591,29 @@ export function generateCandidatesStageA(text: string, options: {
                 if (cand.extracted_signals && cand.extracted_signals.item_path) {
                     cand.extracted_signals.item_path = deduplicatePath(cand.extracted_signals.item_path);
                 }
+
+                // FILTER S1: rejeita fragmentos de descrição multiline que chegaram como falsos candidatos
+                // Critérios: tem item_path, sem código, e description é claramente um fragmento de continuação
+                const _s1desc = (cand.extracted_signals?.description_fragment || '').trim();
+                const _s1hasCode = !!cand.extracted_signals?.code;
+                const _s1hasNumbers = /\d/.test(_s1desc);
+                const _s1isFragment =
+                    !_s1hasCode &&
+                    (
+                        // a) termina com sufixo de norma SINAPI: AF_06/2022
+                        /AF_\d{2}\/\d{4}\s*$/.test(_s1desc) ||
+                        // b) começa com palavra de continuação típica de descrição partida
+                        /^(MONTAGEM|INSTALAÇÃO|FORNECIMENTO|RESINADA|DESMONTAGEM|ASSENTAMENTO|APLICAÇÃO|EXECUÇÃO|LANÇAMENTO|ADENSAMENTO|ACABAMENTO|INCLUSIVE|INCLUINDO)\b/i.test(_s1desc) ||
+                        // c) fragmento muito curto (< 15 chars) sem nenhum número
+                        (_s1desc.length < 15 && !_s1hasNumbers)
+                    );
+                if (_s1isFragment) {
+                    if (DEBUG_P1) console.log('[S1-FRAGMENT-SKIP]', JSON.stringify({ desc: _s1desc.substring(0, 60), item_path: cand.extracted_signals?.item_path }));
+                    continue; // descarta — não adicionar ao array de candidatos
+                }
+
                 candidates.push(cand);
+
                 continue; // Winner takes line
             }
 
