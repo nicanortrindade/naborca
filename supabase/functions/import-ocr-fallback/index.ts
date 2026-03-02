@@ -426,11 +426,11 @@ async function discoverGeminiModel(apiKey: string, preferredModel = "gemini-1.5-
     }
 }
 
-async function generateDedupKey(params: { job_id: string, import_file_id: string, description: string | null, chunk_index: number, raw_line?: string | null }): Promise<string> {
+async function generateDedupKey(params: { job_id: string, import_file_id: string, description: string | null, chunk_index: number, item_path?: string | null, raw_line?: string | null }): Promise<string> {
     const encoder = new TextEncoder();
     const baseText = (params.description || params.raw_line || '').toLowerCase().trim().replace(/\s+/g, ' ');
     if (!baseText) return `empty_${crypto.randomUUID()}`;
-    const data = `${params.job_id}|${params.import_file_id}|${params.chunk_index}|${baseText}`;
+    const data = `${params.job_id}|${params.import_file_id}|${params.chunk_index}|${params.item_path || ''}|${baseText}`;
     const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(data));
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
@@ -850,6 +850,7 @@ serve(async (req: Request) => {
                                                             import_file_id: file.id,
                                                             description: item.description,
                                                             chunk_index: batchIndex,
+                                                            item_path: item.item_path || null,
                                                             raw_line: rawLine
                                                         });
 

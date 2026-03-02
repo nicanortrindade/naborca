@@ -431,6 +431,19 @@ BEGIN
             CONTINUE;
         END IF;
 
+        -- Skip phantom item: descrição idêntica ao nome de grupo/seção 
+        -- já existente no budget (evita duplicatas de títulos como L3)
+        IF (v_item.composition_code IS NULL OR trim(v_clean_code) = '0')
+           AND EXISTS (
+               SELECT 1 FROM public.budget_items
+               WHERE budget_id = v_budget_id
+                 AND level IN (1, 2)
+                 AND type = 'group'
+                 AND upper(trim(description)) = upper(trim(v_clean_description))
+           ) THEN
+            CONTINUE;
+        END IF;
+
         -- Skip: continuação de descrição longa (sem código, mesma qty/price de item já existente no mesmo path)
         IF v_item.composition_code IS NULL
            AND v_item.item_path IS NOT NULL

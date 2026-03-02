@@ -477,17 +477,17 @@ async function persistStageBMetaAtomic(
 // ------------------------------------------------------------------
 function generateStageBDedupKey(item: StageBItem): string {
     const clean = (s: string | null | undefined) => (s || '').trim().toUpperCase();
-    const pathPrefix = (item.item_path || '').split('.')[0];
+    const fullPath = (item.item_path || '');
 
     // Quando não há código (títulos de seção/grupo), usa a descrição como discriminador
     // para evitar que títulos colidam com itens normais na dedup
     if (!item.code) {
         const descKey = clean(item.description as string).slice(0, 40);
-        return `${item.item_path || ''}|NULL|${descKey}`;
+        return `${fullPath}|NULL|${descKey}`;
     }
 
     // Para itens normais, mantém a key original baseada em código+quantidade+preço
-    return `${pathPrefix}|${clean(item.code)}|${clean(item.unit)}|${String(item.quantity ?? '')}|${String(item.unit_price ?? '')}`;
+    return `${fullPath}|${clean(item.code)}|${clean(item.unit)}|${String(item.quantity ?? '')}|${String(item.unit_price ?? '')}`;
 }
 
 // ------------------------------------------------------------------
