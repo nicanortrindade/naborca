@@ -153,7 +153,7 @@ export function detectDocTypeHints(text: string, fileMeta?: any): StageAResult['
 const REGEX_ITEM_PATH = /^\s*(\d{1,3}(?:\.\d{1,3}){1,6})\s*(.{5,})$/;
 // Captura: "1SERVIÇOS PRELIMINARES E INDIRETOS185.303,28" ou "1 SERVIÇOS..."
 // Remove o total financeiro colado no final (ex: 185.303,28)
-const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s*([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-()\.\°"']{3,}?)\s*(?:[\d.,]+\s*)*\r?$/;
+const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s*([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-()\.\°"']{3,})(?:\s*[\d.,]+\s*%?\s*)*$/;
 const REGEX_CODE_START = /^(\d{4,10}|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/; // "94321 Description" or "CPU123 Desc" or "2451 Desc"
 const REGEX_UNIT = /\b(UN|und|m²|m2|m³|m3|kg|h|vb|m)\b/i;
 const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\d{1,4})?\b/g; // 1.234,56 or 1234.56
@@ -169,6 +169,9 @@ const REGEX_PROJECT_TITLE_WITH_DATE_PCT = /\d{2}\/\d{2}\/\d{4}.*%|%.*\d{2}\/\d{2
 // Ex: "1SERVIÇOS PRELIMINARES E INDIRETOS185.303,28"
 // Padrão: começa com 1-2 dígitos (sem ponto), seguidos de texto maiúsculo (5+ chars), terminando com números colados
 const REGEX_SECTION_TOTAL = /^\d{1,2}[A-ZÀÁÂÃÉÊÍÓÔÕÚÜÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÜÇ ]{4,}\d/;
+
+const DEBUG_P1 = false; // flag de debug desativada em produção
+const STOP_WORDS_RE = /^(TOTAL\s*(SEM|COM)\s*BDI|TOTAL\s*GERAL|SUBTOTAL|^TOTAL$)/i;
 
 function extractNumbers(text: string): number[] {
     const matches = text.match(REGEX_MONEY_OR_QTY) || [];
@@ -223,6 +226,11 @@ export function generateCandidatesStageA(text: string, options: {
             }
             // Guard: descarta totais de seção (dígito colado em texto maiúsculo + número)
             if (REGEX_SECTION_TOTAL.test(snippet) && !item.warnings?.includes('section_title_candidate')) {
+                if (DEBUG_P1) console.log('[P1-TOTAL-SKIP]', JSON.stringify({ line: snippet.substring(0, 80) }));
+                continue;
+            }
+            if (STOP_WORDS_RE.test(desc.trim()) || STOP_WORDS_RE.test(snippet.trim())) {
+                if (DEBUG_P1) console.log('[P1-STOPWORD-SKIP]', JSON.stringify({ line: snippet.substring(0, 80) }));
                 continue;
             }
             _originalPush(item);
@@ -554,6 +562,13 @@ export function generateCandidatesStageA(text: string, options: {
                     extracted_description = codeMatch[3];
                 }
 
+                // Detectar valores numéricos colados no final da descrição (mín. 4 tokens = qty + price + total + weight)
+                const REGEX_TRAILING_NUMBERS = /^(.{15,}?)\s{1,3}(\d{1,3}(?:[.,]\d{1,3})*(?:\s+\d{1,3}(?:[.,]\d{1,4})*){3,}(?:\s*%?))\s*$/;
+                const trailingMatch = extracted_description.match(REGEX_TRAILING_NUMBERS);
+                if (trailingMatch) {
+                    extracted_description = trailingMatch[1].trim();
+                }
+
                 const cand: StageACandidate = {
                     id: generateShortId(),
                     kind: 'synthetic_line',
@@ -563,7 +578,7 @@ export function generateCandidatesStageA(text: string, options: {
                     evidence: line,
                     snippet: line,
                     context_before: lines.slice(Math.max(0, i - 2), i).join('\n'),
-                    context_after: lines.slice(i + 1, Math.min(limit, i + 3)).join('\n'),
+                    context_after: (trailingMatch ? trailingMatch[2] + '\n' : '') + lines.slice(i + 1, Math.min(limit, i + 3)).join('\n'),
                     extracted_signals: {
                         item_path: matchPath[1],
                         code: extracted_code,
@@ -594,12 +609,19 @@ export function generateCandidatesStageA(text: string, options: {
 
 
             // 2. Só depois filtra como "section total" (linha que não é título)
-            if (REGEX_SECTION_TOTAL.test(line)) continue;
+            if (REGEX_SECTION_TOTAL.test(line)) {
+                if (DEBUG_P1) console.log('[P1-TOTAL-SKIP]', JSON.stringify({ line: line.substring(0, 80) }));
+                continue;
+            }
+            if (STOP_WORDS_RE.test(line.trim())) {
+                if (DEBUG_P1) console.log('[P1-STOPWORD-SKIP]', JSON.stringify({ line: line.substring(0, 80) }));
+                continue;
+            }
 
             // ST: Section Title — prefixo numérico/alfabético/romano sem código nem valores
             // Exemplos: "3 PAVIMENTAÇÃO", "1.4 DRENAGEM", "A - SERVIÇOS INICIAIS", "II - FUNDAÇÕES"
             if (!hitS1) {
-                const REGEX_ST_NUMERIC = /^(\d{1,2}(?:\.\d{1,2}){0,2})\s+([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
+                const REGEX_ST_NUMERIC = /^(\d{1,2}(?:\.\d{1,2}){0,2})\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ ]{4,})$/;
                 const REGEX_ST_ALPHA = /^([A-Z]{1,3})\s*[-–]\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
                 const REGEX_ST_ROMAN = /^(I{1,3}V?|VI{0,3}|IX|IV|X)\s*[-–]\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
                 const matchTitle =

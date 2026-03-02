@@ -1,0 +1,60 @@
+=== QUERY 1: INFRAESTRUTURA N1 duplicates ===
+Found 2 rows:
+{"id":"b6ad9331-0e26-4ab0-b13c-9e0df29906ee","description":"INFRAESTRUTURA","order_index":695,"path_key":"16"}
+{"id":"b986601c-7496-43a3-9a29-6462e4200a51","description":"INFRAESTRUTURA","order_index":923,"path_key":"17"}
+
+=== QUERY 2: All N1 groups (level=1) ordered ===
+Found 20 N1 groups:
+{"order_index":1,"description":"SERVIÇOS PRELIMINARES E INDIRETOS","path_key":"1"}
+{"order_index":44,"description":"SEÇÃO 2","path_key":"2"}
+{"order_index":81,"description":"ESTRUTURA","path_key":"3"}
+{"order_index":161,"description":"ALVENARIA, VEDAÇÕES E DIVISÓRIAS","path_key":"4"}
+{"order_index":212,"description":"TELHAMENTO","path_key":"5"}
+{"order_index":241,"description":"IMPERMEABILIZAÇÃO","path_key":"6"}
+{"order_index":242,"description":"ESQUADRIAS","path_key":"7"}
+{"order_index":296,"description":"REVESTIMENTO ARGAMASSADO","path_key":"8"}
+{"order_index":321,"description":"REVESTIMENTO DE PISO EXTERNO","path_key":"10"}
+{"order_index":322,"description":"REVESTIMENTO DE TETO","path_key":"11"}
+{"order_index":329,"description":"SEÇÃO 9","path_key":"9"}
+{"order_index":361,"description":"PINTURA","path_key":"12"}
+{"order_index":362,"description":"MARMORARIA","path_key":"13"}
+{"order_index":377,"description":"EQUIPAMENTOS","path_key":"14"}
+{"order_index":448,"description":"INSTALAÇÕES HIDROSSANITÁRIAS","path_key":"15"}
+{"order_index":695,"description":"INFRAESTRUTURA","path_key":"16"}
+{"order_index":923,"description":"INFRAESTRUTURA","path_key":"17"}
+{"order_index":961,"description":"DADOS E VOZ","path_key":"18"}
+{"order_index":1001,"description":"URBANIZAÇÃO","path_key":"19"}
+{"order_index":1041,"description":"SERVIÇOS COMPLEMENTARES","path_key":"20"}
+
+=== QUERY 3: 'Total sem BDI' items in budget_items ===
+Found 1 'TOTAL' items:
+{"description":"Total sem BDI","level":2,"order_index":1049,"type":"group","qty":0,"price":0}
+
+=== QUERY 4: CPU2555 item details in budget_items ===
+Found 1 CPU2555 items:
+{"description":"RODAPÉ ALTA RESISTÊNCIA, H = 10 CM, MEIA-CANAM 290,57 20,4825,607.438,590,2628 %","code":"CPU2555","qty":0,"price":0,"total":0,"unit":"UN","path_key":"9.3.1"}
+
+=== QUERY 5: Section 5 (COBERTURA/TELHAMENTO) groups ===
+Found 4 items in section 5:
+{"order_index":212,"level":1,"description":"TELHAMENTO","path_key":"5"}
+{"order_index":212,"level":2,"description":"GRUPO 5.1","path_key":"5.1"}
+{"order_index":215,"level":2,"description":"TELHAMENTO","path_key":"5.2"}
+{"order_index":217,"level":2,"description":"COMPLEMENTOS","path_key":"5.3"}
+
+=== QUERY 6: import_ai_items with item_path IN ('2','5','9') ===
+Found 1 items:
+{"idx":322,"item_path":"9","description":"REVESTIMENTO DE PISO INTERNO","code":null,"qty":null,"price":null,"job_id":"92bf0048"}
+
+=== QUERY 7: 'Total sem BDI' in import_ai_items ===
+Found 8 items:
+{"idx":1018,"item_path":"20.1","description":"Total sem BDI","code":null,"job_id":"84193328"}
+{"idx":1018,"item_path":"20.1","description":"Total sem BDI","code":null,"job_id":"108ed943"}
+{"idx":1019,"item_path":"20.1","description":"Total sem BDI","code":null,"job_id":"af6a4575"}
+{"idx":1018,"item_path":"20.1","description":"Total sem BDI","code":null,"job_id":"6668f8ea"}
+{"idx":1017,"item_path":"20.1","description":"Total sem BDI","code":null,"job_id":"139bc00f"}
+{"idx":1018,"item_path":"20.1","description":"Total sem BDI","code":null,"job_id":"972fa692"}
+{"idx":1049,"item_path":"20.7","description":"Total sem BDI","code":null,"job_id":"a774a69c"}
+{"idx":1018,"item_path":"20.1","description":"Total sem BDI","code":null,"job_id":"a221e655"}
+
+=== QUERY 8: Resolve job_id prefix 'a774a69c' ===
+Error Q8: operator does not exist: uuid ~~* unknown

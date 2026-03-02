@@ -214,6 +214,23 @@ EXTRACTION RULES:
     context_after: "m² 3,15 651,96 814,95 2.567,09 0,0907 %"
     → unit: "m²", quantity: "3,15", unit_price: "651,96", total_price: "2.567,09"
 
+13. **DESCRIPTION + VALUES STUCK TOGETHER (MANDATORY)**:
+    When the description text contains a concatenated sequence of Brazilian-format numbers
+    at the end (e.g. "MEIA-CANAM 290,57 20,4825,607.438,590,2628 %"), these are NOT part of
+    the description — they are the item's numeric values (quantity, unit_price, bdi_price,
+    total, weight) that the OCR pasted without line break.
+    
+    To extract:
+    a) Find where the description text ends and the numeric sequence begins.
+    b) Split using column order: [Quantity] [Unit Price sem BDI] [Unit Price com BDI] [Total] [Weight %]
+    c) Set quantity = first number, unit_price = second number (sem BDI).
+    d) Remove ALL numeric values from the description.
+    
+    Example:
+    Input:  "RODAPÉ ALTA RESISTÊNCIA, H = 10 CM, MEIA-CANAM 290,57 20,4825,607.438,590,2628 %"
+    Output: description = "RODAPÉ ALTA RESISTÊNCIA, H = 10 CM, MEIA-CANA"
+            quantity = 290.57, unit_price = 20.48, total_price = 7438.59
+
 CRITICAL RULE — CONTEXT PRIORITY:
 When extracting numeric fields (quantity, unit_price, total_price) for the current item:
 - ALWAYS use values from context_after or the candidate's own text line.

@@ -117,16 +117,6 @@ export async function runImportParseWorkerUntilDone(params: {
 
             const job = jobRaw as any;
 
-            // --- CRITICAL FIX: RESULT BUDGET ID TAKES PRECEDENCE OVER ANY STATUS ---
-            if (job?.result_budget_id) {
-                logTelemetry('info', 'polling_terminal', { jobId, result: 'success_budget_ready_priority' });
-                return {
-                    finalStatus: 'success',
-                    resultBudgetId: job.result_budget_id,
-                    message: "Orçamento gerado com sucesso."
-                };
-            }
-
             // ROBUST SUCCESS CHECK
             if (isTerminalSuccessStatus(job?.status)) {
                 logTelemetry('info', 'polling_terminal', { jobId, result: 'terminal_success', status: job.status });
@@ -187,7 +177,7 @@ export async function runImportParseWorkerUntilDone(params: {
             }
 
             // --- REGRA ABSOLUTA: Se existem itens, o job está pronto para revisão ---
-            if ((itemsCount || 0) > 0 && job?.status === 'done') {
+            if ((itemsCount || 0) > 0 && job?.status === 'done' && !job?.result_budget_id) {
                 logTelemetry('info', 'polling_terminal', { jobId, result: 'success_items_exist_priority', items: itemsCount });
                 return {
                     finalStatus: 'success',

@@ -141,9 +141,10 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                     const isFinalized = jobData?.stage === 'finalized';
                     const isPendingHydration = jobData?.stage === 'pending_hydration';
                     const isExtractionComplete =
-                        jobData?.stage === 'extraction_complete' ||
-                        jobData?.stage === 'pending_hydration' ||
-                        (jobData?.status === 'done' && !jobData?.result_budget_id);
+                        !hasBudgetId &&
+                        (jobData?.stage === 'extraction_complete' ||
+                            jobData?.stage === 'pending_hydration' ||
+                            (jobData?.status === 'done' && !jobData?.result_budget_id));
                     const hasBudgetId = !!jobData?.result_budget_id;
 
                     // Redireciona quando finalizado com budget_id
