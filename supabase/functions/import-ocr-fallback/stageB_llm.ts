@@ -256,6 +256,15 @@ EXTRACTION RULES:
     Example that MUST be discarded:
       item_path: "8.1.4", code: "0", bank: "IMP", quantity: null, unit_price: null
 
+16. **STRICT ISOLATION OF CAPTURED ITEMS (MANDATORY)**:
+    The \`item_path\` for each output item MUST be extracted exclusively from its own candidate snippet.
+    - NEVER infer it.
+    - NEVER copy it from a previous or subsequent item.
+    - NEVER deduce it from general context.
+    If the snippet explicitly says "3.1.2 92762SINAPI...", then \`item_path\` is strictly "3.1.2" and \`code\` is "92762".
+    Likewise, \`quantity\` and \`unit_price\` MUST be extracted from the value line appearing IMMEDIATELY after the description of THIS specific candidate (in its own \`context_after\`), never from another candidate.
+    When multiple candidates share similar or identical descriptions, use the \`item_path\` from the snippet as the absolute unique identifier. Extract quantity and price ONLY from the context block of that candidate.
+
 CRITICAL RULE — CONTEXT PRIORITY:
 When extracting numeric fields (quantity, unit_price, total_price) for the current item:
 - ALWAYS use values from context_after or the candidate's own text line.
