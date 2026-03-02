@@ -257,9 +257,37 @@ export const BudgetItemService = {
             }
         }
 
-        // CLIENT-SIDE SORT (Critical since we removed server sort)
-        // Must maintain order_index stability
-        allItems.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+        // HIERARCHICAL SORT: sort siblings within the same parent by order_index,
+        // then perform a depth-first traversal to rebuild the flat list in tree order.
+        // A flat global sort by order_index breaks when parent groups inherit the
+        // order_index of their first child (e.g., a N1 group at idx=80 would appear
+        // after N1 groups at idx=1–20 even though it belongs in front-matter position).
+        const buildSortedTree = (rows: any[]): any[] => {
+            // Group by parent_id (null = root items)
+            const byParent = new Map<string | null, any[]>();
+            rows.forEach(row => {
+                const key = row.parent_id ?? null;
+                if (!byParent.has(key)) byParent.set(key, []);
+                byParent.get(key)!.push(row);
+            });
+
+            // Sort each sibling group by order_index
+            byParent.forEach(children => children.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0)));
+
+            // Depth-first traversal: root → children → grandchildren
+            const result: any[] = [];
+            const visit = (parentId: string | null) => {
+                const children = byParent.get(parentId) ?? [];
+                children.forEach(child => {
+                    result.push(child);
+                    visit(child.id);
+                });
+            };
+            visit(null);
+            return result;
+        };
+
+        allItems = buildSortedTree(allItems);
 
         return allItems.map(toDomain);
     },
