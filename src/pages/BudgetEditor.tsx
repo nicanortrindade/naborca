@@ -734,9 +734,8 @@ const BudgetEditor = () => {
     const organizeHierarchy = (allItems: any[]) => {
         if (!allItems) return [];
 
-        const sorter = (a: any, b: any) => (a.order || 0) - (b.order || 0);
-
         // 0. Pre-process: Virtual Parenting for Imported Items (Fix Orphans)
+        // Percorre NA ORDEM ATUAL (já correta do serviço) para rastrear o último pai visto
         let lastL1: any = null;
         let lastL2: any = null;
 
@@ -756,50 +755,38 @@ const BudgetEditor = () => {
             return newItem;
         });
 
-        // 1. Get Etapas (Level 1)
-        const etapas = fixedItems.filter(i => i.level === 1);
-        const flatList: any[] = [];
-
-        etapas.forEach(etapa => {
-            // Find subetapas (Level 2)
-            const subetapas = fixedItems.filter(i => i.level === 2 && i.parentId === etapa.id);
-
-            // REGRA 3: Os valores já estão calculados - usar finalPrice do item diretamente
-            // calculatedTotal já foi definido no recalculateItemHierarchy
-            flatList.push({
-                ...etapa,
-                calculatedTotal: etapa.finalPrice || 0
-            });
-
-            const directItems = fixedItems.filter(i => i.level >= 3 && i.parentId === etapa.id);
-            directItems.forEach((item: any) => {
-                flatList.push(item);
-            });
-
-            // Add Subetapas and their Items
-            subetapas.forEach(sub => {
-                const subItems = fixedItems.filter(i => i.level >= 3 && i.parentId === sub.id);
-
-                // Subetapa com total já calculado
-                flatList.push({
-                    ...sub,
-                    calculatedTotal: sub.finalPrice || 0,
-                    _children: subItems
-                });
-
-                // Adicionar itens (valores já calculados)
-                subItems.forEach((item: any) => {
-                    flatList.push(item);
-                });
-            });
+        // 1. Recursive depth-first traversal (handles all levels: N1/N2/N3/N4+)
+        // Groups siblings by parentId, sorts each sibling group by order, then visits recursively.
+        // This eliminates orphans by visiting ALL children of ANY parent, not just 2 levels deep.
+        const byParent = new Map<string | null, any[]>();
+        fixedItems.forEach(item => {
+            const key = item.parentId ?? null;
+            if (!byParent.has(key)) byParent.set(key, []);
+            byParent.get(key)!.push(item);
         });
 
-        // SAFETY NET: Show Orphans instead of hiding them
+        // Sort each sibling group by order (domain field = order_index from DB)
+        byParent.forEach(children => children.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
+
+        const flatList: any[] = [];
+        const visit = (parentId: string | null) => {
+            const children = byParent.get(parentId) ?? [];
+            children.forEach(item => {
+                flatList.push({
+                    ...item,
+                    calculatedTotal: item.finalPrice || 0
+                });
+                visit(item.id); // Recurse into children of any level
+            });
+        };
+        visit(null);
+
+        // SAFETY NET: detect any items missed by the traversal (true orphans with broken parent_id)
         const visibleIds = new Set(flatList.map(i => i.id));
         const orphans = fixedItems.filter(i => i.id && !visibleIds.has(i.id));
 
         if (orphans.length > 0) {
-            console.warn("Orphans detected:", orphans.length);
+            console.warn('[organizeHierarchy] True orphans (broken parent_id):', orphans.length, orphans.map(o => o.description));
             orphans.forEach(item => {
                 flatList.push({
                     ...item,
@@ -813,6 +800,7 @@ const BudgetEditor = () => {
 
         return flatList;
     };
+
 
     // REGRA 3: Calculate Global Total (Only Level 3+ Items using finalPrice)
     // finalPrice já inclui: quantity * unitPrice * (1 + BDI)
