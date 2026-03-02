@@ -3041,7 +3041,7 @@ const BudgetEditor = () => {
                 ) : (
                     /* Desktop: Table View */
                     /* Desktop: Table Engineering View */
-                    <table className="w-full text-left border-collapse table-fixed border border-slate-400">
+                    <table className="w-full text-left border-collapse table-auto border border-slate-400">
                         <thead className="sticky top-0 z-10 bg-slate-100 border-b-2 border-slate-400 shadow-sm">
                             <tr className="text-[10px] uppercase tracking-wider font-bold text-slate-700">
                                 <th className="p-1 w-[30px] text-center border-r border-slate-300 bg-slate-200">
@@ -3062,8 +3062,8 @@ const BudgetEditor = () => {
                                 <th className="p-1 w-[20px] text-center border-r border-slate-300 bg-slate-200">#</th>
                                 <th className="p-1 w-[65px] text-center border-r border-slate-300">Item</th>
                                 <th className="p-1 w-[60px] text-center border-r border-slate-300">Banco</th>
-                                <th className="p-1 w-[70px] text-center border-r border-slate-300">Código</th>
-                                <th className="p-1 text-center border-r border-slate-300">Descrição</th>
+                                <th className="p-1 w-[70px] min-w-[70px] text-center border-r border-slate-300">Código</th>
+                                <th className="p-1 w-auto text-center border-r border-slate-300">Descrição</th>
                                 <th className="p-1 w-[90px] min-w-[90px] max-w-[90px] text-center border-r border-slate-300">Quant.</th>
                                 <th className="p-1 w-[80px] min-w-[80px] max-w-[80px] text-center border-r border-slate-300">Und</th>
                                 <th className="p-1 w-[80px] text-center border-r border-slate-300">V. Unit</th>
@@ -3211,7 +3211,7 @@ const BudgetEditor = () => {
                                         </td>
 
                                         {/* Descrição */}
-                                        <td className="p-1 border-r border-slate-300 relative group/desc">
+                                        <td className="p-1 border-r border-slate-300 relative group/desc w-auto align-top">
                                             <div className={clsx(
                                                 "w-full min-h-[1.75rem] py-1",
                                                 item.hydrationStatus === 'pending_review' && "pr-[90px]" // Espaço para o botão Vincular absoluto
