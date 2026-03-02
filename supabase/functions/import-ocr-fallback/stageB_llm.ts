@@ -265,6 +265,23 @@ EXTRACTION RULES:
     Likewise, \`quantity\` and \`unit_price\` MUST be extracted from the value line appearing IMMEDIATELY after the description of THIS specific candidate (in its own \`context_after\`), never from another candidate.
     When multiple candidates share similar or identical descriptions, use the \`item_path\` from the snippet as the absolute unique identifier. Extract quantity and price ONLY from the context block of that candidate.
 
+17. **STRICT QUANTITY EXTRACTION FROM VALUE LINES (MANDATORY)**:
+    When extracting \`quantity\` from a Brazilian-format values line (e.g., '11,00 1.188,15 1.485,19 13.069,65'), the FIRST number in that sequence is always the quantity.
+    NEVER truncate the first number. If the line begins with '11,00', the true quantity is 11.00, not 1.
+    If there is any ambiguity (e.g., between '1' and '11'), always prefer the full number exactly as it appears in the text.
+
+18. **GLUED CPU CODES AND BANKS (MANDATORY)**:
+    When the snippet contains a CPU code glued directly to the bank name without spaces (e.g., 'CPU2286Próprio' or 'CPU2286SINAPI'), you must extract:
+      code = 'CPU2286'
+      price_source = 'Próprio' (or the respective bank name detected)
+    Do not mistake the glued bank name for part of the description.
+
+    Examples:
+      'CPU2286PróprioDALTA PAREDE DRYWALL...'
+        → code='CPU2286', price_source='Próprio'
+      '4656ORSELOCAÇÃO DE CONTAINER...'
+        → code='4656', price_source='ORSE'
+
 CRITICAL RULE — CONTEXT PRIORITY:
 When extracting numeric fields (quantity, unit_price, total_price) for the current item:
 - ALWAYS use values from context_after or the candidate's own text line.

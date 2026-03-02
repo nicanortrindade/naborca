@@ -179,6 +179,7 @@ BEGIN
                           AND COALESCE(unit_price, 0) = 0
                           AND COALESCE(quantity, 0) = 0
                           AND length(trim(description)) >= 5
+                          AND trim(description) !~* '^\s*(TOTAL|SUBTOTAL|BDI)'
                         ORDER BY 
                           CASE WHEN item_path = v_n1_key THEN 0 ELSE 1 END,
                           idx ASC
@@ -237,6 +238,7 @@ BEGIN
                                   AND COALESCE(unit_price, 0) = 0
                                   AND COALESCE(quantity, 0) = 0
                                   AND length(trim(description)) >= 5
+                                  AND trim(description) !~* '^\s*(TOTAL|SUBTOTAL|BDI)'
                                 ORDER BY 
                                   CASE WHEN item_path = v_n2_key THEN 0 ELSE 1 END,
                                   idx ASC
@@ -284,6 +286,7 @@ BEGIN
                               AND COALESCE(unit_price, 0) = 0
                               AND COALESCE(quantity, 0) = 0
                               AND length(trim(description)) >= 5
+                              AND trim(description) !~* '^\s*(TOTAL|SUBTOTAL|BDI)'
                             ORDER BY 
                               CASE WHEN item_path = v_n2_key THEN 0 ELSE 1 END,
                               idx ASC
@@ -320,6 +323,7 @@ BEGIN
                               AND COALESCE(unit_price, 0) = 0
                               AND COALESCE(quantity, 0) = 0
                               AND length(trim(description)) >= 5
+                              AND trim(description) !~* '^\s*(TOTAL|SUBTOTAL|BDI)'
                             ORDER BY 
                               CASE WHEN item_path = v_n2_key THEN 0 ELSE 1 END,
                               idx ASC
@@ -346,6 +350,7 @@ BEGIN
                               AND COALESCE(unit_price, 0) = 0
                               AND COALESCE(quantity, 0) = 0
                               AND length(trim(description)) >= 5
+                              AND trim(description) !~* '^\s*(TOTAL|SUBTOTAL|BDI)'
                             ORDER BY 
                               CASE WHEN item_path = v_n3_key THEN 0 ELSE 1 END,
                               idx ASC

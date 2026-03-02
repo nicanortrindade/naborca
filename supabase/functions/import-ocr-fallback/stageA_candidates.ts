@@ -423,7 +423,7 @@ export function generateCandidatesStageA(text: string, options: {
         for (let i = 0; i < limit; i++) {
             if (candidates.length >= caps.max_candidates) break;
 
-            const line = lines[i].replace(/\r/g, '');
+            let line = lines[i].replace(/\r/g, '');
             const originalLineNo = mapOriginalLineNo[i];
 
             // ETAPA 0: Sempre testa título N1 PRIMEIRO, antes de qualquer outra verificação
@@ -542,6 +542,21 @@ export function generateCandidatesStageA(text: string, options: {
                 }
             }
 
+            // P4: Item_path isolado seguido de código/descrição na próxima linha
+            const REGEX_ISO_PATH = /^\s*(\d{1,3}(?:\.\d{1,3}){1,6})\s*$/;
+            if (REGEX_ISO_PATH.test(line)) {
+                let nextIdx = i + 1;
+                while (nextIdx < limit && lines[nextIdx].trim() === '') nextIdx++;
+                if (nextIdx < limit) {
+                    const nextLine = lines[nextIdx].replace(/\r/g, '').trim();
+                    const REGEX_CODE_PREFIX_PEEK = /^(\d{4,10}|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)?/i;
+                    if (REGEX_CODE_PREFIX_PEEK.test(nextLine)) {
+                        line = line.trim() + ' ' + nextLine;
+                        for (let k = i + 1; k <= nextIdx; k++) consumedLines.add(k);
+                    }
+                }
+            }
+
             // S1: Item Path
             const matchPath = line.match(REGEX_ITEM_PATH);
             if (matchPath) {
@@ -615,6 +630,17 @@ export function generateCandidatesStageA(text: string, options: {
                 if (_s1isFragment) {
                     if (DEBUG_P1) console.log('[S1-FRAGMENT-SKIP]', JSON.stringify({ desc: _s1desc.substring(0, 60), item_path: cand.extracted_signals?.item_path }));
                     continue; // descarta — não adicionar ao array de candidatos
+                }
+
+                // P3: Nomes genéricos de seções (recuperados de S1)
+                const REGEX_ST_NUMERIC = /^(\d{1,2}(?:\.\d{1,2}){0,2})\s+([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ ]{4,})$/;
+                if (REGEX_SECTION_TITLE.test(line) || REGEX_ST_NUMERIC.test(line)) {
+                    if (!_s1hasCode && !_s1hasNumbers) {
+                        (cand as any).kind = 'section_title';
+                        cand.extracted_signals!.description_fragment = _s1desc;
+                        cand.warnings.push('section_title_candidate');
+                        cand.debug_heuristic = ['S_TITLE_FROM_S1'];
+                    }
                 }
 
                 candidates.push(cand);
