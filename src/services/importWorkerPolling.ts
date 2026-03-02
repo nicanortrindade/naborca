@@ -218,10 +218,10 @@ export async function runImportParseWorkerUntilDone(params: {
                     });
                 }
 
-                // Check Completion
-                if (isFinished) {
-                    if (failed === total && (itemsCount || 0) === 0 && job?.status !== 'processing') {
-                        // All failed AND no items extracted AND job not still processing
+                // Check Completion — only return success if tasks AND job are both done
+                if (isFinished && isTerminalSuccessStatus(job?.status)) {
+                    if (failed === total && (itemsCount || 0) === 0) {
+                        // All failed AND no items extracted
                         logTelemetry('error', 'polling_terminal', { jobId, result: 'all_tasks_failed' });
                         return { finalStatus: 'failed', message: "Todas as tarefas de processamento falharam." };
                     }

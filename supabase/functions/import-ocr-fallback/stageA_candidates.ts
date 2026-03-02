@@ -153,7 +153,7 @@ export function detectDocTypeHints(text: string, fileMeta?: any): StageAResult['
 const REGEX_ITEM_PATH = /^\s*(\d{1,3}(?:\.\d{1,3}){1,6})\s*(.{5,})$/;
 // Captura: "1SERVIÇOS PRELIMINARES E INDIRETOS185.303,28" ou "1 SERVIÇOS..."
 // Remove o total financeiro colado no final (ex: 185.303,28)
-const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s*([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-()\.\°"']{5,}?)\s*(?:[\d.,]+\s*)?\r?$/;
+const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s*([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-()\.\°"']{3,}?)\s*(?:[\d.,]+\s*)*\r?$/;
 const REGEX_CODE_START = /^(\d{4,10}|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/; // "94321 Description" or "CPU123 Desc" or "2451 Desc"
 const REGEX_UNIT = /\b(UN|und|m²|m2|m³|m3|kg|h|vb|m)\b/i;
 const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\d{1,4})?\b/g; // 1.234,56 or 1234.56
@@ -222,7 +222,7 @@ export function generateCandidatesStageA(text: string, options: {
                 continue;
             }
             // Guard: descarta totais de seção (dígito colado em texto maiúsculo + número)
-            if (REGEX_SECTION_TOTAL.test(snippet)) {
+            if (REGEX_SECTION_TOTAL.test(snippet) && !item.warnings?.includes('section_title_candidate')) {
                 continue;
             }
             _originalPush(item);
@@ -447,6 +447,14 @@ export function generateCandidatesStageA(text: string, options: {
             if (/^(pag|pág|data|hora|emitido)/i.test(line)) continue;
             if (/^[_\-=.]{3,}$/.test(line)) continue;
             if (REGEX_BANKS_HEADER.test(line)) continue;
+
+            // GARBAGE FILTER: PDF page headers masquerading as items
+            if (/PLANILHA DE ORÇAMENTO SINT[ÉE]TICO/i.test(line) ||
+                /ItemC[óo]digoBancoDescri[çc][ãa]o/i.test(line) ||
+                /Secretaria de Aten[çc][ãa]o Especializada/i.test(line) ||
+                /Encargo Social Mensalista/i.test(line)) {
+                continue;
+            }
 
             // FILTER: Project title headers with date+percentage glued
             // Ex: "Centro de Atenção Psicossocial...564,56m²25,00%71,46%07/10/2025"

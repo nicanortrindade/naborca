@@ -43,6 +43,7 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
     // Refs for control
     const pollingControllerRef = useRef<AbortController | null>(null);
     const isRunningRef = useRef(false);
+    const finalizeTriggeredRef = useRef<Record<string, boolean>>({});
 
     useEffect(() => {
         logUiEvent('modal_open', { timestamp: Date.now() });
@@ -119,7 +120,7 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                 // 4. Redirect to import review/budget page
                 let attempts = 0;
                 const maxAttempts = 120; // 120 × 3 s = 360 s max wait
-                let finalizationTriggered = false;
+                let finalizationTriggered = finalizeTriggeredRef.current[jobId] || localStorage.getItem(`finalize_attempted_${jobId}`) === 'true';
 
                 const pollBudget = async (): Promise<void> => {
                     if (attempts >= maxAttempts || controller.signal.aborted) {
@@ -141,12 +142,14 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                     const isPendingHydration = jobData?.stage === 'pending_hydration';
                     const isExtractionComplete =
                         jobData?.stage === 'extraction_complete' ||
+                        jobData?.stage === 'pending_hydration' ||
                         (jobData?.status === 'done' && !jobData?.result_budget_id);
                     const hasBudgetId = !!jobData?.result_budget_id;
 
                     // Redireciona quando finalizado com budget_id
                     if (isFinalized && hasBudgetId) {
                         clearImportSession();
+                        localStorage.removeItem(`finalize_attempted_${jobId}`);
                         await new Promise(r => setTimeout(r, 600));
                         if (!controller.signal.aborted) {
                             navigate(toRelativePath(`/importacoes/${jobId}`));
@@ -163,6 +166,8 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                     // Dispara finalização uma vez quando extração completa
                     if (isExtractionComplete && !finalizationTriggered) {
                         finalizationTriggered = true;
+                        finalizeTriggeredRef.current[jobId] = true;
+                        localStorage.setItem(`finalize_attempted_${jobId}`, 'true');
                         setUploadStep('Extração concluída! Gerando orçamento automaticamente...');
                         try {
                             const { data: finalizeData, error: finalizeError } = await supabase.functions.invoke('import-finalize-budget', {

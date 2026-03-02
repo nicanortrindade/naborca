@@ -96,9 +96,9 @@ Deno.serve(async (req) => {
             .eq('id', job_id)
             .single();
 
-        if (jobCheck?.result_budget_id && jobCheck?.stage === 'finalized') {
+        if (jobCheck?.result_budget_id) {
             if (!force_rehydrate) {
-                console.log(`[FinalizeBudget] Job já finalizado, retornando budget existente: ${jobCheck.result_budget_id}`);
+                console.log(`[FinalizeBudget] Job já tem budget (${jobCheck.result_budget_id}, stage=${jobCheck.stage}), retornando existente.`);
                 return new Response(JSON.stringify({
                     ok: true,
                     budget_id: jobCheck.result_budget_id,
@@ -148,23 +148,23 @@ Deno.serve(async (req) => {
         EdgeRuntime.waitUntil(
             (async () => {
                 try {
-                    let rpcResult = await adminClient.rpc('finalize_import_to_budget', {
+                    // PRE-RPC GUARD: verify no budget was created between the initial check and now
+                    const { data: preCheck } = await adminClient
+                        .from('import_jobs')
+                        .select('result_budget_id')
+                        .eq('id', job_id)
+                        .single();
+                    if (preCheck?.result_budget_id) {
+                        console.log(`[FinalizeBudget] Budget already exists (${preCheck.result_budget_id}), skipping RPC.`);
+                        return;
+                    }
+
+                    const rpcResult = await adminClient.rpc('finalize_import_to_budget', {
                         p_job_id: job_id,
                         p_user_id: targetUserId,
                         p_params: params,
                         p_analytic_data: analyticData
                     });
-
-                    // Auto-finalize loop: keep calling until done=true
-                    while (rpcResult.data && !rpcResult.data.done) {
-                        console.log(`[FinalizeBudget] RPC not done yet, continuing...`);
-                        rpcResult = await adminClient.rpc('finalize_import_to_budget', {
-                            p_job_id: job_id,
-                            p_user_id: targetUserId,
-                            p_params: params,
-                            p_analytic_data: analyticData
-                        });
-                    }
 
                     const rpcData = rpcResult.data;
                     const rpcError = rpcResult.error;

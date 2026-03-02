@@ -197,6 +197,22 @@ EXTRACTION RULES:
       (no item number, no code, no description), it is a continuation of the previous item's data row 
       that was split by a page break. Associate the numeric values with the previous item if that item 
       is missing quantity or unit_price. Do NOT create a new item for this line.
+12b. **UNIT + VALUES ON NEXT LINE (MANDATORY)**:
+    When context_after starts with a known unit (m², m³, UN, MÊS, KG, M, etc.) followed
+    by numbers, those numbers belong to the CURRENT item. Extract:
+    - unit: the first token (e.g. "m²")
+    - quantity: the FIRST number after the unit (e.g. "3,15")
+    - unit_price: the SECOND number (e.g. "651,96")  
+    - total_price: the THIRD number (e.g. "2.567,09") or FOURTH if BDI column present
+    
+    This pattern is EXTREMELY common in Brazilian budget PDFs where the description
+    and numeric data are on separate OCR lines. NEVER return quantity=null when 
+    context_after contains "m² 3,15" or similar patterns.
+    
+    Example:
+    snippet: "12098 orse PORTA CORTA FOGO, DE ABRIR, 02 FOLHAS..."
+    context_after: "m² 3,15 651,96 814,95 2.567,09 0,0907 %"
+    → unit: "m²", quantity: "3,15", unit_price: "651,96", total_price: "2.567,09"
 
 CRITICAL RULE — CONTEXT PRIORITY:
 When extracting numeric fields (quantity, unit_price, total_price) for the current item:

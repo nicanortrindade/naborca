@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import type { AiImportItem } from '../features/importer/types';
 import { Loader2, ArrowLeft, CheckCircle, AlertCircle, Wand2, FileSpreadsheet } from 'lucide-react';
@@ -34,6 +34,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         fetchJobContext();
 
         // Polling: verifica stage a cada 10s até finalizar
+        const prevStageRef = { current: jobStage };
         const interval = setInterval(async () => {
             const { data } = await supabase
                 .from('import_jobs' as any)
@@ -42,7 +43,15 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                 .single();
 
             if (data) {
+                const prevStage = prevStageRef.current;
                 setJobStage(data.stage);
+                prevStageRef.current = data.stage;
+
+                // Recarregar itens quando stage avança para um estado terminal
+                if (data.stage !== prevStage && ['pending_hydration', 'extraction_complete', 'finalized'].includes(data.stage)) {
+                    fetchItems();
+                }
+
                 if (data.result_budget_id && data.stage === 'finalized') {
                     clearInterval(interval);
                     navigate(toRelativePath(`/budgets/${data.result_budget_id}`));
@@ -365,7 +374,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                         </button>
                         <button
                             onClick={handleGenerateBudget}
-                            disabled={generating || items.length === 0 || !['finalized', 'extraction_complete'].includes(jobStage || '')}
+                            disabled={generating || items.length === 0 || !['finalized', 'extraction_complete', 'pending_hydration'].includes(jobStage || '')}
                             className="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 active:transform active:scale-95 font-semibold shadow-md shadow-blue-600/20 disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 transition-all min-w-[200px]"
                         >
                             {generating ? (
