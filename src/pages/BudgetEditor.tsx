@@ -740,7 +740,7 @@ const BudgetEditor = () => {
         let lastL1: any = null;
         let lastL2: any = null;
 
-        const fixedItems = [...allItems].sort(sorter).map(item => {
+        const fixedItems = [...allItems].map(item => {
             const newItem = { ...item };
 
             // Track parents based on visual order
