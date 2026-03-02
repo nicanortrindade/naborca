@@ -3087,21 +3087,26 @@ const BudgetEditor = () => {
 
                                 const isNivel1 = item.rowType === 'etapa' || item.level === 1; // Fallback to level if rowType missing
                                 const isNivel2 = item.rowType === 'subetapa' || item.level === 2;
-                                const isItem = item.rowType === 'item' || (item.level !== 1 && item.level !== 2);
+                                const isNivel3Group = item.level === 3 && item.type === 'group'; // Subgrupo dentro de subgrupo
+                                const isItem = item.rowType === 'item' || (!isNivel1 && !isNivel2 && !isNivel3Group);
 
                                 // Aplicar cores de fundo
                                 const rowBg = isNivel1
-                                    ? "bg-[#1e3a8a] text-white" // Azul Escuro (Etapa)
+                                    ? "bg-[#1e3a8a] text-white"        // Azul Escuro (N1)
                                     : isNivel2
-                                        ? "bg-[#dbeafe] text-blue-900" // Azul Claro (Subetapa)
-                                        : "bg-white hover:bg-slate-50"; // Branco (Item)
+                                        ? "bg-[#dbeafe] text-blue-900" // Azul Claro (N2)
+                                        : isNivel3Group
+                                            ? "bg-[#eff6ff] text-blue-800" // Azul muito claro (N3 grupo)
+                                            : "bg-white hover:bg-slate-50"; // Branco (Item)
 
                                 // Estilo do texto da descrição
                                 const textStyle = isNivel1
-                                    ? "font-black uppercase tracking-wide text-[12px]" // Mais destaque nível 1
+                                    ? "font-black uppercase tracking-wide text-[12px]"  // N1
                                     : isNivel2
-                                        ? "font-bold uppercase text-[11px]" // Destaque nível 2
-                                        : "font-normal text-slate-700"; // Normal nível 3
+                                        ? "font-bold uppercase text-[11px]"             // N2
+                                        : isNivel3Group
+                                            ? "font-semibold text-[11px] pl-4"         // N3 grupo — indentado
+                                            : "font-normal text-slate-700";            // Item real
 
                                 return (
                                     <tr
@@ -3183,9 +3188,10 @@ const BudgetEditor = () => {
                                                                             item.source === 'SBC' ? "bg-amber-100 text-amber-700" :
                                                                                 item.source ? "bg-slate-100 text-slate-600" : "bg-gray-50 text-gray-400"
                                                 )}>
-                                                    {item.source === 'AI_EXTRACTED_CODE' ? 'IMPORT' :
-                                                        item.source === 'IMPORTADO' ? 'IMPORT' :
-                                                            item.source || 'IMPORT'}
+                                                    {item.source === 'AI_EXTRACTED_CODE' ? 'IA'
+                                                        : item.source === 'IMPORTADO' ? 'IMP'
+                                                            : item.source === 'OWN' ? 'Próprio'
+                                                                : item.source || '-'}
                                                 </span>
                                             )}
                                         </td>
