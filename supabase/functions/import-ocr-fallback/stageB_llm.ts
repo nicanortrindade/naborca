@@ -741,13 +741,6 @@ PROCESS THESE CANDIDATES:
 ${JSON.stringify(candidatesContext, null, 2)}
 `;
 
-    const fullPromptText = SYSTEM_PROMPT + "\n" + userPrompt;
-
-    // Construct Contents for New SDK
-    const contents = [
-        { role: "user", parts: [{ text: fullPromptText }] }
-    ];
-
     // DEBUG: Lifecycle Tracking & Storage
     const lifecycle: string[] = [`batch:${batchIndex}:start`];
     let rawOutputTruncated = "";
@@ -760,73 +753,44 @@ ${JSON.stringify(candidatesContext, null, 2)}
         llm_model_attempts: []
     };
 
-    try {
-        lifecycle.push('before_generateWithModelFallback');
+    async function callGemini(
+        candidatesSub: any[],
+        contextUserPrompt: string
+    ): Promise<string> {
+        const promptText = SYSTEM_PROMPT + "\n" + contextUserPrompt;
+        const contents = [
+            { role: "user", parts: [{ text: promptText }] }
+        ];
 
+        lifecycle.push('before_generateWithModelFallback');
         const result = await generateWithModelFallback(
             client,
             contents,
             stepDebug,
             persistenceOpts
         );
-
-        // [STAGE-B-LOG-1] RAW LLM RESULT
-        console.log("[STAGE-B-LLM-RAW-RESULT]", {
-            hasResult: !!result,
-            hasText: !!result?.text,
-            textLength: result?.text?.length || 0,
-            lifecycle
-        });
+        lifecycle.push('after_generateWithModelFallback');
 
         if (!result?.text || result.text.trim().length === 0) {
             throw new Error("LLM returned empty text response");
         }
 
-        lifecycle.push('after_generateWithModelFallback');
+        return (result.text || "").trim();
+    }
 
-        let text = (result.text || "").trim();
-        rawOutputTruncated = text.substring(0, 20000); // Truncate as requested
+    async function callLLMWithRetry(
+        candidatesSub: any[],
+        contextUserPrompt: string,
+        depth: number = 0
+    ): Promise<any[]> {
+        const MAX_DEPTH = 3;
+        const text = await callGemini(candidatesSub, contextUserPrompt);
 
-        const validatedItems: StageBItem[] = [];
-        let rejectedCount = 0;
-        const rejectedItems: RejectedItem[] = [];
-
-        // GUARD: EMPTY TEXT FROM LLM
-        if (text.length === 0) {
-            rejectedCount++;
-            rejectedItems.push({
-                batch_index: batchIndex,
-                candidate_id: null,
-                reason: 'EMPTY_LLM_TEXT',
-                error_message: 'Gemini response contained no text after all extraction attempts.',
-                candidate_excerpt: '',
-                raw_output_excerpt: ''
-            });
-            console.warn(`[STAGE-B] Batch ${batchIndex}: EMPTY_LLM_TEXT encountered.`);
-
-            const batchDebug = {
-                batch_index: batchIndex,
-                input_sample_count: candidatesContext.length,
-                raw_output_len: 0,
-                raw_output_truncated: "",
-                parse: {
-                    accepted_count: 0,
-                    rejected_count: rejectedCount,
-                    rejected_items: rejectedItems
-                },
-                ...stepDebug
-            };
-            return { items: [], debug: batchDebug, error: "EMPTY_LLM_TEXT" };
-        }
-
-        // Validate & Parse
         let parsed: any;
         let jsonParseError: string | null = null;
-
         try {
             parsed = JSON.parse(text);
         } catch (e: any) {
-            // Try to strip markdown
             try {
                 const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
                 parsed = JSON.parse(cleaned);
@@ -835,43 +799,56 @@ ${JSON.stringify(candidatesContext, null, 2)}
             }
         }
 
-        if (jsonParseError) {
-            // FAIL - JSON PARSE ERROR
+        if (jsonParseError || !parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items)) {
+            if (depth >= MAX_DEPTH || candidatesSub.length <= 1) {
+                console.warn(
+                    `[stageB] JSON_PARSE_ERROR – max retry depth reached` +
+                    ` (${candidatesSub.length} items lost at depth ${depth})`
+                );
+                return [];
+            }
+            const mid = Math.ceil(candidatesSub.length / 2);
+            const half1 = candidatesSub.slice(0, mid);
+            const half2 = candidatesSub.slice(mid);
+            console.warn(
+                `[stageB] JSON_PARSE_ERROR – retrying with half batch` +
+                ` (size: ${mid}), depth: ${depth + 1}`
+            );
+
+            const prompt1 = `BATCH #${batchIndex} (Split 1, depth ${depth + 1})\nPROCESS THESE CANDIDATES:\n${JSON.stringify(half1, null, 2)}`;
+            const prompt2 = `BATCH #${batchIndex} (Split 2, depth ${depth + 1})\nPROCESS THESE CANDIDATES:\n${JSON.stringify(half2, null, 2)}`;
+
+            // SEQUENCIAL — não usar Promise.all (respeitar rate limit do Gemini)
+            const r1 = await callLLMWithRetry(half1, prompt1, depth + 1);
+            const r2 = await callLLMWithRetry(half2, prompt2, depth + 1);
+            return [...r1, ...r2];
+        }
+        return parsed.items;
+    }
+
+    try {
+        const parsedItems = await callLLMWithRetry(candidatesContext, userPrompt);
+        rawOutputTruncated = "Output returned via recursive retry";
+
+        const validatedItems: StageBItem[] = [];
+        let rejectedCount = 0;
+        const rejectedItems: RejectedItem[] = [];
+
+        // GUARD: EMPTY ITEMS FROM LLM RETRY
+        if (!parsedItems || parsedItems.length === 0) {
             rejectedCount++;
             rejectedItems.push({
                 batch_index: batchIndex,
-                reason: 'JSON_PARSE_ERROR',
-                error_message: jsonParseError,
                 candidate_id: null,
-                candidate_excerpt: null,
-                raw_output_excerpt: text.substring(0, 800)
-            });
-        } else if (!parsed || typeof parsed !== 'object') {
-            // FAIL - INVALID ROOT
-            rejectedCount++;
-            rejectedItems.push({
-                batch_index: batchIndex,
-                reason: 'INVALID_JSON_ROOT',
-                error_message: "Root is not an object",
-                candidate_id: null,
-                candidate_excerpt: null,
-                raw_output_excerpt: text.substring(0, 800)
-            });
-        } else if (!Array.isArray(parsed.items)) {
-            // FAIL - NO ITEMS ARRAY
-            rejectedCount++;
-            rejectedItems.push({
-                batch_index: batchIndex,
-                reason: 'NO_ITEMS_ARRAY',
-                error_message: "Property 'items' is missing or not an array",
-                candidate_id: null,
-                candidate_excerpt: null,
-                raw_output_excerpt: JSON.stringify(parsed).substring(0, 800)
+                reason: 'JSON_PARSE_ERROR_RETRY_EXHAUSTED',
+                error_message: 'Max retry exhausted or empty response during evaluation.',
+                candidate_excerpt: '',
+                raw_output_excerpt: ''
             });
         } else {
             // SUCCESS - ITERATE ITEMS
             let idx = 0;
-            for (const raw of parsed.items) {
+            for (const raw of parsedItems) {
                 idx++;
                 // Start with base object matching schema
 
@@ -952,7 +929,7 @@ ${JSON.stringify(candidatesContext, null, 2)}
                 reason: 'EMPTY_AFTER_PARSE',
                 error_message: 'LLM returned valid JSON but empty items array, and no candidates were processed.',
                 candidate_excerpt: null,
-                raw_output_excerpt: text.substring(0, 800)
+                raw_output_excerpt: rawOutputTruncated.substring(0, 800)
             });
         }
 
@@ -972,7 +949,7 @@ ${JSON.stringify(candidatesContext, null, 2)}
         const batchDebug = {
             batch_index: batchIndex,
             input_sample_count: candidatesContext.length,
-            raw_output_len: text.length,
+            raw_output_len: 0, // text is scoped inside callLLMWithRetry
             raw_output_truncated: rawOutputTruncated,
             parse: {
                 accepted_count: validatedItems.length,
@@ -1211,8 +1188,8 @@ export async function executeStageB(
     const allItems_merged: StageBItem[] = [];
     for (const item of allItems) {
         const prefix = (item.item_path || '').split('.')[0];
-        const key = `${prefix}|${(item.composition_code || '').trim().toUpperCase()}`;
-        if (!item.composition_code) {
+        const key = `${prefix}|${(item.code || '').trim().toUpperCase()}`;
+        if (!item.code) {
             allItems_merged.push(item);
             continue;
         }
