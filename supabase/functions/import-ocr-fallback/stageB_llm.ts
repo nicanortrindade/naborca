@@ -231,6 +231,31 @@ EXTRACTION RULES:
     Output: description = "RODAPÉ ALTA RESISTÊNCIA, H = 10 CM, MEIA-CANA"
             quantity = 290.57, unit_price = 20.48, total_price = 7438.59
 
+14. **CONTEXT_AFTER LEADING NUMBERS (MANDATORY)**:
+    When context_after starts with a sequence of Brazilian-format numbers (digits separated by
+    comma or dot) followed by a newline character (\\n), those leading numbers belong to the
+    PREVIOUS item — they were injected by the extractor as a trailing carry-over.
+    Rules:
+    - DO NOT use these leading numbers as quantity or unit_price for the CURRENT item.
+    - Ignore the first line of context_after entirely for numeric extraction.
+    - Use ONLY the remaining lines of context_after (after the first \\n) to find quantity,
+      unit_price and total_price for the current item.
+    Example:
+      context_after: "290,57 20,48\\nm² 3,15 651,96 2.567,09"
+      → Ignore "290,57 20,48" (belongs to previous item)
+      → Extract from "m² 3,15 651,96 2.567,09": unit="m²", quantity="3,15", unit_price="651,96"
+
+15. **GHOST ITEMS — DEEP PATH WITHOUT VALUES (MANDATORY)**:
+    If a candidate satisfies ALL of the following conditions simultaneously:
+    - item_path has depth >= 3 (e.g. "8.1.4", "7.2.3.1", "3.5.2")
+    - code is null OR code is "0" OR code is empty
+    - quantity is null AND unit_price is null
+    Then classify it as kind="noise" and DO NOT include it in the output items array.
+    These are footer rows, page-continuation headers, or OCR artifacts that slipped past
+    the Stage A filter. They must be suppressed to avoid phantom budget lines.
+    Example that MUST be discarded:
+      item_path: "8.1.4", code: "0", bank: "IMP", quantity: null, unit_price: null
+
 CRITICAL RULE — CONTEXT PRIORITY:
 When extracting numeric fields (quantity, unit_price, total_price) for the current item:
 - ALWAYS use values from context_after or the candidate's own text line.

@@ -153,7 +153,7 @@ export function detectDocTypeHints(text: string, fileMeta?: any): StageAResult['
 const REGEX_ITEM_PATH = /^\s*(\d{1,3}(?:\.\d{1,3}){1,6})\s*(.{5,})$/;
 // Captura: "1SERVIÇOS PRELIMINARES E INDIRETOS185.303,28" ou "1 SERVIÇOS..."
 // Remove o total financeiro colado no final (ex: 185.303,28)
-const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s*([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-()\.\°"']{3,})(?:\s*[\d.,]+\s*%?\s*)*$/;
+const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s+([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-()\.\°"']{3,})(?:\s*[\d.,]+\s*%?\s*)*$/;
 const REGEX_CODE_START = /^(\d{4,10}|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/; // "94321 Description" or "CPU123 Desc" or "2451 Desc"
 const REGEX_UNIT = /\b(UN|und|m²|m2|m³|m3|kg|h|vb|m)\b/i;
 const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\d{1,4})?\b/g; // 1.234,56 or 1234.56
@@ -578,7 +578,7 @@ export function generateCandidatesStageA(text: string, options: {
                     evidence: line,
                     snippet: line,
                     context_before: lines.slice(Math.max(0, i - 2), i).join('\n'),
-                    context_after: (trailingMatch ? trailingMatch[2] + '\n' : '') + lines.slice(i + 1, Math.min(limit, i + 3)).join('\n'),
+                    context_after: (trailingMatch ? trailingMatch[2] + '\n' : '') + lines.slice(i + 1, Math.min(limit, i + 5)).join('\n'),
                     extracted_signals: {
                         item_path: matchPath[1],
                         code: extracted_code,
@@ -620,8 +620,9 @@ export function generateCandidatesStageA(text: string, options: {
 
             // ST: Section Title — prefixo numérico/alfabético/romano sem código nem valores
             // Exemplos: "3 PAVIMENTAÇÃO", "1.4 DRENAGEM", "A - SERVIÇOS INICIAIS", "II - FUNDAÇÕES"
-            if (!hitS1) {
-                const REGEX_ST_NUMERIC = /^(\d{1,2}(?:\.\d{1,2}){0,2})\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ ]{4,})$/;
+            // Nota: captura títulos independentemente de hitS1 (uma linha pode ser título E item simultâneo)
+            {
+                const REGEX_ST_NUMERIC = /^(\d{1,2}(?:\.\d{1,2}){0,2})\s+([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ ]{4,})$/;
                 const REGEX_ST_ALPHA = /^([A-Z]{1,3})\s*[-–]\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
                 const REGEX_ST_ROMAN = /^(I{1,3}V?|VI{0,3}|IX|IV|X)\s*[-–]\s*([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ ]{4,})$/;
                 const matchTitle =
@@ -642,28 +643,31 @@ export function generateCandidatesStageA(text: string, options: {
                     ];
                     const titleUpper = titleText.toUpperCase();
                     const isBlocklisted = ST_BLOCKLIST.some(term => titleUpper.includes(term));
-                    if (isBlocklisted) continue; // descartar — não é título de seção
-
-                    candidates.push({
-                        id: generateShortId(),
-                        kind: 'synthetic_line',
-                        source: 'ocr_heuristic_v1',
-                        confidence: 0.70,
-                        line_no: originalLineNo,
-                        evidence: line,
-                        snippet: line,
-                        context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
-                        context_after: lines.slice(i + 1, Math.min(limit, i + 2)).join('\n'),
-                        extracted_signals: {
-                            item_path: derivedPath,
-                            description_fragment: titleText
-                        },
-                        evidence_lines: [{ text: line }],
-                        raw_numbers: [],
-                        warnings: ['section_title_candidate'],
-                        debug_heuristic: ['ST_section_title']
-                    });
-                    continue;
+                    if (!isBlocklisted) {
+                        candidates.push({
+                            id: generateShortId(),
+                            kind: 'synthetic_line',
+                            source: 'ocr_heuristic_v1',
+                            confidence: 0.70,
+                            line_no: originalLineNo,
+                            evidence: line,
+                            snippet: line,
+                            context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
+                            context_after: lines.slice(i + 1, Math.min(limit, i + 2)).join('\n'),
+                            extracted_signals: {
+                                item_path: derivedPath,
+                                description_fragment: titleText
+                            },
+                            evidence_lines: [{ text: line }],
+                            raw_numbers: [],
+                            warnings: ['section_title_candidate'],
+                            debug_heuristic: ['ST_section_title']
+                        });
+                        // Se hitS1 já foi marcado, NÃO damos continue — o item já foi emitido pelo S1
+                        if (!hitS1) continue;
+                    } else if (!hitS1) {
+                        continue; // descartar blocklisted apenas se não houver S1
+                    }
                 }
             }
 
