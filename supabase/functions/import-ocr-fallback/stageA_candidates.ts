@@ -595,7 +595,12 @@ export function generateCandidatesStageA(text: string, options: {
                 // FILTER S1: rejeita fragmentos de descrição multiline que chegaram como falsos candidatos
                 // Critérios: tem item_path, sem código, e description é claramente um fragmento de continuação
                 const _s1desc = (cand.extracted_signals?.description_fragment || '').trim();
-                const _s1hasCode = !!cand.extracted_signals?.code;
+                const _s1snippet = (cand.snippet || '').trim();
+                const _s1hasCode =
+                    !!cand.extracted_signals?.code ||
+                    /\d{4,6}(?:SINAPI|ORSE|SBC|IOPES|EMOP|SEAP)/i.test(_s1snippet) ||
+                    /CPU\d{3,10}/i.test(_s1snippet) ||
+                    /(?:SINAPI|ORSE|SBC|IOPES|EMOP|SEAP)\s*\d{4,6}/i.test(_s1snippet);
                 const _s1hasNumbers = /\d/.test(_s1desc);
                 const _s1isFragment =
                     !_s1hasCode &&
