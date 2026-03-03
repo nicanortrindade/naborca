@@ -584,6 +584,16 @@ export function generateCandidatesStageA(text: string, options: {
                     extracted_description = trailingMatch[1].trim();
                 }
 
+                // B2: Smart context_after — stop at the next item boundary
+                const REGEX_CODE_PREFIX_B2 = /^(\d{4,10}|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)/;
+                const _contextAfterLines: string[] = [];
+                for (let _j = i + 1; _j < Math.min(limit, i + 6); _j++) {
+                    const _nextLine = lines[_j].replace(/\r/g, '').trim();
+                    if (REGEX_ITEM_PATH.test(_nextLine) || REGEX_CODE_PREFIX_B2.test(_nextLine)) break;
+                    _contextAfterLines.push(lines[_j]);
+                }
+                const _contextAfter = (trailingMatch ? trailingMatch[2] + '\n' : '') + _contextAfterLines.join('\n');
+
                 const cand: StageACandidate = {
                     id: generateShortId(),
                     kind: 'synthetic_line',
@@ -593,7 +603,7 @@ export function generateCandidatesStageA(text: string, options: {
                     evidence: line,
                     snippet: line,
                     context_before: lines.slice(Math.max(0, i - 2), i).join('\n'),
-                    context_after: (trailingMatch ? trailingMatch[2] + '\n' : '') + lines.slice(i + 1, Math.min(limit, i + 5)).join('\n'),
+                    context_after: _contextAfter,
                     extracted_signals: {
                         item_path: matchPath[1],
                         code: extracted_code,
@@ -640,6 +650,21 @@ export function generateCandidatesStageA(text: string, options: {
                         cand.extracted_signals!.description_fragment = _s1desc;
                         cand.warnings.push('section_title_candidate');
                         cand.debug_heuristic = ['S_TITLE_FROM_S1'];
+                    }
+                }
+
+                // C1: Rejeita fragmento de continuação sem item_path próprio
+                // Se a linha não começa com item_path mas já existe candidato com o mesmo código,
+                // é um falso duplicado gerado por descrição multiline.
+                if (extracted_code) {
+                    const _rawLineStart = line.trim();
+                    const _lineHasOwnPath = REGEX_ITEM_PATH.test(_rawLineStart);
+                    const _codeAlreadySeen = candidates.some(
+                        c => c.extracted_signals?.code === extracted_code
+                    );
+                    if (!_lineHasOwnPath && _codeAlreadySeen) {
+                        console.warn('[StageA] Rejecting continuation fragment: code=' + extracted_code + ', inherited path=' + (cand.extracted_signals?.item_path || 'null'));
+                        continue;
                     }
                 }
 
