@@ -655,16 +655,16 @@ export function generateCandidatesStageA(text: string, options: {
                 }
 
                 // C1: Rejeita fragmento de continuação sem item_path próprio
-                // Se a linha não começa com item_path mas já existe candidato com o mesmo código,
-                // é um falso duplicado gerado por descrição multiline.
-                if (extracted_code) {
+                // Cobre tanto extracted_code (código extraído da linha) quanto código herdado via S3
+                const _c1Code = extracted_code ?? (cand.extracted_signals?.code as string | undefined);
+                if (_c1Code) {
                     const _rawLineStart = line.trim();
                     const _lineHasOwnPath = REGEX_ITEM_PATH.test(_rawLineStart);
                     const _codeAlreadySeen = candidates.some(
-                        c => c.extracted_signals?.code === extracted_code
+                        c => c.extracted_signals?.code === _c1Code
                     );
                     if (!_lineHasOwnPath && _codeAlreadySeen) {
-                        console.warn('[StageA] Rejecting continuation fragment: code=' + extracted_code + ', inherited path=' + (cand.extracted_signals?.item_path || 'null'));
+                        console.warn('[StageA] Rejecting continuation fragment: code=' + _c1Code + ', inherited path=' + (cand.extracted_signals?.item_path ?? 'null'));
                         continue;
                     }
                 }
