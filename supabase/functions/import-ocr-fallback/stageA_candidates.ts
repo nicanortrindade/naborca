@@ -961,9 +961,15 @@ export function generateCandidatesStageA(text: string, options: {
             if (_itemChildren.length === 0) continue;
 
             const _childDescs = _itemChildren
-                .slice(0, 3)
-                .map(c => c.snippet || '')
-                .filter(t => t.length > 0);
+                .slice(0, 5)
+                .map(c => {
+                    const desc = (c.extracted_signals?.description_fragment as string | undefined)
+                        ?? c.snippet
+                        ?? '';
+                    // Strip item_path prefix and code prefix from snippet if description unavailable
+                    return desc.replace(/^\s*\d+(\.\d+)*\s+/, '').replace(/^[A-Z0-9]{3,10}\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP)?\s*/i, '').trim();
+                })
+                .filter(t => t.length > 10);
 
             _syntheticGroups.push({
                 id: generateShortId(),
