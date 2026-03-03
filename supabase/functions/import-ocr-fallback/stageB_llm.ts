@@ -282,6 +282,26 @@ EXTRACTION RULES:
       '4656ORSELOCAÇÃO DE CONTAINER...'
         → code='4656', price_source='ORSE'
 
+19. **CANDIDATE BOUNDARY (MANDATORY)**:
+    The \`context_after\` of a candidate may contain lines that belong to the NEXT item.
+    When extracting \`quantity\` and \`unit_price\` for the current candidate:
+    - Scan \`context_after\` line by line from top to bottom.
+    - If you encounter a line that starts with a new item_path pattern (e.g., "15.3.6", "18.19", "14.2.4") OR starts with a composition code followed by a bank name (e.g., "89811SINAPI", "CPU2657 Próprio"), STOP immediately.
+    - Do NOT use any numeric values from that line or any subsequent lines for the current candidate.
+    - Only use values from lines BEFORE that boundary.
+    Example: if candidate is "15.3.5 89855..." and context_after contains:
+      "UN  2,00 103,50 207,00"
+      "15.3.6 89811SINAPI..."
+      "UN 50,00 41,71 2085,50"
+    Then quantity=2, unit_price=103.50 (stop at "15.3.6" line, ignore everything after).
+
+20. **VALUE COHERENCE (MANDATORY)**:
+    When multiple candidates in the same batch share very similar descriptions (e.g., multiple "ARMAÇÃO DE PILAR OU VIGA" items or multiple "ELETRODUTO FLEXÍVEL" items with different DN sizes):
+    - Each candidate's quantity and unit_price MUST be extracted exclusively from its own context_after block.
+    - NEVER average, interpolate, or borrow values from other candidates with similar descriptions.
+    - If the extracted quantity seems implausibly large for the item type (e.g., qty=1046 for a single electrical conduit fitting, qty=50 for a single 150mm elbow), re-examine the candidate boundary (Rule 19) — the value likely belongs to a different item.
+    - When in doubt, return quantity=null rather than a value from another candidate.
+
 CRITICAL RULE — CONTEXT PRIORITY:
 When extracting numeric fields (quantity, unit_price, total_price) for the current item:
 - ALWAYS use values from context_after or the candidate's own text line.
