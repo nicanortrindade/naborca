@@ -496,20 +496,6 @@ BEGIN
             CONTINUE;
         END IF;
 
-        -- P-DUP: Skip if same item_path + composition_code already inserted with quantity > 0
-        IF v_item.composition_code IS NOT NULL
-           AND trim(v_item.composition_code) <> '0'
-           AND v_item.item_path IS NOT NULL
-           AND EXISTS (
-               SELECT 1 FROM public.budget_items
-               WHERE budget_id = v_budget_id
-                 AND code = v_item.composition_code
-                 AND quantity > 0
-                 AND hydration_details->>'path_key' = v_item.item_path
-           ) THEN
-            CONTINUE;
-        END IF;
-
         -- Skip: duplicata de batch — já passou registro válido com mesma chave antes
         IF v_item.composition_code IS NOT NULL
            AND v_item.item_path IS NOT NULL
