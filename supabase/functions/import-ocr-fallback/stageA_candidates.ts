@@ -589,7 +589,8 @@ export function generateCandidatesStageA(text: string, options: {
                 const _contextAfterLines: string[] = [];
                 for (let _j = i + 1; _j < Math.min(limit, i + 6); _j++) {
                     const _nextLine = lines[_j].replace(/\r/g, '').trim();
-                    if (REGEX_ITEM_PATH.test(_nextLine) || REGEX_CODE_PREFIX_B2.test(_nextLine)) break;
+                    // Skip boundary check for the first line (i+1): it may be the code/description of the current item
+                    if (_j > i + 1 && (REGEX_ITEM_PATH.test(_nextLine) || REGEX_CODE_PREFIX_B2.test(_nextLine))) break;
                     _contextAfterLines.push(lines[_j]);
                 }
                 const _contextAfter = (trailingMatch ? trailingMatch[2] + '\n' : '') + _contextAfterLines.join('\n');
