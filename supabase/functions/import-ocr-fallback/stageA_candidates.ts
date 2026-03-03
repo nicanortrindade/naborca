@@ -918,6 +918,73 @@ export function generateCandidatesStageA(text: string, options: {
                 m--; // Re-checar o item atual com o novo sucessor
             }
         }
+
+        // --- SYNTHETIC GROUP GENERATION (P-NOM) ---
+        // Generate synthetic group candidates ONLY for N1 keys that have NO direct
+        // section_title candidate AND whose children all have composition_code set.
+        // This avoids creating ghost groups for real item groups like 15.1, 15.2, etc.
+
+        const _existingTitlePaths = new Set(
+            candidates
+                .filter(c => !c.extracted_signals?.code && c.extracted_signals?.item_path)
+                .map(c => c.extracted_signals!.item_path as string)
+        );
+
+        // Collect only N1 keys (single segment like "2", "3", "16")
+        const _allN1Keys = new Set<string>();
+        for (const c of candidates) {
+            const p = c.extracted_signals?.item_path;
+            if (!p) continue;
+            const parts = p.split('.');
+            if (parts.length >= 2) _allN1Keys.add(parts[0]);
+        }
+
+        const _syntheticGroups: StageACandidate[] = [];
+        for (const key of _allN1Keys) {
+            // Skip if already has a section_title candidate for this N1 key
+            if (_existingTitlePaths.has(key)) continue;
+
+            // Skip if any direct child at N2 level (key.X) has NO composition_code
+            // — meaning it's already a real group title, not a missing title
+            const _n2Children = candidates.filter(c => {
+                const p = c.extracted_signals?.item_path || '';
+                const parts = p.split('.');
+                return parts.length === 2 && parts[0] === key && !c.extracted_signals?.code;
+            });
+            if (_n2Children.length > 0) continue;
+
+            // Only generate synthetic group if ALL item children have composition_code
+            const _itemChildren = candidates.filter(c => {
+                const p = c.extracted_signals?.item_path || '';
+                return p.startsWith(key + '.') && !!c.extracted_signals?.code;
+            });
+            if (_itemChildren.length === 0) continue;
+
+            const _childDescs = _itemChildren
+                .slice(0, 3)
+                .map(c => c.snippet || '')
+                .filter(t => t.length > 0);
+
+            _syntheticGroups.push({
+                id: generateShortId(),
+                kind: 'section_title' as any,
+                source: 'ocr_heuristic_v1',
+                confidence: 0.7,
+                evidence: `SYNTHETIC_GROUP ${key}`,
+                snippet: `SYNTHETIC_GROUP ${key}`,
+                context_before: '',
+                context_after: _childDescs.join('\n'),
+                extracted_signals: {
+                    item_path: key,
+                    code: undefined
+                },
+                raw_numbers: [],
+                warnings: ['section_title_candidate', 'synthetic_group_inferred'],
+                debug_heuristic: ['ST_SYNTHETIC_GROUP']
+            });
+        }
+
+        candidates.unshift(..._syntheticGroups);
     }
 
     // --- ANALYTIC SCAN LOOP (Blocks) ---
