@@ -449,6 +449,23 @@ BEGIN
             CONTINUE;
         END IF;
 
+        -- C1: Skip false duplicate continuation fragments
+        -- Condition: same composition_code + quantity + unit_price already inserted
+        -- AND raw_line does not start with an item_path pattern (^\d+\.\d+)
+        IF v_item.composition_code IS NOT NULL
+           AND trim(v_item.composition_code) <> '0'
+           AND v_item.raw_line IS NOT NULL
+           AND v_item.raw_line !~ '^\s*\d+\.\d+'
+           AND EXISTS (
+               SELECT 1 FROM public.budget_items
+               WHERE budget_id = v_budget_id
+                 AND code = v_item.composition_code
+                 AND quantity = v_item.quantity
+                 AND unit_price = v_item.unit_price
+           ) THEN
+            CONTINUE;
+        END IF;
+
         -- Skip: continuação de descrição longa (sem código, mesma qty/price de item já existente no mesmo path)
         IF v_item.composition_code IS NULL
            AND v_item.item_path IS NOT NULL
