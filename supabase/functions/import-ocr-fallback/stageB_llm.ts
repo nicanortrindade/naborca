@@ -302,6 +302,31 @@ EXTRACTION RULES:
     - If the extracted quantity seems implausibly large for the item type (e.g., qty=1046 for a single electrical conduit fitting, qty=50 for a single 150mm elbow), re-examine the candidate boundary (Rule 19) — the value likely belongs to a different item.
     - When in doubt, return quantity=null rather than a value from another candidate.
 
+22. **SYNTHETIC GROUP NAME INFERENCE (MANDATORY)**:
+    Some candidates have a snippet starting with "SYNTHETIC_GROUP" followed by a path key (e.g., "SYNTHETIC_GROUP 5", "SYNTHETIC_GROUP 16").
+    These are section/group titles that were NOT explicitly written in the PDF. You must infer their name from the \`context_after\` field, which contains descriptions of child items belonging to that group.
+    
+    Rules for inference:
+    - Read ALL lines in \`context_after\` and identify the common theme of the child items.
+    - Return a SHORT, UPPERCASE group name in Brazilian Portuguese (2-5 words maximum) that best describes the section.
+    - Do NOT return "SEÇÃO", "GRUPO", "SECAO" or any generic placeholder.
+    - Do NOT copy the child item description verbatim — extract the category name.
+    - Use standard Brazilian construction budget section names when applicable.
+    
+    Examples of correct inference:
+    - context_after contains "ESCAVACAO MECANIZADA DE VALA", "LASTRO COM MATERIAL GRANULAR" → description = "FUNDACAO"
+    - context_after contains "TELHAMENTO COM TELHA ONDULADA", "ESTRUTURA DE MADEIRA PARA TELHADO" → description = "COBERTURA"
+    - context_after contains "IMPERMEABILIZACAO DE SUPERFICIE" → description = "IMPERMEABILIZACAO"
+    - context_after contains "FORRO DE GESSO ACARTONADO", "FORRO DE PVC" → description = "REVESTIMENTO DE TETO"
+    - context_after contains "PINTURA LATEX", "PINTURA ESMALTE" → description = "PINTURA"
+    - context_after contains "ELETRODUTO", "CABO DE COBRE", "QUADRO DE DISTRIBUICAO" → description = "INSTALACOES ELETRICAS"
+    - context_after contains "DUTO PARA EXAUSTAO", "TUBO EM COBRE FLEXIVEL", "CAIXA PARA ENCAIXE AR CONDICIONADO" → description = "CLIMATIZACAO"
+    - context_after contains "SINALIZACAO VERTICAL", "SINALIZACAO HORIZONTAL" → description = "URBANIZACAO"
+    - context_after contains "MARMORE", "GRANITO", "PEDRA" → description = "MARMORARIA"
+    - context_after contains "SERVICOS COMPLEMENTARES", "LIMPEZA FINAL" → description = "SERVICOS COMPLEMENTARES"
+    
+    If you cannot determine the group name with confidence, return description = null (do NOT return "SEÇÃO" or "GRUPO").
+
 CRITICAL RULE — CONTEXT PRIORITY:
 When extracting numeric fields (quantity, unit_price, total_price) for the current item:
 - ALWAYS use values from context_after or the candidate's own text line.
