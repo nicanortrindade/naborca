@@ -546,11 +546,13 @@ export function generateCandidatesStageA(text: string, options: {
             const REGEX_ISO_PATH = /^\s*(\d{1,3}(?:\.\d{1,3}){1,6})\s*$/;
             if (REGEX_ISO_PATH.test(line)) {
                 let nextIdx = i + 1;
-                while (nextIdx < limit && lines[nextIdx].trim() === '') nextIdx++;
+                while (nextIdx < Math.min(limit, i + 4) && lines[nextIdx].trim() === '') {
+                    nextIdx++;
+                }
                 if (nextIdx < limit) {
                     const nextLine = lines[nextIdx].replace(/\r/g, '').trim();
-                    const REGEX_CODE_PREFIX_PEEK = /^(\d{4,10}|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)?/i;
-                    if (REGEX_CODE_PREFIX_PEEK.test(nextLine)) {
+                    const REGEX_CODE_PREFIX_PEEK = /^(\d{4,10}|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)/i;
+                    if (REGEX_CODE_PREFIX_PEEK.test(nextLine) || /SINAPI|ORSE|Próprio|SBC|IOPES|EMOP/i.test(nextLine)) {
                         line = line.trim() + ' ' + nextLine;
                         for (let k = i + 1; k <= nextIdx; k++) consumedLines.add(k);
                     }
@@ -918,6 +920,59 @@ export function generateCandidatesStageA(text: string, options: {
                 m--; // Re-checar o item atual com o novo sucessor
             }
         }
+
+        // --- SYNTHETIC GROUP GENERATION (P-NOM) ---
+        const existingPaths = new Set(
+            candidates
+                .filter(c => !c.extracted_signals?.code)
+                .map(c => c.extracted_signals?.item_path)
+                .filter(p => p)
+        );
+
+        const allPaths = new Set(
+            candidates
+                .map(c => c.extracted_signals?.item_path)
+                .filter(p => p)
+        ) as Set<string>;
+
+        const n1n2Keys = new Set<string>();
+        for (const p of allPaths) {
+            const parts = p.split('.');
+            if (parts.length >= 1) n1n2Keys.add(parts[0]);
+            if (parts.length >= 2) n1n2Keys.add(`${parts[0]}.${parts[1]}`);
+        }
+
+        const syntheticGroups: StageACandidate[] = [];
+        for (const key of n1n2Keys) {
+            if (!existingPaths.has(key)) {
+                const childPrefix = key + '.';
+                const children = candidates.filter(c => c.extracted_signals?.item_path?.startsWith(childPrefix));
+                const childDescriptions = children
+                    .slice(0, 3)
+                    .map(c => c.extracted_signals?.description_fragment || c.snippet)
+                    .filter(t => t);
+
+                syntheticGroups.push({
+                    id: generateShortId(),
+                    kind: 'synthetic_group' as any,
+                    source: 'ocr_heuristic_v1',
+                    confidence: 0.8,
+                    evidence: `GROUP ${key}`,
+                    snippet: `GROUP ${key}`,
+                    context_before: '',
+                    context_after: childDescriptions.join('\n'),
+                    extracted_signals: {
+                        item_path: key,
+                        code: undefined
+                    },
+                    raw_numbers: [],
+                    warnings: ['section_title_candidate', 'synthetic_group_inferred'],
+                    debug_heuristic: ['ST_SYNTHETIC_GROUP']
+                });
+            }
+        }
+
+        candidates.unshift(...syntheticGroups);
     }
 
     // --- ANALYTIC SCAN LOOP (Blocks) ---
