@@ -820,7 +820,9 @@ export function generateCandidatesStageA(text: string, options: {
 
                 for (let w = 0; w <= 3; w++) {
                     if (scanStart + w >= limit) break;
-                    const nextL = lines[scanStart + w];
+                    const nextL = lines[scanStart + w].trim();
+                    // S3-GUARD: não consumir linha que é título de seção N1
+                    if (REGEX_IS_SECTION_TITLE.test(nextL) || REGEX_SECTION_TITLE.test(nextL)) break;
                     if (REGEX_UNIT.test(nextL)) foundUnit = true;
                     if (extractNumbers(nextL).length > 0) foundNum = true;
                     if (foundUnit || foundNum) lookaheadEvidence.push(nextL);
