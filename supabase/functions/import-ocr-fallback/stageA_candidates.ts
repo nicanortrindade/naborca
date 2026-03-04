@@ -282,6 +282,11 @@ export function generateCandidatesStageA(text: string, options: {
         // Ex: "1.2.0.0.1.ComposiçãoKENNE011Administração local da obraMÊS"
         const REGEX_S0B_FULL = /^(\d{1,3}(?:\.\d{1,3}){1,6})\.(SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|Composi[çc][aã]o?)\s*(\w+(?:[-_]\w*)?)?\s+(.+?)\s*(M2|M3|UN|ML|KG|MÊS|KM|VB|CJ|SC|T|HA|H|L|M|m²|m³)\s*$/i;
 
+        const KNOWN_N2_SHORT = new Set([
+            'TETO', 'PISO', 'FORRO', 'SPDA', 'DADOS', 'VOZ',
+            'PAREDE', 'PORTA', 'VIGA', 'LAJE', 'MURO', 'VALA'
+        ]);
+
         const consumedLines = new Set<number>();
 
         for (let si = 0; si < limit - 2; si++) {
@@ -442,6 +447,37 @@ export function generateCandidatesStageA(text: string, options: {
                 }
             }
 
+            // ── P1 FIX: Known single-word N1 titles (FUNDAÇÃO, ESTRUTURA, etc.) ──
+            const KNOWN_N1_SINGLE_WORD = new Set([
+                'FUNDAÇÃO', 'FUNDACAO', 'ESTRUTURA', 'COBERTURA',
+                'URBANIZAÇÃO', 'URBANIZACAO', 'CLIMATIZAÇÃO', 'CLIMATIZACAO',
+                'IMPERMEABILIZAÇÃO', 'IMPERMEABILIZACAO', 'MARMORARIA',
+                'PINTURA', 'ALVENARIA', 'PAVIMENTAÇÃO', 'PAVIMENTACAO'
+            ]);
+
+            const _singleWordMatch = line.trim().match(/^(\d{1,3})\s+([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ]+)$/);
+            if (_singleWordMatch && KNOWN_N1_SINGLE_WORD.has(_singleWordMatch[2].toUpperCase())) {
+                candidates.push({
+                    id: generateShortId(),
+                    kind: 'synthetic_line',
+                    source: 'ocr_heuristic_v1',
+                    confidence: 0.85,
+                    line_no: originalLineNo,
+                    evidence: line,
+                    snippet: line,
+                    context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
+                    context_after: lines.slice(i + 1, Math.min(limit, i + 2)).join('\n'),
+                    extracted_signals: {
+                        item_path: _singleWordMatch[1],
+                        description_fragment: _singleWordMatch[2].trim(),
+                    },
+                    raw_numbers: [],
+                    warnings: ['section_title_candidate'],
+                    debug_heuristic: ['S_KNOWN_N1_SINGLE_WORD']
+                } as any);
+                continue;
+            }
+
             // ETAPA 0: Sempre testa título N1 PRIMEIRO, antes de qualquer outra verificação
             const matchSection = line.match(REGEX_SECTION_TITLE);
             if (matchSection) {
@@ -574,7 +610,10 @@ export function generateCandidatesStageA(text: string, options: {
                         // ── FIX: Problemas 2, 3 e 4 (Títulos N2 curtos ou isolados em colunas) ──
                         // Identifica "ESQUADRIAS", "SPDA", "METAIS E ACESSÓRIOS" colados após um N2 path.
                         // Estratégia sugerida: se a linha é MAIÚSCULAS, 3 a 30 chars, sem números.
-                        const isShortN2Title = /^[A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ \-]{2,29}$/.test(nextLine) && !/\d/.test(nextLine);
+                        const isShortN2Title = (
+                            /^[A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ \-]{2,29}$/.test(nextLine) ||
+                            KNOWN_N2_SHORT.has(nextLine.trim().toUpperCase())
+                        ) && !/\d/.test(nextLine);
                         if (isShortN2Title) {
                             const matchedPath = line.trim();
                             candidates.push({
@@ -1032,11 +1071,16 @@ export function generateCandidatesStageA(text: string, options: {
                 })
                 .filter(t => t.length > 10);
 
+            const _minLineNoN1 = _itemChildren
+                .map(c => c.line_no ?? 0)
+                .reduce((a, b) => Math.min(a, b), Infinity);
+
             _syntheticGroups.push({
                 id: generateShortId(),
                 kind: 'section_title' as any,
                 source: 'ocr_heuristic_v1',
                 confidence: 0.7,
+                line_no: _minLineNoN1 === Infinity ? undefined : _minLineNoN1,
                 evidence: `SYNTHETIC_GROUP ${key}`,
                 snippet: `SYNTHETIC_GROUP ${key}`,
                 context_before: '',
@@ -1080,11 +1124,16 @@ export function generateCandidatesStageA(text: string, options: {
                 .filter(t => t.length > 10);
 
             const fallback = `SUBGRUPO ${key}`;
+            const _minLineNoN2 = _itemChildren
+                .map(c => c.line_no ?? 0)
+                .reduce((a, b) => Math.min(a, b), Infinity);
+
             _syntheticGroups.push({
                 id: generateShortId(),
                 kind: 'section_title' as any,
                 source: 'ocr_heuristic_v1',
                 confidence: 0.65,
+                line_no: _minLineNoN2 === Infinity ? undefined : _minLineNoN2,
                 evidence: fallback,
                 snippet: fallback,
                 context_before: '',

@@ -240,10 +240,15 @@ EXTRACTION RULES:
     - Ignore the first line of context_after entirely for numeric extraction.
     - Use ONLY the remaining lines of context_after (after the first \\n) to find quantity,
       unit_price and total_price for the current item.
-    Example:
+    Example 1:
       context_after: "290,57 20,48\\nm² 3,15 651,96 2.567,09"
       → Ignore "290,57 20,48" (belongs to previous item)
       → Extract from "m² 3,15 651,96 2.567,09": unit="m²", quantity="3,15", unit_price="651,96"
+     Example 2 (CPU2636 pattern — unit_price from PREVIOUS item glued to context_after):
+       snippet: "CPU2636 Próprio PRESSURIZADOR PARA REDE HIDRANTE MAX PRESS 20E"
+       context_after: "2.829,28\\nUN 1,00 630,14 787,68 787,68 0,0278 %"
+       → Ignore "2.829,28" (that is the PREVIOUS item's total_price!)
+       → Extract from "UN 1,00 630,14 787,68": unit="UN", quantity="1,00", unit_price="630,14"
 
 15. **GHOST ITEMS — DEEP PATH WITHOUT VALUES (MANDATORY)**:
     If a candidate satisfies ALL of the following conditions simultaneously:
@@ -550,6 +555,31 @@ function generateStageBDedupKey(item: StageBItem): string {
 
     // Para itens normais, mantém a key original baseada em código+quantidade+preço
     return `${fullPath}|${clean(item.code)}|${clean(item.unit)}|${String(item.quantity ?? '')}|${String(item.unit_price ?? '')}`;
+}
+
+// ------------------------------------------------------------------
+// HELPER: Normalize Code (P4 — strip OCR noise from CPU codes)
+// ------------------------------------------------------------------
+function normalizeCode(raw: string | null | undefined): string | null {
+    if (!raw) return null;
+    let c = raw.trim().toUpperCase();
+    // Remove trailing OCR noise "P" from CPU codes: CPUXXXP → CPUXXX
+    c = c.replace(/^(CPU[A-Z0-9]+[A-Z0-9])P$/, '$1');
+    return c;
+}
+
+// ------------------------------------------------------------------
+// HELPER: Price Coherence Validation (P5)
+// ------------------------------------------------------------------
+function validatePriceCoherence(item: StageBItem): StageBItem {
+    const qty = parseFloat(String(item.quantity ?? '0').replace(',', '.'));
+    const up = parseFloat(String(item.unit_price ?? '0').replace(',', '.'));
+    const tp = parseFloat(String(item.total_price ?? '0').replace(',', '.'));
+    // If total_price ≈ unit_price (within 1%) and qty > 1, unit_price is likely wrong
+    if (qty > 1 && tp > 0 && up > 0 && Math.abs(up - tp) / tp < 0.01) {
+        item.warnings = [...(item.warnings || []), 'price_coherence_warning_up_equals_tp'];
+    }
+    return item;
 }
 
 // ------------------------------------------------------------------
@@ -954,7 +984,7 @@ ${JSON.stringify(candidatesContext, null, 2)}
                 const item: any = {
                     kind: raw.kind ?? "synthetic_item",
                     price_source: raw.price_source ?? null,
-                    code: raw.code ?? null,
+                    code: normalizeCode(raw.code),
                     description,
                     unit: raw.unit ?? null,
                     quantity: raw.quantity != null ? String(raw.quantity) : null,
@@ -998,7 +1028,7 @@ ${JSON.stringify(candidatesContext, null, 2)}
                         });
                         continue;
                     }
-                    validatedItems.push(safe.data);
+                    validatedItems.push(validatePriceCoherence(safe.data));
                 } else {
                     rejectedCount++;
                     const reason = safe.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', ');
@@ -1283,8 +1313,7 @@ export async function executeStageB(
     const mergeMap = new Map<string, StageBItem>();
     const allItems_merged: StageBItem[] = [];
     for (const item of allItems) {
-        const prefix = (item.item_path || '').split('.')[0];
-        const key = `${prefix}|${(item.code || '').trim().toUpperCase()}`;
+        const key = `${(item.item_path || '')}|${(item.code || '').trim().toUpperCase()}`;
         if (!item.code) {
             allItems_merged.push(item);
             continue;
@@ -1315,8 +1344,7 @@ export async function executeStageB(
     const qgbtSeen = new Set<string>();
     const deduped: StageBItem[] = [];
     for (const item of mergedResults) {
-        const prefix = (item.item_path || '').split('.')[0];
-        const key = `${prefix}|${(item.code || '').trim().toUpperCase()}|${item.quantity}|${item.unit_price}`;
+        const key = `${(item.item_path || '')}|${(item.code || '').trim().toUpperCase()}|${item.quantity}|${item.unit_price}`;
         if (item.code && qgbtSeen.has(key)) continue;
         if (item.code) qgbtSeen.add(key);
         deduped.push(item);
