@@ -65,6 +65,25 @@ Deno.serve(async (req) => {
             targetUserId = jobInfo.user_id;
         }
 
+        // Early return: job já foi finalizado anteriormente
+        const { data: jobCheck } = await adminClient
+            .from('import_jobs')
+            .select('result_budget_id, stage')
+            .eq('id', job_id)
+            .single();
+
+        if (jobCheck?.result_budget_id) {
+            if (!force_rehydrate) {
+                console.log(`[FinalizeBudget] Job já tem budget (${jobCheck.result_budget_id}, stage=${jobCheck.stage}), retornando existente.`);
+                return new Response(JSON.stringify({
+                    ok: true,
+                    budget_id: jobCheck.result_budget_id,
+                    already_finalized: true
+                }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+            console.log(`[FinalizeBudget] force_rehydrate=true, reconstruindo budget: ${jobCheck.result_budget_id}`);
+        }
+
         // GUARD: só finaliza se todos os batches foram processados
         const { data: batchGuardData } = await adminClient
             .from('import_files')
@@ -88,25 +107,6 @@ Deno.serve(async (req) => {
         }
 
         console.log(`[FinalizeBudget] GUARD PASSED: lastBatch=${lastBatch}, totalBatches=${totalBatches}`);
-
-        // Early return: job já foi finalizado anteriormente
-        const { data: jobCheck } = await adminClient
-            .from('import_jobs')
-            .select('result_budget_id, stage')
-            .eq('id', job_id)
-            .single();
-
-        if (jobCheck?.result_budget_id) {
-            if (!force_rehydrate) {
-                console.log(`[FinalizeBudget] Job já tem budget (${jobCheck.result_budget_id}, stage=${jobCheck.stage}), retornando existente.`);
-                return new Response(JSON.stringify({
-                    ok: true,
-                    budget_id: jobCheck.result_budget_id,
-                    already_finalized: true
-                }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-            }
-            console.log(`[FinalizeBudget] force_rehydrate=true, reconstruindo budget: ${jobCheck.result_budget_id}`);
-        }
 
 
         console.log(`[FinalizeBudget] Job: ${job_id} | Settings: ${uf}/${competence} | StructureV1: ${enable_structure_parser_v1}`);
