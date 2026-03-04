@@ -822,8 +822,21 @@ export function generateCandidatesStageA(text: string, options: {
                 for (let w = 0; w <= 3; w++) {
                     if (scanStart + w >= limit) break;
                     const nextL = lines[scanStart + w].trim();
-                    // S3-GUARD: não consumir linha que é título de seção N1
-                    if (REGEX_IS_SECTION_TITLE.test(nextL) || REGEX_SECTION_TITLE.test(nextL)) break;
+
+                    // S3-GUARD: não consumir linha que é título de seção N1, EXCETO a própria
+                    function extractSectionNumber(text: string): string | null {
+                        // Allow match to start directly with the number, e.g., "2FUNDAÇÃO" or "2 FUNDAÇÃO"
+                        const m = text.match(/^(\d+)[\s.A-Za-z]/);
+                        return m ? m[1] : null;
+                    }
+
+                    const nextLSectionNum = extractSectionNumber(nextL);
+                    const currentSectionNum = lastSectionPath ? lastSectionPath.split('.')[0] : null;
+
+                    if ((REGEX_IS_SECTION_TITLE.test(nextL) || REGEX_SECTION_TITLE.test(nextL))
+                        && (nextLSectionNum !== currentSectionNum)) {
+                        break;
+                    }
                     if (REGEX_UNIT.test(nextL)) foundUnit = true;
                     if (extractNumbers(nextL).length > 0) foundNum = true;
                     if (foundUnit || foundNum) lookaheadEvidence.push(nextL);
