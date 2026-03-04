@@ -443,8 +443,34 @@ export function generateCandidatesStageA(text: string, options: {
                         /^[A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇÄ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇÄ0-9 \\-\\/\.,]{2,60}$/.test(nextLineRAW) &&
                         !/^\\d+$/.test(nextLineRAW)
                     ) {
-                        line = line.trim() + ' ' + nextLineRAW;
-                        for (let k = i + 1; k <= nextIdx; k++) consumedLines.add(k);
+                        const matchedPath = line.trim();
+                        line = matchedPath + ' ' + nextLineRAW;
+
+                        candidates.push({
+                            id: generateShortId(),
+                            kind: 'synthetic_line' as any,
+                            source: 'ocr_heuristic_v1',
+                            confidence: 0.85,
+                            line_no: originalLineNo,
+                            evidence: line,
+                            snippet: line,
+                            context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
+                            context_after: lines.slice(nextIdx + 1, Math.min(limit, nextIdx + 2)).join('\n'),
+                            extracted_signals: {
+                                item_path: matchedPath,
+                                description_fragment: nextLineRAW
+                            },
+                            raw_numbers: [],
+                            warnings: ['section_title_candidate'],
+                            debug_heuristic: ['ST_N1_TWO_COL'],
+                            description: nextLineRAW,
+                            composition_code: null,
+                            category: 'section_title',
+                            level: matchedPath.split('.').filter(p => p !== '' && p !== '0').length
+                        } as any);
+
+                        for (let k = i; k <= nextIdx; k++) consumedLines.add(k);
+                        continue;
                     }
                 }
             }
@@ -634,7 +660,11 @@ export function generateCandidatesStageA(text: string, options: {
                                 },
                                 raw_numbers: [],
                                 warnings: ['section_title_candidate'],
-                                debug_heuristic: ['ST_SHORT_N2_TWO_COL']
+                                debug_heuristic: ['ST_SHORT_N2_TWO_COL'],
+                                description: nextLine,
+                                composition_code: null,
+                                category: 'section_title',
+                                level: matchedPath.split('.').filter(p => p !== '' && p !== '0').length
                             } as any);
                             for (let k = i; k <= nextIdx; k++) consumedLines.add(k);
                             continue; // Processado como título direto, pulamos avaliação S1/S2
