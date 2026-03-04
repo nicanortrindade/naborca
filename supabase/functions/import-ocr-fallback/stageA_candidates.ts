@@ -628,6 +628,7 @@ export function generateCandidatesStageA(text: string, options: {
                     /CPU\d{3,10}/i.test(_s1snippet) ||
                     /(?:SINAPI|ORSE|SBC|IOPES|EMOP|SEAP)\s*\d{4,6}/i.test(_s1snippet);
                 const _s1hasNumbers = /\d/.test(_s1desc);
+                const REGEX_N2_PREFIX = /^\d+\.\d+\s/;
                 const _s1isFragment =
                     !_s1hasCode &&
                     (
@@ -635,8 +636,8 @@ export function generateCandidatesStageA(text: string, options: {
                         /AF_\d{2}\/\d{4}\s*$/.test(_s1desc) ||
                         // b) começa com palavra de continuação típica de descrição partida
                         /^(MONTAGEM|INSTALAÇÃO|FORNECIMENTO|RESINADA|DESMONTAGEM|ASSENTAMENTO|APLICAÇÃO|EXECUÇÃO|LANÇAMENTO|ADENSAMENTO|ACABAMENTO|INCLUSIVE|INCLUINDO)\b/i.test(_s1desc) ||
-                        // c) fragmento muito curto (< 15 chars) sem nenhum número
-                        (_s1desc.length < 15 && !_s1hasNumbers)
+                        // c) fragmento muito curto (< 15 chars) sem nenhum número, EXCETO se for título com prefixo N2 numérico
+                        (_s1desc.length < 15 && !_s1hasNumbers && !REGEX_N2_PREFIX.test(_s1snippet))
                     );
                 if (_s1isFragment) {
                     if (DEBUG_P1) console.log('[S1-FRAGMENT-SKIP]', JSON.stringify({ desc: _s1desc.substring(0, 60), item_path: cand.extracted_signals?.item_path }));
