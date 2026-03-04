@@ -426,6 +426,22 @@ export function generateCandidatesStageA(text: string, options: {
             let line = lines[i].replace(/\r/g, '');
             const originalLineNo = mapOriginalLineNo[i];
 
+            // ── FIX: Problema 1 (Layout duas colunas para N1 isolado) ──
+            // Se a linha atual é apenas um número de seção N1 (ex: "2") e a próxima linha
+            // tem o texto do título (ex: "FUNDAÇÃO"), mesclamos antes de bater na ETAPA 0.
+            if (/^\s*\d{1,3}\s*$/.test(line)) {
+                let nextIdx = i + 1;
+                while (nextIdx < limit && lines[nextIdx].trim() === '') nextIdx++;
+                if (nextIdx < limit) {
+                    const nextLineRAW = lines[nextIdx].replace(/\r/g, '').trim();
+                    // Aceita título N1 (MAIÚSCULAS/letras predominantes) sem dígitos
+                    if (/^[A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ \-\/\.]{2,40}$/.test(nextLineRAW) && !/\d/.test(nextLineRAW)) {
+                        line = line.trim() + " " + nextLineRAW;
+                        for (let k = i + 1; k <= nextIdx; k++) consumedLines.add(k);
+                    }
+                }
+            }
+
             // ETAPA 0: Sempre testa título N1 PRIMEIRO, antes de qualquer outra verificação
             const matchSection = line.match(REGEX_SECTION_TITLE);
             if (matchSection) {
@@ -550,9 +566,38 @@ export function generateCandidatesStageA(text: string, options: {
                 if (nextIdx < limit) {
                     const nextLine = lines[nextIdx].replace(/\r/g, '').trim();
                     const REGEX_CODE_PREFIX_PEEK = /^(\d{4,10}|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)?/i;
+
                     if (REGEX_CODE_PREFIX_PEEK.test(nextLine)) {
                         line = line.trim() + ' ' + nextLine;
                         for (let k = i + 1; k <= nextIdx; k++) consumedLines.add(k);
+                    } else {
+                        // ── FIX: Problemas 2, 3 e 4 (Títulos N2 curtos ou isolados em colunas) ──
+                        // Identifica "ESQUADRIAS", "SPDA", "METAIS E ACESSÓRIOS" colados após um N2 path.
+                        // Estratégia sugerida: se a linha é MAIÚSCULAS, 3 a 30 chars, sem números.
+                        const isShortN2Title = /^[A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ \-]{2,29}$/.test(nextLine) && !/\d/.test(nextLine);
+                        if (isShortN2Title) {
+                            const matchedPath = line.trim();
+                            candidates.push({
+                                id: generateShortId(),
+                                kind: 'synthetic_line' as any,
+                                source: 'ocr_heuristic_v1',
+                                confidence: 0.8,
+                                line_no: originalLineNo,
+                                evidence: matchedPath + " " + nextLine,
+                                snippet: matchedPath + " " + nextLine,
+                                context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
+                                context_after: lines.slice(nextIdx + 1, Math.min(limit, nextIdx + 2)).join('\n'),
+                                extracted_signals: {
+                                    item_path: matchedPath,
+                                    description_fragment: nextLine
+                                },
+                                raw_numbers: [],
+                                warnings: ['section_title_candidate'],
+                                debug_heuristic: ['ST_SHORT_N2_TWO_COL']
+                            } as any);
+                            for (let k = i; k <= nextIdx; k++) consumedLines.add(k);
+                            continue; // Processado como título direto, pulamos avaliação S1/S2
+                        }
                     }
                 }
             }
