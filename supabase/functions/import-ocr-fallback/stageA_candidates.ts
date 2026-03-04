@@ -1018,14 +1018,6 @@ export function generateCandidatesStageA(text: string, options: {
         for (const key of _allN2Keys) {
             if (_existingTitlePaths.has(key)) continue;
 
-            // Skip if any direct child at N3 level has NO composition_code
-            const _n3Children = candidates.filter(c => {
-                const p = c.extracted_signals?.item_path || '';
-                const parts = p.split('.');
-                return parts.length === 3 && p.startsWith(key + '.') && !c.extracted_signals?.code;
-            });
-            if (_n3Children.length > 0) continue;
-
             const _itemChildren = candidates.filter(c => {
                 const p = c.extracted_signals?.item_path || '';
                 return p.startsWith(key + '.') && !!c.extracted_signals?.code;
