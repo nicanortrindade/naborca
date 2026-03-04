@@ -1339,9 +1339,14 @@ serve(async (req: Request) => {
                     }
                 }
             } else {
+                // Batches incompletos: marca retryable para que o retry-sweep
+                // continue o Stage B a partir do próximo lote (resume via checkpoint)
                 await supabase.from("import_jobs").update({
                     progress: Math.min(99, Math.round(((lastPersistedBatch + 1) / totalBatches) * 100)),
-                    heartbeat_at: new Date().toISOString()
+                    heartbeat_at: new Date().toISOString(),
+                    extraction_retryable: true,
+                    extraction_last_reason: 'stage_b_incomplete_batches',
+                    extraction_next_retry_at: new Date(Date.now() + 30000).toISOString()
                 }).eq("id", job_id);
             }
 
