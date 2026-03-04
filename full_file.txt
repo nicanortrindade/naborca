@@ -282,11 +282,6 @@ export function generateCandidatesStageA(text: string, options: {
         // Ex: "1.2.0.0.1.ComposiçãoKENNE011Administração local da obraMÊS"
         const REGEX_S0B_FULL = /^(\d{1,3}(?:\.\d{1,3}){1,6})\.(SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|Composi[çc][aã]o?)\s*(\w+(?:[-_]\w*)?)?\s+(.+?)\s*(M2|M3|UN|ML|KG|MÊS|KM|VB|CJ|SC|T|HA|H|L|M|m²|m³)\s*$/i;
 
-        const KNOWN_N2_SHORT = new Set([
-            'TETO', 'PISO', 'FORRO', 'SPDA', 'DADOS', 'VOZ',
-            'PAREDE', 'PORTA', 'VIGA', 'LAJE', 'MURO', 'VALA'
-        ]);
-
         const consumedLines = new Set<number>();
 
         for (let si = 0; si < limit - 2; si++) {
@@ -431,55 +426,6 @@ export function generateCandidatesStageA(text: string, options: {
             let line = lines[i].replace(/\r/g, '');
             const originalLineNo = mapOriginalLineNo[i];
 
-            // ── FIX: Problema 1 (Layout duas colunas para N1 isolado) ──
-            // Se a linha atual é apenas um número de seção N1 (ex: "2") e a próxima linha
-            // tem o texto do título (ex: "FUNDAÇÃO"), mesclamos antes de bater na ETAPA 0.
-            if (/^\\s*\\d{1,3}\\s*$/.test(line)) {
-                let nextIdx = i + 1;
-                while (nextIdx < limit && lines[nextIdx].trim() === '') nextIdx++;
-                if (nextIdx < limit) {
-                    const nextLineRAW = lines[nextIdx].replace(/\\r/g, '').trim();
-                    if (
-                        /^[A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇÄ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇÄ0-9 \\-\\/\.,]{2,60}$/.test(nextLineRAW) &&
-                        !/^\\d+$/.test(nextLineRAW)
-                    ) {
-                        line = line.trim() + ' ' + nextLineRAW;
-                        for (let k = i + 1; k <= nextIdx; k++) consumedLines.add(k);
-                    }
-                }
-            }
-
-            // ── P1 FIX: Known single-word N1 titles (FUNDAÇÃO, ESTRUTURA, etc.) ──
-            const KNOWN_N1_SINGLE_WORD = new Set([
-                'FUNDAÇÃO', 'FUNDACAO', 'ESTRUTURA', 'COBERTURA',
-                'URBANIZAÇÃO', 'URBANIZACAO', 'CLIMATIZAÇÃO', 'CLIMATIZACAO',
-                'IMPERMEABILIZAÇÃO', 'IMPERMEABILIZACAO', 'MARMORARIA',
-                'PINTURA', 'ALVENARIA', 'PAVIMENTAÇÃO', 'PAVIMENTACAO'
-            ]);
-
-            const _singleWordMatch = line.trim().match(/^(\d{1,3})\s+([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ]+)$/);
-            if (_singleWordMatch && KNOWN_N1_SINGLE_WORD.has(_singleWordMatch[2].toUpperCase())) {
-                candidates.push({
-                    id: generateShortId(),
-                    kind: 'synthetic_line',
-                    source: 'ocr_heuristic_v1',
-                    confidence: 0.85,
-                    line_no: originalLineNo,
-                    evidence: line,
-                    snippet: line,
-                    context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
-                    context_after: lines.slice(i + 1, Math.min(limit, i + 2)).join('\n'),
-                    extracted_signals: {
-                        item_path: _singleWordMatch[1],
-                        description_fragment: _singleWordMatch[2].trim(),
-                    },
-                    raw_numbers: [],
-                    warnings: ['section_title_candidate'],
-                    debug_heuristic: ['S_KNOWN_N1_SINGLE_WORD']
-                } as any);
-                continue;
-            }
-
             // ETAPA 0: Sempre testa título N1 PRIMEIRO, antes de qualquer outra verificação
             const matchSection = line.match(REGEX_SECTION_TITLE);
             if (matchSection) {
@@ -604,41 +550,9 @@ export function generateCandidatesStageA(text: string, options: {
                 if (nextIdx < limit) {
                     const nextLine = lines[nextIdx].replace(/\r/g, '').trim();
                     const REGEX_CODE_PREFIX_PEEK = /^(\d{4,10}|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)?/i;
-
                     if (REGEX_CODE_PREFIX_PEEK.test(nextLine)) {
                         line = line.trim() + ' ' + nextLine;
                         for (let k = i + 1; k <= nextIdx; k++) consumedLines.add(k);
-                    } else {
-                        // ── FIX: Problemas 2, 3 e 4 (Títulos N2 curtos ou isolados em colunas) ──
-                        // Identifica "ESQUADRIAS", "SPDA", "METAIS E ACESSÓRIOS" colados após um N2 path.
-                        // Estratégia sugerida: se a linha é MAIÚSCULAS, 3 a 30 chars, sem números.
-                        const isShortN2Title = (
-                            /^[A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ0-9 \\-\\/\.,]{2,40}$/.test(nextLine) ||
-                            KNOWN_N2_SHORT.has(nextLine.trim().toUpperCase())
-                        ) && !/^\\d+$/.test(nextLine);
-                        if (isShortN2Title) {
-                            const matchedPath = line.trim();
-                            candidates.push({
-                                id: generateShortId(),
-                                kind: 'synthetic_line' as any,
-                                source: 'ocr_heuristic_v1',
-                                confidence: 0.8,
-                                line_no: originalLineNo,
-                                evidence: matchedPath + " " + nextLine,
-                                snippet: matchedPath + " " + nextLine,
-                                context_before: lines.slice(Math.max(0, i - 1), i).join('\n'),
-                                context_after: lines.slice(nextIdx + 1, Math.min(limit, nextIdx + 2)).join('\n'),
-                                extracted_signals: {
-                                    item_path: matchedPath,
-                                    description_fragment: nextLine
-                                },
-                                raw_numbers: [],
-                                warnings: ['section_title_candidate'],
-                                debug_heuristic: ['ST_SHORT_N2_TWO_COL']
-                            } as any);
-                            for (let k = i; k <= nextIdx; k++) consumedLines.add(k);
-                            continue; // Processado como título direto, pulamos avaliação S1/S2
-                        }
                     }
                 }
             }
@@ -917,7 +831,7 @@ export function generateCandidatesStageA(text: string, options: {
                     }
 
                     const nextLSectionNum = extractSectionNumber(nextL);
-                    const currentSectionNum = extractSectionNumber(line) || (lastSectionPath ? lastSectionPath.split('.')[0] : null);
+                    const currentSectionNum = lastSectionPath ? lastSectionPath.split('.')[0] : null;
 
                     if ((REGEX_IS_SECTION_TITLE.test(nextL) || REGEX_SECTION_TITLE.test(nextL))
                         && (nextLSectionNum !== currentSectionNum)) {
@@ -1073,16 +987,11 @@ export function generateCandidatesStageA(text: string, options: {
                 })
                 .filter(t => t.length > 10);
 
-            const _minLineNoN1 = _itemChildren
-                .map(c => c.line_no ?? 0)
-                .reduce((a, b) => Math.min(a, b), Infinity);
-
             _syntheticGroups.push({
                 id: generateShortId(),
                 kind: 'section_title' as any,
                 source: 'ocr_heuristic_v1',
                 confidence: 0.7,
-                line_no: _minLineNoN1 === Infinity ? undefined : _minLineNoN1,
                 evidence: `SYNTHETIC_GROUP ${key}`,
                 snippet: `SYNTHETIC_GROUP ${key}`,
                 context_before: '',
@@ -1094,59 +1003,6 @@ export function generateCandidatesStageA(text: string, options: {
                 raw_numbers: [],
                 warnings: ['section_title_candidate', 'synthetic_group_inferred'],
                 debug_heuristic: ['ST_SYNTHETIC_GROUP']
-            });
-        }
-
-        // Collect and generate N2 keys
-        const _allN2Keys = new Set<string>();
-        for (const c of candidates) {
-            const p = c.extracted_signals?.item_path;
-            if (!p) continue;
-            const parts = p.split('.');
-            if (parts.length >= 2) _allN2Keys.add(`${parts[0]}.${parts[1]}`);
-        }
-
-        for (const key of _allN2Keys) {
-            if (_existingTitlePaths.has(key)) continue;
-
-            const _itemChildren = candidates.filter(c => {
-                const p = c.extracted_signals?.item_path || '';
-                return p.startsWith(key + '.') && !!c.extracted_signals?.code;
-            });
-            if (_itemChildren.length === 0) continue;
-
-            const _childDescs = _itemChildren
-                .slice(0, 3)
-                .map(c => {
-                    const desc = (c.extracted_signals?.description_fragment as string | undefined)
-                        ?? c.snippet
-                        ?? '';
-                    return desc.replace(/^\s*\d+(\.\d+)*\s+/, '').replace(/^[A-Z0-9]{3,10}\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP)?\s*/i, '').trim();
-                })
-                .filter(t => t.length > 10);
-
-            const fallback = `SUBGRUPO ${key}`;
-            const _minLineNoN2 = _itemChildren
-                .map(c => c.line_no ?? 0)
-                .reduce((a, b) => Math.min(a, b), Infinity);
-
-            _syntheticGroups.push({
-                id: generateShortId(),
-                kind: 'section_title' as any,
-                source: 'ocr_heuristic_v1',
-                confidence: 0.65,
-                line_no: _minLineNoN2 === Infinity ? undefined : _minLineNoN2,
-                evidence: fallback,
-                snippet: fallback,
-                context_before: '',
-                context_after: _childDescs.join('\n'),
-                extracted_signals: {
-                    item_path: key,
-                    code: undefined
-                },
-                raw_numbers: [],
-                warnings: ['section_title_candidate', 'synthetic_group_inferred'],
-                debug_heuristic: ['ST_SYNTHETIC_GROUP_N2']
             });
         }
 
