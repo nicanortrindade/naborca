@@ -831,7 +831,7 @@ export function generateCandidatesStageA(text: string, options: {
                     }
 
                     const nextLSectionNum = extractSectionNumber(nextL);
-                    const currentSectionNum = lastSectionPath ? lastSectionPath.split('.')[0] : null;
+                    const currentSectionNum = extractSectionNumber(line) || (lastSectionPath ? lastSectionPath.split('.')[0] : null);
 
                     if ((REGEX_IS_SECTION_TITLE.test(nextL) || REGEX_SECTION_TITLE.test(nextL))
                         && (nextLSectionNum !== currentSectionNum)) {
