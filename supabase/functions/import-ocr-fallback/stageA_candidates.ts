@@ -153,7 +153,7 @@ export function detectDocTypeHints(text: string, fileMeta?: any): StageAResult['
 const REGEX_ITEM_PATH = /^\s*(\d{1,3}(?:\.\d{1,3}){1,6})\s*(.{5,})$/;
 // Captura: "1SERVIÇOS PRELIMINARES E INDIRETOS185.303,28" ou "1 SERVIÇOS..."
 // Remove o total financeiro colado no final (ex: 185.303,28)
-const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s*([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-()\.\°"']{3,})(?:\s*[\d.,]+\s*%?\s*)*$/;
+const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s*([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-()\.\°"']{3,})(?:[\s\d.,]+%?\s*)*$/;
 const REGEX_CODE_START = /^(\d{4,10}|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/; // "94321 Description" or "CPU123 Desc" or "2451 Desc"
 const REGEX_UNIT = /\b(UN|und|m²|m2|m³|m3|kg|h|vb|m)\b/i;
 const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\d{1,4})?\b/g; // 1.234,56 or 1234.56
