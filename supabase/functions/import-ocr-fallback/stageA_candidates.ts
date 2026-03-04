@@ -1006,6 +1006,62 @@ export function generateCandidatesStageA(text: string, options: {
             });
         }
 
+        // Collect and generate N2 keys
+        const _allN2Keys = new Set<string>();
+        for (const c of candidates) {
+            const p = c.extracted_signals?.item_path;
+            if (!p) continue;
+            const parts = p.split('.');
+            if (parts.length >= 2) _allN2Keys.add(`${parts[0]}.${parts[1]}`);
+        }
+
+        for (const key of _allN2Keys) {
+            if (_existingTitlePaths.has(key)) continue;
+
+            // Skip if any direct child at N3 level has NO composition_code
+            const _n3Children = candidates.filter(c => {
+                const p = c.extracted_signals?.item_path || '';
+                const parts = p.split('.');
+                return parts.length === 3 && p.startsWith(key + '.') && !c.extracted_signals?.code;
+            });
+            if (_n3Children.length > 0) continue;
+
+            const _itemChildren = candidates.filter(c => {
+                const p = c.extracted_signals?.item_path || '';
+                return p.startsWith(key + '.') && !!c.extracted_signals?.code;
+            });
+            if (_itemChildren.length === 0) continue;
+
+            const _childDescs = _itemChildren
+                .slice(0, 3)
+                .map(c => {
+                    const desc = (c.extracted_signals?.description_fragment as string | undefined)
+                        ?? c.snippet
+                        ?? '';
+                    return desc.replace(/^\s*\d+(\.\d+)*\s+/, '').replace(/^[A-Z0-9]{3,10}\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP)?\s*/i, '').trim();
+                })
+                .filter(t => t.length > 10);
+
+            const fallback = `SUBGRUPO ${key}`;
+            _syntheticGroups.push({
+                id: generateShortId(),
+                kind: 'section_title' as any,
+                source: 'ocr_heuristic_v1',
+                confidence: 0.65,
+                evidence: fallback,
+                snippet: fallback,
+                context_before: '',
+                context_after: _childDescs.join('\n'),
+                extracted_signals: {
+                    item_path: key,
+                    code: undefined
+                },
+                raw_numbers: [],
+                warnings: ['section_title_candidate', 'synthetic_group_inferred'],
+                debug_heuristic: ['ST_SYNTHETIC_GROUP_N2']
+            });
+        }
+
         candidates.unshift(..._syntheticGroups);
     }
 
