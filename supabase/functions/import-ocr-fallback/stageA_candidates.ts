@@ -1,4 +1,4 @@
-
+﻿
 // ------------------------------------------------------------------
 // STAGE A: Deterministic Candidate Generation (Heuristics)
 // ------------------------------------------------------------------
@@ -434,14 +434,14 @@ export function generateCandidatesStageA(text: string, options: {
             // ── FIX: Problema 1 (Layout duas colunas para N1 isolado) ──
             // Se a linha atual é apenas um número de seção N1 (ex: "2") e a próxima linha
             // tem o texto do título (ex: "FUNDAÇÃO"), mesclamos antes de bater na ETAPA 0.
-            if (/^\\s*\\d{1,3}\\s*$/.test(line)) {
+            if (/^\s*\d{1,3}\s*$/.test(line)) {
                 let nextIdx = i + 1;
                 while (nextIdx < limit && lines[nextIdx].trim() === '') nextIdx++;
                 if (nextIdx < limit) {
-                    const nextLineRAW = lines[nextIdx].replace(/\\r/g, '').trim();
+                    const nextLineRAW = lines[nextIdx].replace(/\r/g, '').trim();
                     if (
-                        /^[A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇÄ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇÄ0-9 \\-\\/\.,]{2,60}$/.test(nextLineRAW) &&
-                        !/^\\d+$/.test(nextLineRAW)
+                        /^[A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇÄ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇÄ0-9 \-\/\.,]{2,60}$/.test(nextLineRAW) &&
+                        !/^\d+$/.test(nextLineRAW)
                     ) {
                         const matchedPath = line.trim();
                         line = matchedPath + ' ' + nextLineRAW;
@@ -639,9 +639,9 @@ export function generateCandidatesStageA(text: string, options: {
                         // Identifica "ESQUADRIAS", "SPDA", "METAIS E ACESSÓRIOS" colados após um N2 path.
                         // Estratégia sugerida: se a linha é MAIÚSCULAS, 3 a 30 chars, sem números.
                         const isShortN2Title = (
-                            /^[A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ0-9 \\-\\/\.,]{2,40}$/.test(nextLine) ||
+                            /^[A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ0-9 \-\/\.,]{2,40}$/.test(nextLine) ||
                             KNOWN_N2_SHORT.has(nextLine.trim().toUpperCase())
-                        ) && !/^\\d+$/.test(nextLine);
+                        ) && !/^\d+$/.test(nextLine);
                         if (isShortN2Title) {
                             const matchedPath = line.trim();
                             candidates.push({
