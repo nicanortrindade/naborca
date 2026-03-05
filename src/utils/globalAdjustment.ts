@@ -104,7 +104,8 @@ export function getAdjustedItemValues(
 
     const newBaseUnit = item.unitPrice * factor;
     const bdiMultiplier = 1 + (bdiPercent / 100);
-    const newFinalUnit = newBaseUnit * bdiMultiplier * factors.bdiFactor;
+    // C5: arredondar o unitário ANTES de multiplicar por quantidade (padrão dos PDFs de licitação)
+    const newFinalUnit = Math.round(newBaseUnit * bdiMultiplier * factors.bdiFactor * 100) / 100;
 
     return {
         unitPrice: newBaseUnit,
