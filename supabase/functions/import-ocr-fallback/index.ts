@@ -867,6 +867,20 @@ serve(async (req: Request) => {
                                                             derivedLevel = Math.min(Math.max(pathDepth, 1), 3);
                                                         }
 
+                                                        // Flag P6/P8: ratio total / (quantity * unit_price) muito diferente de 1.0
+                                                        const pQuantity = parseNum(item.quantity) || null;
+                                                        const pUnitPrice = parseNum(item.unit_price) || null;
+                                                        const pTotal = parseNum(item.total_price || item.total) || null;
+                                                        const ratio = pTotal && pQuantity && pUnitPrice
+                                                            ? pTotal / (pQuantity * pUnitPrice)
+                                                            : 1.0;
+                                                        const isPriceSuspicious = ratio < 0.8 || ratio > 1.2;
+
+                                                        const warningsArr = item.warnings ? [...item.warnings] : [];
+                                                        if (isPriceSuspicious) {
+                                                            warningsArr.push('price_column_misalign_suspected');
+                                                        }
+
                                                         return {
                                                             job_id: job_id,
                                                             import_file_id: file.id,
@@ -874,9 +888,9 @@ serve(async (req: Request) => {
 
                                                             description: item.description,
                                                             unit: item.unit,
-                                                            quantity: parseNum(item.quantity),
-                                                            unit_price: parseNum(item.unit_price),
-                                                            total: parseNum(item.total_price || item.total),
+                                                            quantity: pQuantity,
+                                                            unit_price: pUnitPrice,
+                                                            total: pTotal,
 
                                                             category: item.kind || 'stage_b_item',
                                                             raw_line: rawLine ? rawLine.substring(0, 1000) : null,
@@ -884,10 +898,11 @@ serve(async (req: Request) => {
                                                             level: derivedLevel,
                                                             chunk_index: batchIndex,
                                                             composition_code: item.code || null,
-                                                            price_source: item.price_source || null,
+                                                            price_source: isPriceSuspicious ? 'NEEDS_REVIEW' : (item.price_source || null),
                                                             dedup_key: dedupKey,
                                                             item_path: item.item_path || null,                        // NOVO
-                                                            source_candidate_id: item.evidence?.candidate_id || null  // NOVO
+                                                            source_candidate_id: item.evidence?.candidate_id || null, // NOVO
+                                                            warnings: warningsArr.length > 0 ? warningsArr : null
                                                         };
                                                     })
                                                 );
@@ -928,7 +943,27 @@ serve(async (req: Request) => {
                                                         }
                                                     }
                                                 }
-                                                const uniqueDbItems = Array.from(dedupedByPath.values());
+
+                                                // Dedup cross-section: remove itens com mesmo code+quantity+unit_price
+                                                // que já existem em outra seção do mesmo job (mesmo nível de path raiz)
+                                                const crossSectionSeen = new Map<string, boolean>();
+                                                const dedupedCrossSection = Array.from(dedupedByPath.values()).filter(item => {
+                                                    if (!item.composition_code || !item.quantity || !item.unit_price) return true;
+                                                    const xKey = `${item.composition_code}|${item.quantity}|${item.unit_price}`;
+                                                    if (crossSectionSeen.has(xKey)) {
+                                                        console.log('[DEDUP-CROSS-SECTION]', JSON.stringify({
+                                                            code: item.composition_code,
+                                                            item_path: item.item_path,
+                                                            quantity: item.quantity,
+                                                            unit_price: item.unit_price,
+                                                        }));
+                                                        return false;
+                                                    }
+                                                    crossSectionSeen.set(xKey, true);
+                                                    return true;
+                                                });
+
+                                                const uniqueDbItems = dedupedCrossSection;
 
                                                 console.log("[STAGE-B-DB-ATTEMPT] (Incremental)", {
                                                     file_id: file.id,
