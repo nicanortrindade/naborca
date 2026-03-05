@@ -1013,7 +1013,6 @@ ${JSON.stringify(candidatesContext, null, 2)}
                     const FRAGMENT_PATTERN = /^(M|KG|UN|M²|M³|M2|M3|MÊS|MES|UNXMÊS|UNXMES|H|ML)$/i;
                     const isFragment = !safe.data.code &&
                         (!safe.data.description ||
-                            safe.data.description.trim().length < 10 ||
                             FRAGMENT_PATTERN.test(safe.data.description.trim()));
                     if (isFragment) {
                         rejectedCount++;

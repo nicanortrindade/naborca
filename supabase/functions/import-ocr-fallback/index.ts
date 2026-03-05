@@ -893,9 +893,15 @@ serve(async (req: Request) => {
                                                 );
 
                                                 // Filtrar itens sem item_path E sem composition_code — são lixo de página
-                                                const filteredItems = dbItems.filter(item =>
-                                                    item.composition_code !== null || item.item_path !== null
-                                                );
+                                                const filteredItems = dbItems.filter(item => {
+                                                    if (item.composition_code !== null || item.item_path !== null) return true;
+                                                    if (item.category === 'section_title') return true;
+                                                    console.log('[FILTER-DISCARD]', JSON.stringify({
+                                                        description: (item.description || '').substring(0, 60),
+                                                        category: item.category,
+                                                    }));
+                                                    return false;
+                                                });
 
                                                 // Deduplica por dedup_key — mantém última ocorrência (caso LLM retorne descrições repetidas no mesmo batch)
                                                 const deduped = new Map<string, typeof filteredItems[0]>();
