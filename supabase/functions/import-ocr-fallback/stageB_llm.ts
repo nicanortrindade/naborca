@@ -956,6 +956,25 @@ ${JSON.stringify(candidatesContext, null, 2)}
         const parsedItems = await callLLMWithRetry(candidatesContext, userPrompt);
         rawOutputTruncated = "Output returned via recursive retry";
 
+        // Detectar itens adjacentes com códigos sequenciais e valores idênticos
+        if (parsedItems && Array.isArray(parsedItems)) {
+            for (let i = 1; i < parsedItems.length; i++) {
+                const prev = parsedItems[i - 1];
+                const curr = parsedItems[i];
+                if (
+                    prev.code && curr.code &&
+                    !isNaN(Number(prev.code)) &&
+                    !isNaN(Number(curr.code)) &&
+                    Math.abs(Number(curr.code) - Number(prev.code)) === 1 &&
+                    prev.quantity === curr.quantity &&
+                    prev.unit_price === curr.unit_price
+                ) {
+                    curr.warnings = [...(curr.warnings || []), 'possible_duplication_from_adjacent_item'];
+                    curr.price_source = 'NEEDS_REVIEW';
+                }
+            }
+        }
+
         const validatedItems: StageBItem[] = [];
         let rejectedCount = 0;
         const rejectedItems: RejectedItem[] = [];

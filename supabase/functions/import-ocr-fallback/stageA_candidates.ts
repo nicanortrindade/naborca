@@ -170,6 +170,13 @@ const REGEX_PROJECT_TITLE_WITH_DATE_PCT = /\d{2}\/\d{2}\/\d{4}.*%|%.*\d{2}\/\d{2
 // Padrão: começa com 1-2 dígitos (sem ponto), seguidos de texto maiúsculo (5+ chars), terminando com números colados
 const REGEX_SECTION_TOTAL = /^\d{1,2}[A-ZÀÁÂÃÉÊÍÓÔÕÚÜÇ][A-ZÀÁÂÃÉÊÍÓÔÕÚÜÇ ]{4,}\d/;
 
+const KNOWN_N1_SINGLE_WORD = new Set([
+    'FUNDAÇÃO', 'FUNDACAO', 'ESTRUTURA', 'COBERTURA',
+    'URBANIZAÇÃO', 'URBANIZACAO', 'CLIMATIZAÇÃO', 'CLIMATIZACAO',
+    'IMPERMEABILIZAÇÃO', 'IMPERMEABILIZACAO', 'MARMORARIA',
+    'PINTURA', 'ALVENARIA', 'PAVIMENTAÇÃO', 'PAVIMENTACAO'
+]);
+
 const DEBUG_P1 = false; // flag de debug desativada em produção
 const STOP_WORDS_RE = /^(TOTAL\s*(SEM|COM)\s*BDI|TOTAL\s*GERAL|SUBTOTAL|^TOTAL$)/i;
 
@@ -226,8 +233,17 @@ export function generateCandidatesStageA(text: string, options: {
             }
             // Guard: descarta totais de seção (dígito colado em texto maiúsculo + número)
             if (REGEX_SECTION_TOTAL.test(snippet) && !item.warnings?.includes('section_title_candidate')) {
-                if (DEBUG_P1) console.log('[P1-TOTAL-SKIP]', JSON.stringify({ line: snippet.substring(0, 80) }));
-                continue;
+                const possibleTitle = snippet.replace(/^\d{1,2}/, '').replace(/[\d.,]+$/, '').trim();
+                if (KNOWN_N1_SINGLE_WORD.has(possibleTitle.toUpperCase())) {
+                    item.warnings = [...(item.warnings || []), 'section_title_candidate'];
+                    item.extracted_signals = {
+                        ...item.extracted_signals,
+                        description_fragment: possibleTitle
+                    };
+                } else {
+                    if (DEBUG_P1) console.log('[P1-TOTAL-SKIP]', JSON.stringify({ line: snippet.substring(0, 80) }));
+                    continue;
+                }
             }
             if (STOP_WORDS_RE.test(desc.trim()) || STOP_WORDS_RE.test(snippet.trim())) {
                 if (DEBUG_P1) console.log('[P1-STOPWORD-SKIP]', JSON.stringify({ line: snippet.substring(0, 80) }));
@@ -284,7 +300,11 @@ export function generateCandidatesStageA(text: string, options: {
 
         const KNOWN_N2_SHORT = new Set([
             'TETO', 'PISO', 'FORRO', 'SPDA', 'DADOS', 'VOZ',
-            'PAREDE', 'PORTA', 'VIGA', 'LAJE', 'MURO', 'VALA'
+            'PAREDE', 'PORTA', 'VIGA', 'LAJE', 'MURO', 'VALA',
+            'ILUMINAÇÃO', 'ILUMINACAO', 'HIDRÁULICA', 'HIDRAULICA',
+            'SANITÁRIA', 'SANITARIA', 'PLUVIAL', 'INFRAESTRUTURA',
+            'EQUIPAMENTOS', 'COMPLEMENTOS', 'ACESSÓRIOS', 'ACESSORIOS',
+            'PAISAGISMO', 'SINALIZAÇÃO', 'SINALIZACAO'
         ]);
 
         const consumedLines = new Set<number>();
@@ -476,12 +496,7 @@ export function generateCandidatesStageA(text: string, options: {
             }
 
             // ── P1 FIX: Known single-word N1 titles (FUNDAÇÃO, ESTRUTURA, etc.) ──
-            const KNOWN_N1_SINGLE_WORD = new Set([
-                'FUNDAÇÃO', 'FUNDACAO', 'ESTRUTURA', 'COBERTURA',
-                'URBANIZAÇÃO', 'URBANIZACAO', 'CLIMATIZAÇÃO', 'CLIMATIZACAO',
-                'IMPERMEABILIZAÇÃO', 'IMPERMEABILIZACAO', 'MARMORARIA',
-                'PINTURA', 'ALVENARIA', 'PAVIMENTAÇÃO', 'PAVIMENTACAO'
-            ]);
+
 
             const _singleWordMatch = line.trim().match(/^(\d{1,3})\s+([A-ZÀÁÂÃÉÊÍÓÔÕÚÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ]+)$/);
             if (_singleWordMatch && KNOWN_N1_SINGLE_WORD.has(_singleWordMatch[2].toUpperCase())) {
