@@ -119,6 +119,260 @@ function normalizeResource(res: any, kind: ResourceKind): NormalizedResource {
     };
 }
 
+interface EncargosSubitem {
+    label: string;
+    horista: number;
+    mensalista: number;
+    enabled?: boolean;
+    tooltip?: string;
+    readonly?: boolean;
+}
+
+interface EncargosGrupoA {
+    a1_inss: EncargosSubitem;
+    a2_sesi: EncargosSubitem;
+    a3_senai: EncargosSubitem;
+    a4_incra: EncargosSubitem;
+    a5_sebrae: EncargosSubitem;
+    a6_salario_educacao: EncargosSubitem;
+    a7_seguro_acidente: EncargosSubitem;
+    a8_fgts: EncargosSubitem;
+    a9_seconci: EncargosSubitem;
+}
+
+interface EncargosGrupoB {
+    b1_repouso_semanal: EncargosSubitem;
+    b2_feriados: EncargosSubitem;
+    b3_auxilio_enfermidade: EncargosSubitem;
+    b4_decimo_terceiro: EncargosSubitem;
+    b5_licenca_paternidade: EncargosSubitem;
+    b6_faltas_justificadas: EncargosSubitem;
+    b7_dias_chuva: EncargosSubitem;
+    b8_auxilio_acidente: EncargosSubitem;
+    b9_ferias_gozadas: EncargosSubitem;
+    b10_salario_maternidade: EncargosSubitem;
+}
+
+interface EncargosGrupoC {
+    c1_aviso_previo_indenizado: EncargosSubitem;
+    c2_aviso_previo_trabalhado: EncargosSubitem;
+    c3_ferias_indenizadas: EncargosSubitem;
+    c4_deposito_rescisao: EncargosSubitem;
+    c5_indenizacao_adicional: EncargosSubitem;
+}
+
+interface EncargosBaseDetalhada {
+    id: string;
+    nome: string;
+    fonte: string;
+    referencia: string;
+    regime: 'desonerado' | 'nao_desonerado';
+    grupo_a: EncargosGrupoA;
+    grupo_b: EncargosGrupoB;
+    grupo_c: EncargosGrupoC;
+}
+
+const ENCARGOS_BASES_DETALHADAS: EncargosBaseDetalhada[] = [
+    {
+        id: 'sinapi_nao_desonerado',
+        nome: 'SINAPI Federal (Não Desonerado)',
+        fonte: 'SINAPI/IBGE',
+        referencia: 'JAN/2025',
+        regime: 'nao_desonerado',
+        grupo_a: {
+            a1_inss: { label: 'INSS', horista: 20.00, mensalista: 20.00 },
+            a2_sesi: { label: 'SESI', horista: 1.50, mensalista: 1.50 },
+            a3_senai: { label: 'SENAI', horista: 1.00, mensalista: 1.00 },
+            a4_incra: { label: 'INCRA', horista: 0.20, mensalista: 0.20 },
+            a5_sebrae: { label: 'SEBRAE', horista: 0.60, mensalista: 0.60 },
+            a6_salario_educacao: { label: 'Salário Educação', horista: 2.50, mensalista: 2.50 },
+            a7_seguro_acidente: { label: 'Seguro Contra Acidentes (SAT)', horista: 3.00, mensalista: 3.00 },
+            a8_fgts: { label: 'FGTS', horista: 8.00, mensalista: 8.00 },
+            a9_seconci: {
+                label: 'SECONCI', horista: 0.00, mensalista: 0.00,
+                enabled: false,
+                tooltip: 'Remover em casos onde a cidade não possuir ambulatório SECONCI'
+            }
+        },
+        grupo_b: {
+            b1_repouso_semanal: { label: 'Repouso Semanal Remunerado', horista: 17.88, mensalista: 0.00 },
+            b2_feriados: { label: 'Feriados', horista: 3.95, mensalista: 0.00 },
+            b3_auxilio_enfermidade: { label: 'Auxílio-Enfermidade', horista: 0.92, mensalista: 0.71 },
+            b4_decimo_terceiro: { label: '13º Salário', horista: 10.81, mensalista: 8.33 },
+            b5_licenca_paternidade: { label: 'Licença Paternidade', horista: 0.07, mensalista: 0.06 },
+            b6_faltas_justificadas: { label: 'Faltas Justificadas', horista: 0.72, mensalista: 0.56 },
+            b7_dias_chuva: { label: 'Dias de Chuva', horista: 1.48, mensalista: 0.00 },
+            b8_auxilio_acidente: { label: 'Auxílio Acidente de Trabalho', horista: 0.11, mensalista: 0.09 },
+            b9_ferias_gozadas: { label: 'Férias Gozadas', horista: 8.61, mensalista: 6.63 },
+            b10_salario_maternidade: { label: 'Salário Maternidade', horista: 0.03, mensalista: 0.02 }
+        },
+        grupo_c: {
+            c1_aviso_previo_indenizado: { label: 'Aviso Prévio Indenizado', horista: 5.42, mensalista: 4.18 },
+            c2_aviso_previo_trabalhado: { label: 'Aviso Prévio Trabalhado', horista: 0.13, mensalista: 0.10 },
+            c3_ferias_indenizadas: { label: 'Férias Indenizadas+1/3', horista: 4.87, mensalista: 3.75 },
+            c4_deposito_rescisao: { label: 'Depósito Rescisão Sem Justa Causa', horista: 4.95, mensalista: 3.82 },
+            c5_indenizacao_adicional: { label: 'Indenização Adicional', horista: 0.46, mensalista: 0.35 }
+        }
+    },
+    {
+        id: 'sinapi_desonerado',
+        nome: 'SINAPI Federal (Desonerado)',
+        fonte: 'SINAPI/IBGE',
+        referencia: 'JAN/2025',
+        regime: 'desonerado',
+        grupo_a: {
+            a1_inss: { label: 'INSS', horista: 0.00, mensalista: 0.00 },
+            a2_sesi: { label: 'SESI', horista: 1.50, mensalista: 1.50 },
+            a3_senai: { label: 'SENAI', horista: 1.00, mensalista: 1.00 },
+            a4_incra: { label: 'INCRA', horista: 0.20, mensalista: 0.20 },
+            a5_sebrae: { label: 'SEBRAE', horista: 0.60, mensalista: 0.60 },
+            a6_salario_educacao: { label: 'Salário Educação', horista: 2.50, mensalista: 2.50 },
+            a7_seguro_acidente: { label: 'Seguro Contra Acidentes (SAT)', horista: 3.00, mensalista: 3.00 },
+            a8_fgts: { label: 'FGTS', horista: 8.00, mensalista: 8.00 },
+            a9_seconci: {
+                label: 'SECONCI', horista: 0.00, mensalista: 0.00,
+                enabled: false,
+                tooltip: 'Remover em casos onde a cidade não possuir ambulatório SECONCI'
+            }
+        },
+        grupo_b: {
+            b1_repouso_semanal: { label: 'Repouso Semanal Remunerado', horista: 17.88, mensalista: 0.00 },
+            b2_feriados: { label: 'Feriados', horista: 3.95, mensalista: 0.00 },
+            b3_auxilio_enfermidade: { label: 'Auxílio-Enfermidade', horista: 0.92, mensalista: 0.71 },
+            b4_decimo_terceiro: { label: '13º Salário', horista: 10.81, mensalista: 8.33 },
+            b5_licenca_paternidade: { label: 'Licença Paternidade', horista: 0.07, mensalista: 0.06 },
+            b6_faltas_justificadas: { label: 'Faltas Justificadas', horista: 0.72, mensalista: 0.56 },
+            b7_dias_chuva: { label: 'Dias de Chuva', horista: 1.48, mensalista: 0.00 },
+            b8_auxilio_acidente: { label: 'Auxílio Acidente de Trabalho', horista: 0.11, mensalista: 0.09 },
+            b9_ferias_gozadas: { label: 'Férias Gozadas', horista: 8.61, mensalista: 6.63 },
+            b10_salario_maternidade: { label: 'Salário Maternidade', horista: 0.03, mensalista: 0.02 }
+        },
+        grupo_c: {
+            c1_aviso_previo_indenizado: { label: 'Aviso Prévio Indenizado', horista: 5.42, mensalista: 4.18 },
+            c2_aviso_previo_trabalhado: { label: 'Aviso Prévio Trabalhado', horista: 0.13, mensalista: 0.10 },
+            c3_ferias_indenizadas: { label: 'Férias Indenizadas+1/3', horista: 4.87, mensalista: 3.75 },
+            c4_deposito_rescisao: { label: 'Depósito Rescisão Sem Justa Causa', horista: 4.95, mensalista: 3.82 },
+            c5_indenizacao_adicional: { label: 'Indenização Adicional', horista: 0.46, mensalista: 0.35 }
+        }
+    },
+    {
+        id: 'seinfra_ce',
+        nome: 'SEINFRA CE (Não Desonerado)',
+        fonte: 'SEINFRA/CE',
+        referencia: 'JAN/2025',
+        regime: 'nao_desonerado',
+        grupo_a: {
+            a1_inss: { label: 'INSS', horista: 20.00, mensalista: 20.00 },
+            a2_sesi: { label: 'SESI', horista: 1.50, mensalista: 1.50 },
+            a3_senai: { label: 'SENAI', horista: 1.00, mensalista: 1.00 },
+            a4_incra: { label: 'INCRA', horista: 0.20, mensalista: 0.20 },
+            a5_sebrae: { label: 'SEBRAE', horista: 0.60, mensalista: 0.60 },
+            a6_salario_educacao: { label: 'Salário Educação', horista: 2.50, mensalista: 2.50 },
+            a7_seguro_acidente: { label: 'Seguro Contra Acidentes (SAT)', horista: 3.00, mensalista: 3.00 },
+            a8_fgts: { label: 'FGTS', horista: 8.00, mensalista: 8.00 },
+            a9_seconci: {
+                label: 'SECONCI', horista: 0.00, mensalista: 0.00,
+                enabled: false,
+                tooltip: 'Remover em casos onde a cidade não possuir ambulatório SECONCI'
+            }
+        },
+        grupo_b: {
+            b1_repouso_semanal: { label: 'Repouso Semanal Remunerado', horista: 17.88, mensalista: 0.00 },
+            b2_feriados: { label: 'Feriados', horista: 3.95, mensalista: 0.00 },
+            b3_auxilio_enfermidade: { label: 'Auxílio-Enfermidade', horista: 0.92, mensalista: 0.71 },
+            b4_decimo_terceiro: { label: '13º Salário', horista: 10.81, mensalista: 8.33 },
+            b5_licenca_paternidade: { label: 'Licença Paternidade', horista: 0.07, mensalista: 0.06 },
+            b6_faltas_justificadas: { label: 'Faltas Justificadas', horista: 0.72, mensalista: 0.56 },
+            b7_dias_chuva: { label: 'Dias de Chuva', horista: 1.48, mensalista: 0.00 },
+            b8_auxilio_acidente: { label: 'Auxílio Acidente de Trabalho', horista: 0.11, mensalista: 0.09 },
+            b9_ferias_gozadas: { label: 'Férias Gozadas', horista: 8.61, mensalista: 6.63 },
+            b10_salario_maternidade: { label: 'Salário Maternidade', horista: 0.03, mensalista: 0.02 }
+        },
+        grupo_c: {
+            c1_aviso_previo_indenizado: { label: 'Aviso Prévio Indenizado', horista: 5.42, mensalista: 4.18 },
+            c2_aviso_previo_trabalhado: { label: 'Aviso Prévio Trabalhado', horista: 0.13, mensalista: 0.10 },
+            c3_ferias_indenizadas: { label: 'Férias Indenizadas+1/3', horista: 4.87, mensalista: 3.75 },
+            c4_deposito_rescisao: { label: 'Depósito Rescisão Sem Justa Causa', horista: 4.95, mensalista: 3.82 },
+            c5_indenizacao_adicional: { label: 'Indenização Adicional', horista: 0.46, mensalista: 0.35 }
+        }
+    },
+    {
+        id: 'orse_se',
+        nome: 'ORSE SE (Não Desonerado)',
+        fonte: 'ORSE/SE',
+        referencia: 'JAN/2025',
+        regime: 'nao_desonerado',
+        grupo_a: {
+            a1_inss: { label: 'INSS', horista: 20.00, mensalista: 20.00 },
+            a2_sesi: { label: 'SESI', horista: 1.50, mensalista: 1.50 },
+            a3_senai: { label: 'SENAI', horista: 1.00, mensalista: 1.00 },
+            a4_incra: { label: 'INCRA', horista: 0.20, mensalista: 0.20 },
+            a5_sebrae: { label: 'SEBRAE', horista: 0.60, mensalista: 0.60 },
+            a6_salario_educacao: { label: 'Salário Educação', horista: 2.50, mensalista: 2.50 },
+            a7_seguro_acidente: { label: 'Seguro Contra Acidentes (SAT)', horista: 3.00, mensalista: 3.00 },
+            a8_fgts: { label: 'FGTS', horista: 8.00, mensalista: 8.00 },
+            a9_seconci: {
+                label: 'SECONCI', horista: 0.00, mensalista: 0.00,
+                enabled: false,
+                tooltip: 'Remover em casos onde a cidade não possuir ambulatório SECONCI'
+            }
+        },
+        grupo_b: {
+            b1_repouso_semanal: { label: 'Repouso Semanal Remunerado', horista: 17.88, mensalista: 0.00 },
+            b2_feriados: { label: 'Feriados', horista: 3.95, mensalista: 0.00 },
+            b3_auxilio_enfermidade: { label: 'Auxílio-Enfermidade', horista: 0.92, mensalista: 0.71 },
+            b4_decimo_terceiro: { label: '13º Salário', horista: 10.81, mensalista: 8.33 },
+            b5_licenca_paternidade: { label: 'Licença Paternidade', horista: 0.07, mensalista: 0.06 },
+            b6_faltas_justificadas: { label: 'Faltas Justificadas', horista: 0.72, mensalista: 0.56 },
+            b7_dias_chuva: { label: 'Dias de Chuva', horista: 1.48, mensalista: 0.00 },
+            b8_auxilio_acidente: { label: 'Auxílio Acidente de Trabalho', horista: 0.11, mensalista: 0.09 },
+            b9_ferias_gozadas: { label: 'Férias Gozadas', horista: 8.61, mensalista: 6.63 },
+            b10_salario_maternidade: { label: 'Salário Maternidade', horista: 0.03, mensalista: 0.02 }
+        },
+        grupo_c: {
+            c1_aviso_previo_indenizado: { label: 'Aviso Prévio Indenizado', horista: 5.42, mensalista: 4.18 },
+            c2_aviso_previo_trabalhado: { label: 'Aviso Prévio Trabalhado', horista: 0.13, mensalista: 0.10 },
+            c3_ferias_indenizadas: { label: 'Férias Indenizadas+1/3', horista: 4.87, mensalista: 3.75 },
+            c4_deposito_rescisao: { label: 'Depósito Rescisão Sem Justa Causa', horista: 4.95, mensalista: 3.82 },
+            c5_indenizacao_adicional: { label: 'Indenização Adicional', horista: 0.46, mensalista: 0.35 }
+        }
+    }
+];
+
+function calcTotalGrupo(
+    grupo: Record<string, EncargosSubitem>,
+    tipo: 'horista' | 'mensalista'
+): number {
+    return Object.values(grupo).reduce((acc, item) => {
+        if (item.enabled === false) return acc;
+        return acc + (item[tipo] ?? 0);
+    }, 0);
+}
+
+function calcGrupoD(base: EncargosBaseDetalhada, tipo: 'horista' | 'mensalista') {
+    const A = calcTotalGrupo(base.grupo_a as any, tipo);
+    const B = calcTotalGrupo(base.grupo_b as any, tipo);
+    const C1 = base.grupo_c.c1_aviso_previo_indenizado[tipo] ?? 0;
+    const C2 = base.grupo_c.c2_aviso_previo_trabalhado[tipo] ?? 0;
+    const A8 = base.grupo_a.a8_fgts[tipo] ?? 0;
+
+    const D1 = (A / 100) * B;
+    const D2 = (A / 100) * C2 + (A8 / 100) * C1;
+    return {
+        d1: parseFloat(D1.toFixed(2)),
+        d2: parseFloat(D2.toFixed(2)),
+        total: parseFloat((D1 + D2).toFixed(2))
+    };
+}
+
+function calcTotalGeral(base: EncargosBaseDetalhada, tipo: 'horista' | 'mensalista'): number {
+    const A = calcTotalGrupo(base.grupo_a as any, tipo);
+    const B = calcTotalGrupo(base.grupo_b as any, tipo);
+    const C = calcTotalGrupo(base.grupo_c as any, tipo);
+    const D = calcGrupoD(base, tipo).total;
+    return parseFloat((A + B + C + D).toFixed(2));
+}
+
 const BudgetEditor = () => {
     const { id } = useParams();
     const navigate = useNavigate();
@@ -497,6 +751,15 @@ const BudgetEditor = () => {
     // Encargos Sociais Modal States
     const [showEncargosModal, setShowEncargosModal] = useState(false);
     const [tipoEncargo, setTipoEncargo] = useState<'horista' | 'mensalista'>('horista');
+    const [encargosEditado, setEncargosEditado] = useState<EncargosBaseDetalhada | null>(null);
+    const [gruposExpandidos, setGruposExpandidos] = useState<Record<string, boolean>>({});
+    const [todosExpandidos, setTodosExpandidos] = useState(false);
+
+    const handleSelecionarBase = (base: EncargosBaseDetalhada) => {
+        setEncargosEditado(JSON.parse(JSON.stringify(base)));
+        setGruposExpandidos({});
+        setTodosExpandidos(false);
+    };
 
     const [filteredResources, setFilteredResources] = useState<any[]>([]);
 
@@ -4440,90 +4703,263 @@ const BudgetEditor = () => {
                             </div>
 
                             {/* Toggle Horista/Mensalista */}
-                            <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center gap-4">
-                                <span className="text-xs font-bold text-slate-500 uppercase">Tipo de Contrato:</span>
-                                <div className="flex bg-slate-200 rounded-lg p-1">
+                            <div className="p-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-4">
+                                    <span className="text-xs font-bold text-slate-500 uppercase">Tipo de Contrato:</span>
+                                    <div className="flex bg-slate-200 rounded-lg p-1">
+                                        <button
+                                            onClick={() => setTipoEncargo('horista')}
+                                            className={clsx(
+                                                "px-4 py-2 text-sm font-bold rounded-lg transition-all",
+                                                tipoEncargo === 'horista' ? "bg-orange-600 text-white shadow" : "text-slate-600 hover:bg-slate-300"
+                                            )}
+                                        >
+                                            Horista
+                                        </button>
+                                        <button
+                                            onClick={() => setTipoEncargo('mensalista')}
+                                            className={clsx(
+                                                "px-4 py-2 text-sm font-bold rounded-lg transition-all",
+                                                tipoEncargo === 'mensalista' ? "bg-orange-600 text-white shadow" : "text-slate-600 hover:bg-slate-300"
+                                            )}
+                                        >
+                                            Mensalista
+                                        </button>
+                                    </div>
+                                </div>
+                                {encargosEditado && (
                                     <button
-                                        onClick={() => setTipoEncargo('horista')}
-                                        className={clsx(
-                                            "px-4 py-2 text-sm font-bold rounded-lg transition-all",
-                                            tipoEncargo === 'horista' ? "bg-orange-600 text-white shadow" : "text-slate-600 hover:bg-slate-300"
-                                        )}
+                                        onClick={() => {
+                                            const novoEstado = !todosExpandidos;
+                                            setTodosExpandidos(novoEstado);
+                                            setGruposExpandidos({ a: novoEstado, b: novoEstado, c: novoEstado, d: novoEstado });
+                                        }}
+                                        className="text-xs text-slate-500 underline"
                                     >
-                                        Horista
+                                        {todosExpandidos ? 'Recolher Todos' : 'Expandir Todos'}
                                     </button>
-                                    <button
-                                        onClick={() => setTipoEncargo('mensalista')}
-                                        className={clsx(
-                                            "px-4 py-2 text-sm font-bold rounded-lg transition-all",
-                                            tipoEncargo === 'mensalista' ? "bg-orange-600 text-white shadow" : "text-slate-600 hover:bg-slate-300"
-                                        )}
-                                    >
-                                        Mensalista
-                                    </button>
+                                )}
+                            </div>
+
+                            <div className="px-6 py-4 bg-white border-b border-slate-100">
+                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Selecione uma Base de Referência:</label>
+                                <div className="flex gap-2 overflow-x-auto pb-2">
+                                    {ENCARGOS_BASES_DETALHADAS.map(base => (
+                                        <button
+                                            key={base.id}
+                                            onClick={() => handleSelecionarBase(base)}
+                                            className={clsx(
+                                                "px-4 py-2 text-xs font-bold rounded-xl border-2 whitespace-nowrap transition-all text-left",
+                                                encargosEditado?.id === base.id ? "border-orange-500 bg-orange-50 text-orange-700" : "border-slate-100 text-slate-500 hover:border-orange-200 hover:bg-slate-50"
+                                            )}
+                                        >
+                                            <div className="font-bold">{base.nome}</div>
+                                            <div className="text-[9px] uppercase tracking-wider opacity-70 mt-0.5">{base.fonte} • Ref: {base.referencia}</div>
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
 
-                            <div className="p-6 overflow-auto space-y-4 flex-1">
-                                {ENCARGOS_SOCIAIS_BASES.map((base, idx) => {
-                                    const totalBase = calcularTotalBase(base, tipoEncargo);
-                                    const grupos = base.grupos.map(g => ({
-                                        nome: g.nome,
-                                        total: g.itens.reduce((acc, item) => acc + item[tipoEncargo], 0)
-                                    }));
+                            <div className="p-6 overflow-auto space-y-4 flex-1 bg-slate-50">
+                                {!encargosEditado ? (
+                                    <div className="text-center text-slate-400 py-10 font-bold">
+                                        Selecione uma base acima para visualizar e editar os subitens.
+                                    </div>
+                                ) : (
+                                    <>
+                                        {/* 5d - Grupos A, B, C */}
+                                        {(['a', 'b', 'c'] as const).map(g => {
+                                            const grupoKey = `grupo_${g}` as keyof EncargosBaseDetalhada;
+                                            const grupo = encargosEditado[grupoKey] as Record<string, EncargosSubitem>;
+                                            if (!grupo) return null;
+                                            const totalH = calcTotalGrupo(grupo, 'horista');
+                                            const totalM = calcTotalGrupo(grupo, 'mensalista');
+                                            const expandido = gruposExpandidos[g] ?? false;
 
-                                    return (
-                                        <div key={idx} className="p-5 bg-slate-50 border border-slate-100 rounded-2xl hover:bg-orange-50 hover:border-orange-200 transition-all group">
-                                            <div className="flex justify-between items-start mb-3">
-                                                <div>
-                                                    <h4 className="text-slate-800 font-bold text-base">{base.nome}</h4>
-                                                    <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">
-                                                        {base.fonte} • {base.desonerado ? 'Desonerado' : 'Não Desonerado'} • Ref: {base.dataReferencia}
-                                                    </p>
+                                            return (
+                                                <div key={g} className="border border-slate-200 rounded-lg overflow-hidden mb-2 bg-white">
+                                                    <button
+                                                        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100"
+                                                        onClick={() => setGruposExpandidos(prev => ({ ...prev, [g]: !prev[g] }))}
+                                                    >
+                                                        <span className="font-bold text-slate-700 uppercase">Grupo {g.toUpperCase()}</span>
+                                                        <div className="flex gap-6 text-sm">
+                                                            <span className="text-slate-600 bg-white px-2 rounded font-mono">Horista: <strong>{totalH.toFixed(2)}%</strong></span>
+                                                            <span className="text-slate-600 bg-white px-2 rounded font-mono">Mensalista: <strong>{totalM.toFixed(2)}%</strong></span>
+                                                            <span className="text-slate-400">{expandido ? '▲' : '▼'}</span>
+                                                        </div>
+                                                    </button>
+
+                                                    {expandido && (
+                                                        <table className="w-full text-sm">
+                                                            <thead>
+                                                                <tr className="bg-slate-100 border-y border-slate-200">
+                                                                    <th className="text-left px-4 py-2 font-black text-slate-500 uppercase text-[10px] tracking-wider">Subitem</th>
+                                                                    <th className="text-center px-3 py-2 w-28 font-black text-slate-500 uppercase text-[10px] tracking-wider">Horista (%)</th>
+                                                                    <th className="text-center px-3 py-2 w-28 font-black text-slate-500 uppercase text-[10px] tracking-wider">Mensalista (%)</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {Object.entries(grupo).map(([key, item]) => (
+                                                                    <tr key={key} className="border-b border-slate-50 hover:bg-slate-50/50">
+                                                                        <td className="px-4 py-2 flex items-center gap-2">
+                                                                            <span className="font-bold text-slate-600 text-xs">{item.label}</span>
+                                                                            {item.tooltip && (
+                                                                                <span title={item.tooltip} className="text-slate-400 cursor-help text-xs">ℹ</span>
+                                                                            )}
+                                                                            {key === 'a9_seconci' && (
+                                                                                <button
+                                                                                    onClick={() => setEncargosEditado(prev => {
+                                                                                        if (!prev) return prev;
+                                                                                        const novo = JSON.parse(JSON.stringify(prev)) as EncargosBaseDetalhada;
+                                                                                        novo.grupo_a.a9_seconci.enabled = !novo.grupo_a.a9_seconci.enabled;
+                                                                                        return novo;
+                                                                                    })}
+                                                                                    className={clsx(
+                                                                                        "ml-2 text-[10px] font-black px-2 py-0.5 rounded-full border",
+                                                                                        item.enabled !== false
+                                                                                            ? "bg-green-100 text-green-700 border-green-300"
+                                                                                            : "bg-slate-100 text-slate-400 border-slate-300"
+                                                                                    )}
+                                                                                >
+                                                                                    {item.enabled !== false ? 'ON' : 'OFF'}
+                                                                                </button>
+                                                                            )}
+                                                                        </td>
+                                                                        <td className="px-3 py-2 text-center">
+                                                                            <input
+                                                                                type="number"
+                                                                                step="0.01"
+                                                                                value={item.horista}
+                                                                                disabled={item.enabled === false}
+                                                                                onChange={(e) => setEncargosEditado(prev => {
+                                                                                    if (!prev) return prev;
+                                                                                    const novo = JSON.parse(JSON.stringify(prev)) as EncargosBaseDetalhada;
+                                                                                    (novo[grupoKey] as any)[key].horista = parseFloat(e.target.value) || 0;
+                                                                                    return novo;
+                                                                                })}
+                                                                                className="w-16 text-center border border-slate-200 rounded px-1 py-1 font-mono text-xs disabled:opacity-40 focus:border-orange-400 outline-none"
+                                                                            />
+                                                                        </td>
+                                                                        <td className="px-3 py-2 text-center">
+                                                                            <input
+                                                                                type="number"
+                                                                                step="0.01"
+                                                                                value={item.mensalista}
+                                                                                disabled={item.enabled === false}
+                                                                                onChange={(e) => setEncargosEditado(prev => {
+                                                                                    if (!prev) return prev;
+                                                                                    const novo = JSON.parse(JSON.stringify(prev)) as EncargosBaseDetalhada;
+                                                                                    (novo[grupoKey] as any)[key].mensalista = parseFloat(e.target.value) || 0;
+                                                                                    return novo;
+                                                                                })}
+                                                                                className="w-16 text-center border border-slate-200 rounded px-1 py-1 font-mono text-xs disabled:opacity-40 focus:border-orange-400 outline-none"
+                                                                            />
+                                                                        </td>
+                                                                    </tr>
+                                                                ))}
+                                                                <tr className="bg-slate-50 border-t border-slate-200 text-slate-700">
+                                                                    <td className="px-4 py-2 font-black text-xs uppercase tracking-widest text-right">Total Grupo {g.toUpperCase()}</td>
+                                                                    <td className="px-3 py-2 text-center font-black font-mono">{totalH.toFixed(2)}%</td>
+                                                                    <td className="px-3 py-2 text-center font-black font-mono">{totalM.toFixed(2)}%</td>
+                                                                </tr>
+                                                            </tbody>
+                                                        </table>
+                                                    )}
                                                 </div>
-                                                <div className="text-right">
-                                                    <p className="text-[10px] text-slate-400 uppercase tracking-widest">Total {tipoEncargo}</p>
-                                                    <p className="text-2xl font-black text-orange-600">{totalBase.toFixed(2)}%</p>
+                                            );
+                                        })}
+
+                                        {/* 5e - Grupo D (Calculado) */}
+                                        {(() => {
+                                            const dH = calcGrupoD(encargosEditado, 'horista');
+                                            const dM = calcGrupoD(encargosEditado, 'mensalista');
+                                            const expandido = gruposExpandidos['d'] ?? false;
+
+                                            return (
+                                                <div className="border border-slate-200 rounded-lg overflow-hidden mb-2 bg-white">
+                                                    <button
+                                                        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100"
+                                                        onClick={() => setGruposExpandidos(prev => ({ ...prev, d: !prev['d'] }))}
+                                                    >
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-slate-700 uppercase">Grupo D</span>
+                                                            <span className="text-[9px] font-bold bg-slate-200 text-slate-500 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                                                Calculado Automático
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex gap-6 text-sm">
+                                                            <span className="text-slate-600 bg-white px-2 rounded font-mono">Horista: <strong>{dH.total.toFixed(2)}%</strong></span>
+                                                            <span className="text-slate-600 bg-white px-2 rounded font-mono">Mensalista: <strong>{dM.total.toFixed(2)}%</strong></span>
+                                                            <span className="text-slate-400">{expandido ? '▲' : '▼'}</span>
+                                                        </div>
+                                                    </button>
+
+                                                    {expandido && (
+                                                        <table className="w-full text-sm">
+                                                            <thead>
+                                                                <tr className="bg-slate-100 border-y border-slate-200">
+                                                                    <th className="text-left px-4 py-2 font-black text-slate-500 uppercase text-[10px] tracking-wider">Subitem</th>
+                                                                    <th className="text-center px-3 py-2 w-28 font-black text-slate-500 uppercase text-[10px] tracking-wider">Horista (%)</th>
+                                                                    <th className="text-center px-3 py-2 w-28 font-black text-slate-500 uppercase text-[10px] tracking-wider">Mensalista (%)</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                <tr className="border-b border-slate-50">
+                                                                    <td className="px-4 py-2 font-bold text-slate-500 text-xs">D1 — Reincidência de A sobre B</td>
+                                                                    <td className="px-3 py-2 text-center text-slate-500 font-mono text-xs">{dH.d1.toFixed(2)}%</td>
+                                                                    <td className="px-3 py-2 text-center text-slate-500 font-mono text-xs">{dM.d1.toFixed(2)}%</td>
+                                                                </tr>
+                                                                <tr className="border-b border-slate-50">
+                                                                    <td className="px-4 py-2 font-bold text-slate-500 text-xs">D2 — Reincidência composta (A×C2 + FGTS×C1)</td>
+                                                                    <td className="px-3 py-2 text-center text-slate-500 font-mono text-xs">{dH.d2.toFixed(2)}%</td>
+                                                                    <td className="px-3 py-2 text-center text-slate-500 font-mono text-xs">{dM.d2.toFixed(2)}%</td>
+                                                                </tr>
+                                                                <tr className="bg-slate-50 border-t border-slate-200 text-slate-700">
+                                                                    <td className="px-4 py-2 font-black text-xs uppercase tracking-widest text-right">Total Grupo D</td>
+                                                                    <td className="px-3 py-2 text-center font-black font-mono">{dH.total.toFixed(2)}%</td>
+                                                                    <td className="px-3 py-2 text-center font-black font-mono">{dM.total.toFixed(2)}%</td>
+                                                                </tr>
+                                                            </tbody>
+                                                        </table>
+                                                    )}
                                                 </div>
-                                            </div>
-
-                                            {/* Grupos Resumidos */}
-                                            <div className="flex gap-3 flex-wrap mb-4">
-                                                {grupos.map((g, i) => (
-                                                    <div key={i} className="bg-white px-3 py-2 rounded-lg border border-slate-100 text-center min-w-[80px]">
-                                                        <p className="text-[9px] text-slate-400 uppercase font-bold">{g.nome}</p>
-                                                        <p className="text-sm font-bold text-slate-700">{g.total.toFixed(2)}%</p>
-                                                    </div>
-                                                ))}
-                                            </div>
-
-                                            {/* Ações */}
-                                            <div className="flex gap-2 justify-end border-t border-slate-100 pt-3">
-                                                <button
-                                                    onClick={() => generateEncargosReport(settings, base, tipoEncargo)}
-                                                    className="flex items-center gap-2 px-4 py-2 text-slate-500 hover:text-orange-600 hover:bg-white rounded-xl transition-all text-sm font-bold"
-                                                    title="Baixar Tabela Detalhada"
-                                                >
-                                                    <Download size={16} />
-                                                    Baixar Detalhado
-                                                </button>
-                                                <button
-                                                    onClick={() => {
-                                                        handleUpdateEncargos(totalBase, { desonerado: base.desonerado, id: base.id });
-                                                        setShowEncargosModal(false);
-                                                    }}
-
-                                                    className="bg-orange-600 text-white px-5 py-2 rounded-xl font-bold text-sm hover:bg-orange-700 shadow-lg shadow-orange-100 transition-all active:scale-95 flex items-center gap-2"
-                                                >
-                                                    <Percent size={14} />
-                                                    APLICAR {totalBase.toFixed(2)}%
-                                                </button>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                                            );
+                                        })()}
+                                    </>
+                                )}
                             </div>
 
+                            {/* 5f - Total Geral Fixo */}
+                            {encargosEditado && (
+                                <div className="bg-white border-t-2 border-slate-200 px-6 py-4 flex justify-between items-center z-10 shrink-0">
+                                    <div className="flex gap-4 items-center">
+                                        <span className="font-black text-slate-800 uppercase tracking-widest text-sm">TOTAL GERAL</span>
+                                        <div className="flex gap-4">
+                                            <div className="bg-orange-50 px-3 py-1 rounded-lg border border-orange-100 flex flex-col items-center">
+                                                <span className="text-[10px] text-orange-600 font-bold uppercase tracking-widest">Horista</span>
+                                                <strong className="text-slate-800 text-xl font-mono">{calcTotalGeral(encargosEditado, 'horista').toFixed(2)}%</strong>
+                                            </div>
+                                            <div className="bg-blue-50 px-3 py-1 rounded-lg border border-blue-100 flex flex-col items-center">
+                                                <span className="text-[10px] text-blue-600 font-bold uppercase tracking-widest">Mensalista</span>
+                                                <strong className="text-slate-800 text-xl font-mono">{calcTotalGeral(encargosEditado, 'mensalista').toFixed(2)}%</strong>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => {
+                                                const totalMode = calcTotalGeral(encargosEditado, tipoEncargo);
+                                                handleUpdateEncargos(totalMode, { desonerado: encargosEditado.regime === 'desonerado', id: encargosEditado.id });
+                                                setShowEncargosModal(false);
+                                            }}
+                                            className="bg-orange-600 text-white px-6 py-3 rounded-xl font-black text-sm hover:bg-orange-700 shadow-lg shadow-orange-100 transition-all active:scale-95 flex items-center gap-2"
+                                        >
+                                            <Percent size={16} /> APLICAR {calcTotalGeral(encargosEditado, tipoEncargo).toFixed(2)}% ({tipoEncargo.toUpperCase()})
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )
