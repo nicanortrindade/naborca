@@ -109,8 +109,13 @@ export function calculateBudget(items: BudgetItem[], bdiPercent: number): Budget
             baseUnit = unit;
             baseTotal = qty * unit;
 
-            finalUnit = baseUnit * bdiMultiplier;
-            finalTotal = baseTotal * bdiMultiplier;
+            const itemBdi = (item.customBDI != null && item.customBDI > 0)
+                ? item.customBDI
+                : bdiPercent;
+            const itemBdiMultiplier = 1 + (safeNum(itemBdi) / 100);
+
+            finalUnit = baseUnit * itemBdiMultiplier;
+            finalTotal = baseTotal * itemBdiMultiplier;
         }
 
         itemMap.set(item.id!, {

@@ -898,7 +898,7 @@ serve(async (req: Request) => {
                                                             level: derivedLevel,
                                                             chunk_index: batchIndex,
                                                             composition_code: item.code || null,
-                                                            price_source: isPriceSuspicious ? 'NEEDS_REVIEW' : (item.price_source || null),
+                                                            price_source: item.price_source || null,
                                                             dedup_key: dedupKey,
                                                             item_path: item.item_path || null,                        // NOVO
                                                             source_candidate_id: item.evidence?.candidate_id || null, // NOVO

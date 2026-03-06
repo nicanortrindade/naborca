@@ -1,10 +1,10 @@
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, lazy, Suspense } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Loader2, AlertCircle, CheckCircle2, FileText, ArrowLeft, Download, Sparkles } from 'lucide-react';
 import type { ImportJob } from '../features/importer/types';
-import ImportReviewPage from './ImportReviewPage';
+const ImportReviewPage = lazy(() => import('./ImportReviewPage'));
 import { saveAs } from 'file-saver';
 import { toRelativePath } from '../utils/appUrl';
 
@@ -440,7 +440,11 @@ export default function ImportStatus() {
 
     // --- RENDER ---
     if (uiStatus === 'loading' && !job) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-blue-600" /></div>;
-    if (uiStatus === 'review_ready' && id) return <ImportReviewPage jobId={id} />;
+    if (uiStatus === 'review_ready' && id) return (
+        <Suspense fallback={<div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-blue-600" /></div>}>
+            <ImportReviewPage jobId={id} />
+        </Suspense>
+    );
 
     return (
         <div className="min-h-screen bg-slate-50 p-6 md:p-12">

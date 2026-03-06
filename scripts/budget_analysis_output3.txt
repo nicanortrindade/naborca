@@ -1,0 +1,45 @@
+﻿node.exe : {
+No linha:1 caractere:1
++ & "C:\Program 
+Files\nodejs/node.exe" 
+"C:\Program Files\nodejs/node_mo 
+...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~
+    + CategoryInfo          : Not 
+   Specified: ({:String) [], Rem  
+  oteException
+    + FullyQualifiedErrorId : Nat 
+   iveCommandError
+ 
+  code: '42703',
+  details: null,
+  hint: 'Perhaps you meant to 
+reference the column 
+"budget_items.composition_id".',
+  message: 'column 
+budget_items.composition_code 
+does not exist'
+}
+Total items: 0
+Counts by level: {}
+
+FIRST 50 ITEMS:
+
+Leaf items (qty>0, up>0): 0
+Mismatches: 0
+
+Duplicate item_numbers: 0
+
+Orphans (level>1, no parent): 0
+
+=== ITEMS WITH CODE 92772 ===
+
+Sum leaf items: 0.00
+Sum L1 chapters: 0.00
+
+=== BUDGET BDI ===
+null
+
+=== CHAPTER 2 ITEMS ===

@@ -92,7 +92,7 @@ export function calculateAdjustmentFactors(
 }
 
 export function getAdjustedItemValues(
-    item: { unitPrice: number; description: string; type?: string },
+    item: { unitPrice: number; description: string; type?: string; customBDI?: number },
     factors: { materialFactor: number; laborFactor: number; bdiFactor: number },
     bdiPercent: number
 ): AdjustedValues {
@@ -103,7 +103,10 @@ export function getAdjustedItemValues(
     else factor = factors.laborFactor;
 
     const newBaseUnit = item.unitPrice * factor;
-    const bdiMultiplier = 1 + (bdiPercent / 100);
+    const effectiveBdi = (item.customBDI != null && item.customBDI > 0)
+        ? item.customBDI
+        : bdiPercent;
+    const bdiMultiplier = 1 + (effectiveBdi / 100);
     // C5: arredondar o unitário ANTES de multiplicar por quantidade (padrão dos PDFs de licitação)
     const newFinalUnit = Math.round(newBaseUnit * bdiMultiplier * factors.bdiFactor * 100) / 100;
 
@@ -130,6 +133,7 @@ export function getAdjustmentContext(
 
     let rawBase = 0;
     let rawMaterialBase = 0;
+    let rawFinal = 0;
 
     // Use filtered leaf items logic (L3+)
     const leafItems = items.filter(i => {
@@ -149,9 +153,10 @@ export function getAdjustmentContext(
         if (classifyItem(item.description, item.type) === 'material') {
             rawMaterialBase += total;
         }
-    });
 
-    const rawFinal = rawBase * (1 + bdiPercent / 100);
+        const effectiveBdi = (item.customBDI != null && item.customBDI > 0) ? item.customBDI : bdiPercent;
+        rawFinal += total * (1 + effectiveBdi / 100);
+    });
 
     return {
         totalBase: rawBase,
@@ -203,7 +208,7 @@ export function getAdjustedBudgetTotals(
     leafItems.forEach(item => {
         const qty = item.quantity || 0;
         const adj = getAdjustedItemValues(
-            { unitPrice: item.unitPrice || 0, description: item.description, type: item.type },
+            { unitPrice: item.unitPrice || 0, description: item.description, type: item.type, customBDI: item.customBDI },
             factors,
             bdiPercent
         );

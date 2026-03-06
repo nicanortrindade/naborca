@@ -1,0 +1,43 @@
+﻿COLUMNS: id, user_id, budget_id, parent_id, order_index, level, item_number, code, description, unit, quantity, unit_price, total_price, type, source, created_at, updated_at, bdi, custom_bdi, item_type, composition_id, insumo_id, calculation_memory, calculation_steps, cost_center, is_locked, notes, is_desonerated, final_price, peso, source_import_item_id, hydration_status, hydration_details
+SAMPLE: {
+  "id": "4b96de19-4eb6-4ce6-838a-803a87fd7ed9",
+  "user_id": "6c3c24cd-5392-4238-9374-2f439c462e87",
+  "budget_id": "c6afdfbe-b37e-4e5c-ac9c-79b4a15392a4",
+  "parent_id": "d5051640-9461-4fb8-a945-e05a1bb846ea",
+  "order_index": 420,
+  "level": 2,
+  "item_number": "12.1",
+  "code": null,
+  "description": "PAREDES",
+  "unit": null,
+  "quantity": 0,
+  "unit_price": 0,
+  "total_price": 55596.04,
+  "type": "group",
+  "source": null,
+  "created_at": "2026-03-05T18:01:01.906235+00:00",
+  "updated_at": "2026-03-05T18:01:01.906235+00:00",
+  "bdi": 0,
+  "custom_bdi": null,
+  "item_type": null,
+  "composition_id": null,
+  "insumo_id": null,
+  "calculation_memory": null,
+  "calculation_steps": null,
+  "cost_center": null,
+  "is_locked": false,
+  "notes": null,
+  "is_desonerated": false,
+  "final_price": 0,
+  "peso": 0,
+  "source_import_item_id": null,
+  "hydration_status": "none",
+  "hydration_details": {
+    "parser": "v1",
+    "path_key": "12.1"
+  }
+}
+
+BUDGET COLUMNS: id, user_id, company_id, name, client_name, date, status, total_value, bdi_percentage, encargos_percentage, obra_type, created_at, updated_at, proposal_cover, proposal_terms, schedule_interval, period_labels, cost_centers, is_template, desoneracao, version, revision, revision_notes, is_frozen, frozen_at, frozen_by, parent_budget_id, is_scenario, scenario_name, bdi, bdi_percent, sinapi_uf, sinapi_competence, sinapi_regime, sinapi_contract_type, settings
+BDI: 0
+Total: undefined

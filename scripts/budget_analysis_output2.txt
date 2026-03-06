@@ -1,0 +1,23 @@
+﻿=== MISMATCHED TOTALS (L3 items) ===
+Mismatches: 0 / 0
+
+=== DUPLICATE ITEM NUMBERS ===
+Duplicates: 0
+
+=== ORPHAN ITEMS (level > 1, no parent) ===
+Orphans: 0
+
+=== ITEM 3.3.5 ===
+null
+
+=== ITEM 1.2.2 and 1.2.3 ===
+null
+
+=== LEVEL 4 ITEMS ===
+Level 4 count: 0
+
+=== BUDGET METADATA ===
+name: Or├ºamento Importado 05/03 18:01
+total_price: undefined
+bdi_percentage: 0
+created_at: 2026-03-05T18:01:01.906235+00:00

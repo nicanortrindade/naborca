@@ -1,0 +1,4 @@
+{
+  "ok": false,
+  "reason": "new row for relation \"budget_items\" violates check constraint \"budget_items_hydration_status_check\""
+}
