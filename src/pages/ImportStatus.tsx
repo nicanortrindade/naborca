@@ -98,6 +98,8 @@ export default function ImportStatus() {
                 .select('*', { count: 'exact', head: true })
                 .eq('job_id', id);
 
+            console.log('[DEBUG] itemsCount:', itemsCount, 'job_id:', id);
+
             // C. Derive Status
             const derived = deriveUiStatus(jobData, fileData, itemsCount || 0);
 
