@@ -66,8 +66,8 @@ export default function ImportStatus() {
 
         try {
             // A. Fetch Job
-            const { data: jobData, error: jobError } = await (supabase
-                .from('import_jobs' as any) as any)
+            const { data: jobData, error: jobError } = await supabase
+                .from('import_jobs' as any)
                 .select('*')
                 .eq('id', id)
                 .abortSignal(abortRef.current.signal)

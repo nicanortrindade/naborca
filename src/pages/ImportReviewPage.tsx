@@ -209,8 +209,8 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
             setGenerating(true);
 
             // 1. Get correct file ID (required FK)
-            const { data: fileData, error: fileError } = await (supabase
-                .from('import_files' as any) as any)
+            const { data: fileData, error: fileError } = await supabase
+                .from('import_files' as any)
                 .select('id')
                 .eq('job_id', jobId)
                 .limit(1)
@@ -232,8 +232,8 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                 confidence: 1.0,
             };
 
-            const { error: insertError } = await (supabase
-                .from('import_ai_items' as any) as any)
+            const { error: insertError } = await supabase
+                .from('import_ai_items' as any)
                 .insert(row);
 
             if (insertError) throw insertError;
