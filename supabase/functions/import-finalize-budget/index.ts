@@ -47,7 +47,11 @@ Deno.serve(async (req) => {
         }
 
         const body = await req.json();
-        const { job_id, uf, competence, desonerado, bdi_mode, social_charges, enable_structure_parser_v1 } = body;
+        const {
+            job_id, uf, competence, desonerado, bdi_mode, social_charges,
+            enable_structure_parser_v1, bdi_equipamentos, obra_nome,
+            municipio, bases_selecionadas
+        } = body;
         const force_rehydrate = body?.force_rehydrate === true;
 
         // Resolve User ID if Service Mode (Bypass)
@@ -141,7 +145,11 @@ Deno.serve(async (req) => {
             desonerado: desonerado === true,
             bdi_mode: bdi_mode,
             social_charges: social_charges,
-            enable_structure_parser_v1: enable_structure_parser_v1 === true
+            enable_structure_parser_v1: enable_structure_parser_v1 === true,
+            bdi_equipamentos,
+            obra_nome,
+            municipio,
+            bases_selecionadas
         };
 
         // Dispara RPC de forma assíncrona (fire-and-forget) para evitar timeout da Edge Function
