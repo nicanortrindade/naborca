@@ -410,6 +410,14 @@ NUNCA inclua dígitos do composition_code dentro do item_path.
 - Extract the "BDI (%)" column value for each item as bdi_percent 
   (string, e.g. "25,00" or "13,51"). 
   If the column is not present or the value is blank, return null.
+- Extract the unit price WITH BDI (column "Valor Unit com Total" or "Preço Unitário (com BDI R$)") 
+  as unit_price_with_bdi (string, e.g. "1.202,83" or "558,15"). 
+  If this column is not present or blank, return null.
+- Extract ALL BDI percentages declared in the document header or footer 
+  (e.g. "BDI Geral: 25,00%", "BDI Equipamentos: 13,51%", "BDI 1: 22,96%") 
+  and include them in the evidence field as bdi_rates 
+  (array of objects with label and value, e.g. 
+  [{"label": "BDI Geral", "value": "25,00"}, {"label": "BDI Equipamentos", "value": "13,51"}]).
 
 CRITICAL RULE — SECTION TITLE CANDIDATES:
 When a candidate has warnings containing "section_title_candidate":
@@ -433,6 +441,7 @@ Respond ONLY with valid JSON. No markdown, no backticks.
       "unit": "...",
       "quantity": "...",
       "unit_price": "...",
+      "unit_price_with_bdi": "...",
       "total_price": "...",
       "bdi_percent": "...",
       "item_path": "...",
@@ -1028,6 +1037,62 @@ ${JSON.stringify(candidatesContext, null, 2)}
                         ...(current.warnings || []),
                         'duplicate_same_subgroup',
                     ];
+                }
+            }
+        }
+
+        // M9: Classificação automática de faixa de BDI por divisão determinística
+        // Extrai faixas de BDI do evidence do primeiro item que as tiver,
+        // depois classifica cada item calculando ratio = unit_price_with_bdi / unit_price
+        if (parsedItems && Array.isArray(parsedItems) && parsedItems.length > 0) {
+            // Coletar faixas de BDI do cabeçalho via evidence
+            let bdiRates: Array<{ label: string; value: number }> = [];
+            for (const item of parsedItems) {
+                const rates = (item.evidence as any)?.bdi_rates;
+                if (rates && Array.isArray(rates) && rates.length > 0) {
+                    bdiRates = rates
+                        .map((r: any) => ({
+                            label: r.label ?? '',
+                            value: parseFloat((r.value ?? '0').replace(',', '.')),
+                        }))
+                        .filter((r: any) => r.value > 0);
+                    if (bdiRates.length > 0) break;
+                }
+            }
+
+            if (bdiRates.length >= 2) {
+                const TOLERANCE = 0.005;
+                for (const item of parsedItems) {
+                    if (!item.unit_price_with_bdi || !item.unit_price) continue;
+                    const priceWithBdi = parseFloat(
+                        (item.unit_price_with_bdi as string).replace(/\./g, '').replace(',', '.')
+                    );
+                    const priceWithout = parseFloat(
+                        (item.unit_price as string).replace(/\./g, '').replace(',', '.')
+                    );
+                    if (!priceWithBdi || !priceWithout || priceWithout === 0) continue;
+
+                    const ratio = priceWithBdi / priceWithout;
+                    let matched = false;
+
+                    for (const rate of bdiRates) {
+                        const expected = 1 + rate.value / 100;
+                        if (Math.abs(ratio - expected) <= TOLERANCE) {
+                            // Só grava custom_bdi se for diferente da faixa geral (primeira faixa)
+                            if (rate.value !== bdiRates[0].value) {
+                                item.bdi_percent = rate.value.toFixed(2);
+                            }
+                            matched = true;
+                            break;
+                        }
+                    }
+
+                    if (!matched) {
+                        item.warnings = [
+                            ...(item.warnings || []),
+                            `bdi_ratio_unmatched:${ratio.toFixed(4)}`,
+                        ];
+                    }
                 }
             }
         }

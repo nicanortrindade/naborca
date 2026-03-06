@@ -12,7 +12,11 @@ export const StageBEvidenceSchema = z.object({
     evidence_lines: z.array(z.object({
         lineNo: z.number().optional().nullable(),
         text: z.string()
-    })).min(1, "Must have at least one line of evidence")
+    })).min(1, "Must have at least one line of evidence"),
+    bdi_rates: z.array(z.object({
+        label: z.string().optional(),
+        value: z.string().optional()
+    })).optional()
 });
 
 export type StageBEvidence = z.infer<typeof StageBEvidenceSchema>;
@@ -30,6 +34,7 @@ export const StageBItemSchema = z.object({
     unit: z.string().nullable().optional(),
     quantity: z.string().nullable().optional(),
     unit_price: z.string().nullable().optional(),
+    unit_price_with_bdi: z.string().nullable().optional(),
     total_price: z.string().nullable().optional(),
     bdi_percent: z.string().nullable().optional(),
     item_path: z.string().nullable().optional(),
