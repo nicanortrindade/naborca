@@ -137,7 +137,7 @@ export default function ImportStatus() {
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
             if (abortRef.current) abortRef.current.abort();
         };
-    }, [id]);
+    }, [id, fetchData]);
 
     useEffect(() => {
         const isFinal = ['ocr_success', 'ocr_success_with_warn', 'ocr_empty', 'review_ready', 'failed', 'extraction_failed_action'].includes(uiStatus);
