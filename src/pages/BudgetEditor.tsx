@@ -432,23 +432,67 @@ const BudgetEditor = () => {
         i_cprb: 0.0
     });
 
-    const BDI_PRESETS = [
-        {
-            name: "Construção de Rodovias e Ferrovias",
-            description: "(também para Recapeamento, Pavimentação e Praças)",
-            ac: 4.67, sg: 0.74, r: 0.97, df: 1.21, l: 8.69
+    const [bdiEquipCalc, setBdiEquipCalc] = useState({
+        ac: 0.56,
+        sg: 0.56,
+        r: 0.56,
+        df: 0.59,
+        l: 5.49,
+        i_pis: 0.65,
+        i_cofins: 3.00,
+        i_iss: 0.00,
+        i_cprb: 0.0
+    });
+
+    const [showEquipCalc, setShowEquipCalc] = useState(false);
+    const [selectedPresetKey, setSelectedPresetKey] = useState<string | null>(null);
+
+    const BDI_PRESETS = {
+        edificios: {
+            label: 'Construção de Edifícios',
+            obras: { ac: 4.00, sg: 0.80, r: 1.27, df: 1.23, l: 7.40, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            equipamentos: { ac: 0.56, sg: 0.56, r: 0.56, df: 0.59, l: 5.49, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            faixa: { min: 20.34, max: 25.00 },
+            faixaEquip: { min: 11.10, max: 14.02 }
         },
-        {
-            name: "Construção de Edifícios",
-            description: "(também para Reformas)",
-            ac: 5.31, sg: 0.90, r: 1.10, df: 1.10, l: 8.96
+        rodovias: {
+            label: 'Construção de Rodovias e Ferrovias',
+            obras: { ac: 3.87, sg: 0.80, r: 1.27, df: 1.23, l: 7.03, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            equipamentos: { ac: 0.56, sg: 0.56, r: 0.56, df: 0.59, l: 5.01, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            faixa: { min: 19.60, max: 24.23 },
+            faixaEquip: { min: 10.62, max: 13.65 }
         },
-        {
-            name: "Fornecimento de Materiais e Equipamentos",
-            description: "",
-            ac: 3.45, sg: 0.48, r: 0.56, df: 0.85, l: 5.11
+        saneamento: {
+            label: 'Redes de Água, Esgoto e Correlatas',
+            obras: { ac: 4.00, sg: 0.80, r: 1.27, df: 1.23, l: 7.40, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            equipamentos: { ac: 0.56, sg: 0.56, r: 0.56, df: 0.59, l: 5.49, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            faixa: { min: 20.34, max: 25.00 },
+            faixaEquip: { min: 11.10, max: 14.02 }
+        },
+        energia: {
+            label: 'Estações e Redes de Energia Elétrica',
+            obras: { ac: 3.87, sg: 0.80, r: 1.27, df: 1.23, l: 7.03, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            equipamentos: { ac: 0.56, sg: 0.56, r: 0.56, df: 0.59, l: 5.01, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            faixa: { min: 19.60, max: 24.23 },
+            faixaEquip: { min: 10.62, max: 13.65 }
+        },
+        portuarias: {
+            label: 'Obras Portuárias, Marítimas e Fluviais',
+            obras: { ac: 4.00, sg: 0.80, r: 1.27, df: 1.23, l: 7.40, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            equipamentos: { ac: 0.56, sg: 0.56, r: 0.56, df: 0.59, l: 5.49, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            faixa: { min: 20.69, max: 25.49 },
+            faixaEquip: { min: 11.10, max: 14.02 }
+        },
+        fornecimento: {
+            label: 'Fornecimento de Materiais e Equipamentos',
+            obras: null,
+            equipamentos: { ac: 0.56, sg: 0.56, r: 0.56, df: 0.59, l: 5.49, pis: 0.65, cofins: 3.00, iss: 0.00, cprb: 0 },
+            faixa: null,
+            faixaEquip: { min: 11.10, max: 14.02 }
         }
-    ];
+    } as const;
+
+    type PresetKey = keyof typeof BDI_PRESETS;
 
     // Encargos Sociais Modal States
     const [showEncargosModal, setShowEncargosModal] = useState(false);
@@ -1163,23 +1207,54 @@ const BudgetEditor = () => {
         loadBudget();
     };
 
-    const calculateBDI = () => {
-        const { ac, r, sg, df, l, i_pis, i_cofins, i_iss, i_cprb } = bdiCalc;
-        const totalI = (i_pis + i_cofins + i_iss + i_cprb) / 100;
-        const numerator = (1 + (ac / 100) + (r / 100) + (sg / 100)) * (1 + (df / 100)) * (1 + (l / 100));
-        const denominator = 1 - totalI;
-        const result = (numerator / denominator - 1) * 100;
+    // Fórmula multiplicativa TCU (Acórdão 2622/2013)
+    const calcBDIFromState = (state: { ac: number; r: number; sg: number; df: number; l: number; i_pis: number; i_cofins: number; i_iss: number; i_cprb: number }) => {
+        const { ac, r, sg, df, l, i_pis, i_cofins, i_iss, i_cprb } = state;
+        const T = (i_pis + i_cofins + i_iss + i_cprb) / 100;
+        const result = (
+            ((1 + ac / 100) * (1 + sg / 100) * (1 + r / 100) * (1 + df / 100) * (1 + l / 100)) / (1 - T) - 1
+        ) * 100;
         return result;
     };
 
-    const handleApplyPreset = (preset: any) => {
-        setBdiCalc({
-            ...bdiCalc,
-            ac: preset.ac,
-            sg: preset.sg,
-            r: preset.r,
-            df: preset.df,
-            l: preset.l
+    const calculateBDI = () => calcBDIFromState(bdiCalc);
+    const calculateBDIEquip = () => calcBDIFromState(bdiEquipCalc);
+
+    const getFaixaStatus = (bdi: number, faixa: { min: number; max: number } | null) => {
+        if (!faixa) return null;
+        if (bdi < faixa.min) return { label: 'Abaixo da faixa TCU', color: 'text-slate-400' };
+        if (bdi > faixa.max) return { label: 'Acima da faixa TCU — justificativa necessária', color: 'text-orange-500' };
+        return { label: 'Dentro da faixa TCU ✓', color: 'text-green-600' };
+    };
+
+    const handleApplyPreset = (key: PresetKey) => {
+        const preset = BDI_PRESETS[key];
+        setSelectedPresetKey(key);
+        if (preset.obras) {
+            setBdiCalc({
+                ...bdiCalc,
+                ac: preset.obras.ac,
+                sg: preset.obras.sg,
+                r: preset.obras.r,
+                df: preset.obras.df,
+                l: preset.obras.l,
+                i_pis: preset.obras.pis,
+                i_cofins: preset.obras.cofins,
+                i_iss: preset.obras.iss,
+                i_cprb: preset.obras.cprb
+            });
+        }
+        setBdiEquipCalc({
+            ...bdiEquipCalc,
+            ac: preset.equipamentos.ac,
+            sg: preset.equipamentos.sg,
+            r: preset.equipamentos.r,
+            df: preset.equipamentos.df,
+            l: preset.equipamentos.l,
+            i_pis: preset.equipamentos.pis,
+            i_cofins: preset.equipamentos.cofins,
+            i_iss: preset.equipamentos.iss,
+            i_cprb: preset.equipamentos.cprb
         });
     };
 
@@ -1189,6 +1264,15 @@ const BudgetEditor = () => {
         await BudgetService.update(budgetId, { bdi: Number(val.toFixed(2)) });
         setShowBDICalculator(false);
         loadBudget();
+    };
+
+    const handleApplyBDIEquip = async () => {
+        const val = calculateBDIEquip();
+        if (!budget) return;
+        const newSettings = { ...(budget?.settings || {}), bdiEquipamento: Number(val.toFixed(2)) };
+        await BudgetService.update(budgetId, { settings: newSettings });
+        setBudget((prev: any) => ({ ...prev, settings: newSettings }));
+        setLocalBdiEquip(val.toFixed(2));
     };
 
     const handleReorderItems = async () => {
@@ -4125,16 +4209,23 @@ const BudgetEditor = () => {
 
                                 {/* BDI Presets */}
                                 <div className="mb-8 space-y-3">
-                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Escolha o Tipo de Obra (Pre-set Acórdão 2622/2013):</label>
-                                    <div className="grid grid-cols-1 gap-3">
-                                        {BDI_PRESETS.map((p, idx) => (
+                                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Tipo de Obra — Acórdão TCU 2622/2013:</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {(Object.entries(BDI_PRESETS) as [PresetKey, typeof BDI_PRESETS[PresetKey]][]).map(([key, p]) => (
                                             <button
-                                                key={idx}
-                                                onClick={() => handleApplyPreset(p)}
-                                                className="text-left p-4 rounded-2xl border-2 border-slate-100 hover:border-blue-500 hover:bg-blue-50 transition-all group"
+                                                key={key}
+                                                onClick={() => handleApplyPreset(key)}
+                                                className={clsx(
+                                                    "text-left p-3 rounded-xl border-2 transition-all group",
+                                                    selectedPresetKey === key
+                                                        ? "border-blue-500 bg-blue-50"
+                                                        : "border-slate-100 hover:border-blue-300 hover:bg-blue-50/50"
+                                                )}
                                             >
-                                                <p className="font-black text-slate-800 group-hover:text-blue-700">{p.name}</p>
-                                                <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">{p.description}</p>
+                                                <p className={clsx("font-bold text-xs leading-tight", selectedPresetKey === key ? "text-blue-700" : "text-slate-700 group-hover:text-blue-700")}>{p.label}</p>
+                                                {p.faixa && (
+                                                    <p className="text-[9px] text-slate-400 mt-0.5">{p.faixa.min.toFixed(2)}% – {p.faixa.max.toFixed(2)}%</p>
+                                                )}
                                             </button>
                                         ))}
                                     </div>
@@ -4194,25 +4285,120 @@ const BudgetEditor = () => {
                                     </div>
                                 </div>
 
-                                <div className="mt-8 p-6 bg-blue-50 rounded-2xl border border-blue-100 flex justify-between items-center">
-                                    <div>
-                                        <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Resultado Final</p>
-                                        <p className="text-4xl font-black text-blue-700">{calculateBDI().toFixed(2)}%</p>
+                                {/* Resultado Principal */}
+                                <div className="mt-8 p-6 bg-blue-50 rounded-2xl border border-blue-100">
+                                    <div className="flex justify-between items-center">
+                                        <div>
+                                            <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Resultado Final</p>
+                                            <p className="text-4xl font-black text-blue-700">{calculateBDI().toFixed(2)}%</p>
+                                            {selectedPresetKey && (() => {
+                                                const status = getFaixaStatus(calculateBDI(), BDI_PRESETS[selectedPresetKey as PresetKey].faixa);
+                                                return status ? (
+                                                    <p className={`text-xs font-bold mt-1 ${status.color}`}>{status.label}</p>
+                                                ) : null;
+                                            })()}
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => generateBDIReport(settings, bdiCalc, calculateBDI())}
+                                                className="bg-white text-blue-600 px-4 py-3 rounded-xl font-black text-xs border border-blue-200 hover:bg-blue-100 transition-all flex items-center gap-2"
+                                            >
+                                                <Download size={16} /> DOWNLOAD PDF
+                                            </button>
+                                            <button
+                                                onClick={handleApplyBDI}
+                                                className="bg-blue-600 text-white px-6 py-3 rounded-xl font-black text-xs hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-95"
+                                            >
+                                                APLICAR AO ORÇAMENTO
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div className="flex gap-2">
-                                        <button
-                                            onClick={() => generateBDIReport(settings, bdiCalc, calculateBDI())}
-                                            className="bg-white text-blue-600 px-4 py-3 rounded-xl font-black text-xs border border-blue-200 hover:bg-blue-100 transition-all flex items-center gap-2"
-                                        >
-                                            <Download size={16} /> DOWNLOAD PDF
-                                        </button>
-                                        <button
-                                            onClick={handleApplyBDI}
-                                            className="bg-blue-600 text-white px-6 py-3 rounded-xl font-black text-xs hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-95"
-                                        >
-                                            APLICAR AO ORÇAMENTO
-                                        </button>
-                                    </div>
+                                </div>
+
+                                {/* BDI Equipamentos — seção colapsável */}
+                                <div className="mt-6 border border-orange-200 rounded-2xl overflow-hidden">
+                                    <button
+                                        onClick={() => setShowEquipCalc(v => !v)}
+                                        className="w-full p-4 flex justify-between items-center bg-orange-50 hover:bg-orange-100 transition-colors"
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs font-black text-orange-700 uppercase tracking-widest">BDI Equipamentos (Faixa Diferenciada)</span>
+                                            {selectedPresetKey && (() => {
+                                                const p = BDI_PRESETS[selectedPresetKey as PresetKey];
+                                                return p.faixaEquip ? (
+                                                    <span className="text-[10px] text-orange-400">{p.faixaEquip.min.toFixed(2)}% – {p.faixaEquip.max.toFixed(2)}%</span>
+                                                ) : null;
+                                            })()}
+                                        </div>
+                                        <span className="text-orange-500 text-lg">{showEquipCalc ? '▲' : '▼'}</span>
+                                    </button>
+                                    {showEquipCalc && (
+                                        <div className="p-6 bg-white space-y-6">
+                                            <div className="grid grid-cols-2 gap-4">
+                                                {[
+                                                    { label: 'Adm. Central (AC)', key: 'ac' },
+                                                    { label: 'Seguro + Garantia (S+G)', key: 'sg' },
+                                                    { label: 'Taxa de Risco (R)', key: 'r' },
+                                                    { label: 'Desp. Financeiras (DF)', key: 'df' },
+                                                    { label: 'Taxa de Lucro (L)', key: 'l' },
+                                                ].map((field) => (
+                                                    <div key={field.key}>
+                                                        <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1">{field.label}</label>
+                                                        <div className="relative">
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl outline-none focus:border-orange-400 transition-all font-bold text-slate-800 text-sm"
+                                                                value={(bdiEquipCalc as any)[field.key]}
+                                                                onChange={e => setBdiEquipCalc({ ...bdiEquipCalc, [field.key]: Number(e.target.value) })}
+                                                            />
+                                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 font-black text-slate-300 text-xs">%</span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="grid grid-cols-4 gap-3">
+                                                {[
+                                                    { label: 'PIS', key: 'i_pis' },
+                                                    { label: 'COFINS', key: 'i_cofins' },
+                                                    { label: 'ISS', key: 'i_iss' },
+                                                    { label: 'CPRB', key: 'i_cprb' },
+                                                ].map((field) => (
+                                                    <div key={field.key}>
+                                                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{field.label}</label>
+                                                        <div className="relative">
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                className="w-full p-2 bg-slate-50 border-2 border-slate-100 rounded-lg outline-none focus:border-orange-400 transition-all text-xs font-bold"
+                                                                value={(bdiEquipCalc as any)[field.key]}
+                                                                onChange={e => setBdiEquipCalc({ ...bdiEquipCalc, [field.key]: Number(e.target.value) })}
+                                                            />
+                                                            <span className="absolute right-2 top-1/2 -translate-y-1/2 font-black text-slate-300 text-[10px]">%</span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="p-4 bg-orange-50 rounded-xl border border-orange-100 flex justify-between items-center">
+                                                <div>
+                                                    <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest">BDI Equipamentos</p>
+                                                    <p className="text-3xl font-black text-orange-700">{calculateBDIEquip().toFixed(2)}%</p>
+                                                    {selectedPresetKey && (() => {
+                                                        const status = getFaixaStatus(calculateBDIEquip(), BDI_PRESETS[selectedPresetKey as PresetKey].faixaEquip);
+                                                        return status ? (
+                                                            <p className={`text-xs font-bold mt-1 ${status.color}`}>{status.label}</p>
+                                                        ) : null;
+                                                    })()}
+                                                </div>
+                                                <button
+                                                    onClick={handleApplyBDIEquip}
+                                                    className="bg-orange-500 text-white px-5 py-3 rounded-xl font-black text-xs hover:bg-orange-600 shadow-lg shadow-orange-100 transition-all active:scale-95"
+                                                >
+                                                    APLICAR COMO BDI EQUIPAMENTO
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
