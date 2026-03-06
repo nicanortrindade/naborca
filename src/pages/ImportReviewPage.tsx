@@ -152,7 +152,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
             }
 
             // Fluxo assíncrono: polling até result_budget_id aparecer
-            if (result?.async === true) {
+            if (result?.async === true || result?.status === 'processing') {
                 let attempts = 0;
                 const maxAttempts = 80; // 80 x 5s = 400s
                 const poll = async (): Promise<void> => {
@@ -677,7 +677,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                     </button>
                     <button
                         onClick={handleGenerateBudget}
-                        disabled={generating || items.length === 0 || !['finalized', 'extraction_complete', 'pending_hydration'].includes(jobStage || '')}
+                        disabled={generating || items.length === 0}
                         className="bg-blue-600 text-white px-6 md:px-8 py-3.5 rounded-xl font-black text-[13px] md:text-sm flex items-center gap-3 hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-600/20 active:scale-95 border border-blue-500"
                     >
                         {generating ? <Loader2 className="animate-spin" size={20} /> : <FileSpreadsheet size={20} />}

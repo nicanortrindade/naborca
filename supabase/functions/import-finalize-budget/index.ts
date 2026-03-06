@@ -99,7 +99,13 @@ Deno.serve(async (req) => {
         const stageB = batchGuardData?.metadata?.stageB;
         const totalBatches = stageB?.total_batches ?? 0;
         const lastBatch = stageB?.last_persisted_batch_index ?? -1;
-        const allBatchesDone = totalBatches > 0 && lastBatch >= totalBatches - 1;
+        // PRIORITY GUARD: Se já existem itens extraídos, ignoramos o check de batches
+        const { count: itemsCount } = await adminClient
+            .from('import_ai_items')
+            .select('*', { count: 'exact', head: true })
+            .eq('job_id', job_id);
+
+        const allBatchesDone = (itemsCount && itemsCount > 0) || (totalBatches > 0 && lastBatch >= totalBatches - 1);
 
         if (!allBatchesDone) {
             console.warn(`[FinalizeBudget] GUARD BLOCKED: lastBatch=${lastBatch}, totalBatches=${totalBatches}, job=${job_id}`);
@@ -110,7 +116,7 @@ Deno.serve(async (req) => {
             }), { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
-        console.log(`[FinalizeBudget] GUARD PASSED: lastBatch=${lastBatch}, totalBatches=${totalBatches}`);
+        console.log(`[FinalizeBudget] GUARD PASSED: itemsCount=${itemsCount}, lastBatch=${lastBatch}, totalBatches=${totalBatches}`);
 
 
         console.log(`[FinalizeBudget] Job: ${job_id} | Settings: ${uf}/${competence} | StructureV1: ${enable_structure_parser_v1}`);
