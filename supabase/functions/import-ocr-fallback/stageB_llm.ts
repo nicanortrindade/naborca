@@ -399,10 +399,17 @@ Exemplos de separação correta:
 - "20.33642ORSE..." → item_path="20.3", composition_code="3642"  
 - "3.192423SINAPI..." → item_path="3.1", composition_code="92423"
 - "1.1.14656ORSE..." → item_path="1.1.1", composition_code="4656"
+- "1.2.390776SINAPI..." → item_path="1.2.3", composition_code="90776"  ← C7: nunca absorva dígitos do código no último segmento
 
 Regra: o item_path termina sempre no padrão N.N ou N.N.N (números separados por ponto).
+Cada segmento do item_path é SEMPRE um único algarismo ou dois algarismos (máximo .99).
+Se o último segmento parecer ter 3+ dígitos, os dígitos extras pertencem ao composition_code.
 O composition_code começa imediatamente após o item_path, antes do banco (SINAPI/ORSE/Próprio).
 NUNCA inclua dígitos do composition_code dentro do item_path.
+- If two consecutive items share the same composition_code AND the same subgroup prefix in item_path (e.g., both under "3.3"), keep only the first and flag the second with warning "duplicate_same_subgroup". Do NOT apply this rule if the items belong to different subgroups.
+- Extract the "BDI (%)" column value for each item as bdi_percent 
+  (string, e.g. "25,00" or "13,51"). 
+  If the column is not present or the value is blank, return null.
 
 CRITICAL RULE — SECTION TITLE CANDIDATES:
 When a candidate has warnings containing "section_title_candidate":
@@ -427,6 +434,7 @@ Respond ONLY with valid JSON. No markdown, no backticks.
       "quantity": "...",
       "unit_price": "...",
       "total_price": "...",
+      "bdi_percent": "...",
       "item_path": "...",
       "evidence_lines": [ { "text": "..." } ]
     }
@@ -956,7 +964,7 @@ ${JSON.stringify(candidatesContext, null, 2)}
         const parsedItems = await callLLMWithRetry(candidatesContext, userPrompt);
         rawOutputTruncated = "Output returned via recursive retry";
 
-        // Detectar itens adjacentes com códigos sequenciais e valores idênticos
+        // C1: Detectar itens adjacentes com códigos sequenciais e valores idênticos
         if (parsedItems && Array.isArray(parsedItems)) {
             for (let i = 1; i < parsedItems.length; i++) {
                 const prev = parsedItems[i - 1];
@@ -971,6 +979,75 @@ ${JSON.stringify(candidatesContext, null, 2)}
                 ) {
                     curr.warnings = [...(curr.warnings || []), 'possible_duplication_from_adjacent_item'];
                     curr.price_source = 'NEEDS_REVIEW';
+                }
+            }
+        }
+
+        // C8: Detectar item fantasma — raw_line idêntica ao item anterior mas código diferente.
+        // Indica que o LLM leu a mesma linha duas vezes e gerou dois itens com códigos distintos.
+        if (parsedItems && Array.isArray(parsedItems)) {
+            for (let i = 1; i < parsedItems.length; i++) {
+                const prev = parsedItems[i - 1];
+                const curr = parsedItems[i];
+                if (
+                    prev.raw_line && curr.raw_line &&
+                    typeof prev.raw_line === 'string' &&
+                    typeof curr.raw_line === 'string' &&
+                    prev.raw_line.trim() === curr.raw_line.trim() &&
+                    prev.code !== curr.code
+                ) {
+                    curr.warnings = [...(curr.warnings || []), 'duplicate_raw_line'];
+                    curr.price_source = 'NEEDS_REVIEW';
+                }
+            }
+        }
+
+        // C9: deduplicação por composition_code idêntico dentro do mesmo subgrupo
+        if (parsedItems && Array.isArray(parsedItems)) {
+            for (let i = 1; i < parsedItems.length; i++) {
+                const current = parsedItems[i];
+                const prev = parsedItems[i - 1];
+
+                if (
+                    !current.composition_code ||
+                    !prev.composition_code ||
+                    current.composition_code !== prev.composition_code
+                ) continue;
+
+                // extrai prefixo do subgrupo (ex: "3.3.5" → "3.3", "15.2.7" → "15.2")
+                const getSubgroupPrefix = (path: string): string => {
+                    const parts = path?.split('.') ?? [];
+                    return parts.length >= 2 ? parts.slice(0, 2).join('.') : path;
+                };
+
+                const currentPrefix = getSubgroupPrefix(current.item_path ?? '');
+                const prevPrefix = getSubgroupPrefix(prev.item_path ?? '');
+
+                if (currentPrefix === prevPrefix && currentPrefix !== '') {
+                    current.warnings = [
+                        ...(current.warnings || []),
+                        'duplicate_same_subgroup',
+                    ];
+                }
+            }
+        }
+
+        // C7: Sanitizar item_path — último segmento 3+ dígitos indica código SINAPI/ORSE colado pelo OCR.
+        // Ex: "1.2.290776" → LLM errou e retornou item_path="1.2.290"; corrigir para "1.2.3".
+        // Threshold conservador: só atua se último segmento >= 100 (3+ dígitos).
+        // Nunca afeta paths de segmento único nem casos legítimos de 2 dígitos (1.x.10-99).
+        if (parsedItems && Array.isArray(parsedItems)) {
+            for (const item of parsedItems) {
+                if (!item.item_path || typeof item.item_path !== 'string') continue;
+                const parts = (item.item_path as string).split('.');
+                const lastPart = parts[parts.length - 1];
+                if (parts.length >= 2 && /^\d{3,}$/.test(lastPart)) {
+                    const originalPath = item.item_path;
+                    // Mantém apenas o 1º dígito do último segmento (o número real do item)
+                    parts[parts.length - 1] = lastPart[0];
+                    item.item_path = parts.join('.');
+                    item.warnings = [...(item.warnings || []), 'item_path_sanitized'];
+                    item.warnings = [...item.warnings, `item_path_was:${originalPath}`];
                 }
             }
         }

@@ -419,6 +419,7 @@ const BudgetEditor = () => {
     // BDI Calculator States
     const [showBDICalculator, setShowBDICalculator] = useState(false);
     const [localBDI, setLocalBDI] = useState<string>(budget?.bdi?.toString() || '0');
+    const [localBdiEquip, setLocalBdiEquip] = useState<string>(budget?.settings?.bdiEquipamento?.toString() || '');
     const [bdiCalc, setBdiCalc] = useState({
         ac: 3.5,
         r: 0.97,
@@ -1120,7 +1121,10 @@ const BudgetEditor = () => {
         if (budget?.bdi !== undefined) {
             setLocalBDI(budget.bdi.toString());
         }
-    }, [budget?.bdi]);
+        if (budget?.settings?.bdiEquipamento !== undefined) {
+            setLocalBdiEquip(budget.settings.bdiEquipamento.toString());
+        }
+    }, [budget?.bdi, budget?.settings?.bdiEquipamento]);
 
     // Debounce para BDI
     useEffect(() => {
@@ -2566,6 +2570,40 @@ const BudgetEditor = () => {
                                         </button>
                                     </div>
                                 </div>
+                                <div className="text-center px-2 border-r border-slate-200">
+                                    <label className="text-[9px] text-orange-500 font-bold uppercase block">BDI Equip.</label>
+                                    <div className="flex items-center justify-center gap-0.5 whitespace-nowrap">
+                                        <input
+                                            type="number"
+                                            value={localBdiEquip}
+                                            onChange={(e) => setLocalBdiEquip(e.target.value)}
+                                            onBlur={(e) => {
+                                                const val = parseFloat(localBdiEquip);
+                                                if (!isNaN(val) && val !== budget?.settings?.bdiEquipamento && localBdiEquip !== '') {
+                                                    const newSettings = { ...(budget?.settings || {}), bdiEquipamento: val };
+                                                    BudgetService.update(budgetId, { settings: newSettings }).then(() => {
+                                                        setBudget((prev: any) => ({ ...prev, settings: newSettings }));
+                                                    });
+                                                }
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    const val = parseFloat(localBdiEquip);
+                                                    if (!isNaN(val) && val !== budget?.settings?.bdiEquipamento && localBdiEquip !== '') {
+                                                        const newSettings = { ...(budget?.settings || {}), bdiEquipamento: val };
+                                                        BudgetService.update(budgetId, { settings: newSettings }).then(() => {
+                                                            setBudget((prev: any) => ({ ...prev, settings: newSettings }));
+                                                        });
+                                                    }
+                                                    (e.target as HTMLInputElement).blur();
+                                                }
+                                            }}
+                                            placeholder="Auto"
+                                            className="w-14 text-center text-sm font-bold text-slate-700 bg-transparent outline-none focus:ring-1 focus:ring-orange-400 rounded transition-all placeholder-slate-300"
+                                        />
+                                        <span className="text-xs text-slate-400 font-bold">%</span>
+                                    </div>
+                                </div>
                                 <div className="text-center px-1">
                                     <label className="text-[9px] text-slate-400 font-bold uppercase block">Encargos</label>
                                     <button
@@ -3393,10 +3431,17 @@ const BudgetEditor = () => {
 
                                         {/* Valor Unitário (Com BDI) - REQUISITADO */}
                                         <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono font-bold px-2",
+                                            "p-1 text-right border-r border-slate-300 font-mono font-bold px-2 relative",
                                             isNivel1 ? "text-white bg-white/10" : "text-indigo-600 bg-indigo-50/30"
                                         )}>
-                                            {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(unitPriceWithBDI) : ''}
+                                            <div className="flex items-center justify-end gap-1">
+                                                {!isGroup && item.customBDI != null && item.customBDI > 0 && item.customBDI !== budget?.bdi ? (
+                                                    <span className="text-[8px] bg-orange-100 text-orange-700 px-1 rounded whitespace-nowrap border border-orange-200" title="BDI Diferenciado">
+                                                        {item.customBDI.toFixed(2)}%
+                                                    </span>
+                                                ) : null}
+                                                {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(unitPriceWithBDI) : ''}
+                                            </div>
                                         </td>
 
                                         {/* Total - Usa finalPrice que já inclui BDI */}

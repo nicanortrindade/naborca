@@ -42,6 +42,7 @@ export interface ExportItem {
     peso?: number;
     pesoRaw?: number; // 0-1 (Fonte da Verdade)
     composition?: ExportCompositionItem[];
+    customBDI?: number;
     // Campos para identificar CPU
     itemType?: 'insumo' | 'composicao';
     compositionId?: string;
@@ -278,7 +279,7 @@ function addPDFHeader(doc: jsPDF, title: string, budgetName: string, companySett
     doc.text(title.toUpperCase(), pageWidth / 2, 66, { align: 'center' });
 }
 
-function addPDFFinancialSummary(doc: jsPDF, totalSemBDI: number, bdi: number, totalGeral: number) {
+function addPDFFinancialSummary(doc: jsPDF, totalSemBDI: number, bdi: number, totalGeral: number, items?: ExportItem[]) {
     const pageWidth = doc.internal.pageSize.width;
     const pageHeight = doc.internal.pageSize.height;
     let finalY = (doc as any).lastAutoTable?.finalY || 100;
@@ -306,6 +307,19 @@ function addPDFFinancialSummary(doc: jsPDF, totalSemBDI: number, bdi: number, to
     const finalBdi = valBdi;
     const finalGeral = totalGeral;
 
+    let totalBdiGeral = finalBdi;
+    let totalBdiEquipamento = 0;
+
+    if (items) {
+        totalBdiGeral = items
+            .filter(i => i.type !== 'group' && (!i.customBDI || i.customBDI === bdi))
+            .reduce((acc, i) => acc + ((i.finalPrice || 0) - (i.unitPrice * (i.quantity || 0))), 0);
+
+        totalBdiEquipamento = items
+            .filter(i => i.type !== 'group' && i.customBDI != null && i.customBDI !== bdi)
+            .reduce((acc, i) => acc + ((i.finalPrice || 0) - (i.unitPrice * (i.quantity || 0))), 0);
+    }
+
     const rightX = pageWidth - 18;
     let sumY = startY + 8;
 
@@ -319,11 +333,24 @@ function addPDFFinancialSummary(doc: jsPDF, totalSemBDI: number, bdi: number, to
     doc.text(formatCurrency(finalSemBdi), rightX, sumY, { align: 'right' });
 
     sumY += 7;
-    // 2. VALOR DO BDI - Blue
-    doc.setTextColor(30, 58, 138);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`VALOR BDI (${bdi.toFixed(2)}%):`, rightX - 75, sumY);
-    doc.text(formatCurrency(finalBdi), rightX, sumY, { align: 'right' });
+
+    if (totalBdiEquipamento > 0) {
+        // Break down BDI
+        doc.setTextColor(30, 58, 138);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`VALOR BDI GERAL (${bdi.toFixed(2)}%):`, rightX - 75, sumY);
+        doc.text(formatCurrency(totalBdiGeral), rightX, sumY, { align: 'right' });
+
+        sumY += 7;
+        doc.text(`VALOR BDI EQUIPAMENTO:`, rightX - 75, sumY);
+        doc.text(formatCurrency(totalBdiEquipamento), rightX, sumY, { align: 'right' });
+    } else {
+        // 2. VALOR DO BDI - Blue
+        doc.setTextColor(30, 58, 138);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`VALOR BDI (${bdi.toFixed(2)}%):`, rightX - 75, sumY);
+        doc.text(formatCurrency(finalBdi), rightX, sumY, { align: 'right' });
+    }
 
     sumY += 7;
     // 3. TOTAL GLOBAL - Blue Bold
@@ -858,7 +885,7 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
     });
 
     // Financial Summary at the END
-    addPDFFinancialSummary(doc, totalSemBDI, data.bdi || 0, totalGeral);
+    addPDFFinancialSummary(doc, totalSemBDI, data.bdi || 0, totalGeral, hydratedItems);
 
     ensureSpaceForSignature(doc);
     addPDFFooter(doc, data.companySettings, true);
@@ -1657,7 +1684,8 @@ export async function generatePDFPhysicalScheduleBuffer(data: ExportData): Promi
     });
 
     // Financial Summary at the END
-    addPDFFinancialSummary(doc, totalSemBDI, data.bdi || 0, totalGeral);
+    const hydratedItems = adjustExportItems(data);
+    addPDFFinancialSummary(doc, totalSemBDI, data.bdi || 0, totalGeral, hydratedItems);
 
     ensureSpaceForSignature(doc);
     addPDFFooter(doc, data.companySettings, true);
