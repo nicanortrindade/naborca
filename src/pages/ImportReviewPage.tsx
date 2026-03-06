@@ -96,11 +96,11 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         try {
             setLoading(true);
             // Fetch from import_ai_items (Phase 2 output)
-            const { data, error } = await (supabase
-                .from('import_ai_items' as any) as any)
+            const { data, error } = await supabase
+                .from('import_ai_items' as any)
                 .select('*')
                 .eq('job_id', jobId)
-                .order('idx', { ascending: true }); // Use idx from extraction
+                .order('idx', { ascending: true });
 
             if (error) throw error;
             setItems(data || []);
