@@ -102,6 +102,7 @@ export default function ImportStatus() {
 
             // C. Derive Status
             const derived = deriveUiStatus(jobData, fileData, itemsCount || 0);
+            console.log('[DEBUG] derived:', derived, 'uiStatus:', uiStatus);
 
             // State Updates
             setJob(jobData);
