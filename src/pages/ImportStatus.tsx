@@ -93,12 +93,10 @@ export default function ImportStatus() {
 
             if (fileError) console.warn("[ImportStatus] Error fetching file:", fileError);
 
-            // B.1 Fetch Item Count (REGRA ABSOLUTA)
-            // Alterado para 'import_ai_items' (Source of Truth do Worker)
-            const { count: itemsCount } = await (supabase
+            const { count: itemsCount } = await supabase
                 .from('import_ai_items' as any)
                 .select('*', { count: 'exact', head: true })
-                .eq('job_id', id) as any);
+                .eq('job_id', id);
 
             // C. Derive Status
             const derived = deriveUiStatus(jobData, fileData, itemsCount || 0);
