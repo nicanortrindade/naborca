@@ -1472,12 +1472,17 @@ const BudgetEditor = () => {
 
     // Fórmula multiplicativa TCU (Acórdão 2622/2013)
     const calcBDIFromState = (state: { ac: number; r: number; sg: number; df: number; l: number; i_pis: number; i_cofins: number; i_iss: number; i_cprb: number }) => {
-        const { ac, r, sg, df, l, i_pis, i_cofins, i_iss, i_cprb } = state;
-        const T = (i_pis + i_cofins + i_iss + i_cprb) / 100;
-        const result = (
-            ((1 + ac / 100) * (1 + sg / 100) * (1 + r / 100) * (1 + df / 100) * (1 + l / 100)) / (1 - T) - 1
-        ) * 100;
-        return result;
+        // AC + S + R são somados antes de virar fator (fórmula TCU)
+        const acsr = (state.ac + state.sg + state.r) / 100;
+        const DF = state.df / 100;
+        const L = state.l / 100;
+        const I = (state.i_pis + state.i_cofins + state.i_iss + (state.i_cprb ?? 0)) / 100;
+
+        const numerador = (1 + acsr) * (1 + DF) * (1 + L);
+        const denominador = (1 - I);
+
+        const bdi = (numerador / denominador) - 1;
+        return Math.round(bdi * 10000) / 100;
     };
 
     const calculateBDI = () => calcBDIFromState(bdiCalc);

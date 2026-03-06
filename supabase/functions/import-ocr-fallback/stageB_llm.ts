@@ -1151,6 +1151,8 @@ ${JSON.stringify(candidatesContext, null, 2)}
                     quantity: raw.quantity != null ? String(raw.quantity) : null,
                     unit_price: raw.unit_price != null ? String(raw.unit_price) : null,
                     total_price: raw.total_price != null ? String(raw.total_price) : null,
+                    unit_price_with_bdi: raw.unit_price_with_bdi != null ? String(raw.unit_price_with_bdi) : null,
+                    bdi_percent: raw.bdi_percent != null ? String(raw.bdi_percent) : null,
                     item_path: raw.item_path ?? (candidates.find((c: any) => c.id === (raw.candidate_id ?? raw.evidence?.candidate_id))?.extracted_signals?.item_path) ?? null,
                     raw_numbers: [], // Filled by default or logic
                     warnings: [],

@@ -323,7 +323,6 @@ BEGIN -- 1. Setup & Validation
             jsonb_build_object('parser', CASE WHEN v_use_parser THEN 'v1' ELSE 'flat' END, 'num', v_numbering),
             CASE
                 WHEN v_item.bdi_percent IS NOT NULL THEN v_item.bdi_percent::numeric
-                WHEN v_bdi_equip > 0 AND (v_item.unit IN ('H', 'h', 'HORA', 'hora')) THEN v_bdi_equip
                 ELSE NULL
             END)
         RETURNING id INTO v_inserted_item_id;
