@@ -29,6 +29,9 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
     const [jobContext, setJobContext] = useState<any>(null);
     const [jobStage, setJobStage] = useState<string | null>(null);
     const [mostrarOutrasBases, setMostrarOutrasBases] = useState(false);
+    const bdiAutoFilledRef = useRef(false);
+    const [bdiDetectionInfo, setBdiDetectionInfo] = useState<{ clusters: { center: number; count: number; label: string }[]; total: number }>({ clusters: [], total: 0 });
+    const [showBdiEspecial, setShowBdiEspecial] = useState(false);
 
     const [params, setParams] = useState({
         uf: 'BA',
@@ -39,6 +42,8 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         encargo_mensalista_percent: 0,
         bases_selecionadas: ['SINAPI'] as string[],
         bdi_equipamentos: 0,
+        bdi_especial: 0,
+        bdi_especial_label: '',
         obra_nome: '',
         municipio: ''
     });
@@ -104,6 +109,60 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
 
             if (error) throw error;
             setItems(data || []);
+
+            // === AUTO-DETECT BDI (somente no primeiro carregamento) ===
+            if (!bdiAutoFilledRef.current && data && data.length > 0) {
+                const detections: number[] = [];
+                for (const item of data) {
+                    const qty = parseFloat(item.quantity) || 0;
+                    const price = parseFloat(item.unit_price) || 0;
+                    const total = parseFloat(item.total) || 0;
+                    if (qty > 0 && price > 0 && total > 0) {
+                        const expected = qty * price;
+                        const ratio = total / expected;
+                        if (ratio > 1.01 && ratio < 2.0) {
+                            detections.push(ratio - 1);
+                        }
+                    }
+                }
+
+                if (detections.length > 0) {
+                    const clusters: { center: number; count: number; label: string }[] = [];
+                    for (const bdi of detections) {
+                        const match = clusters.find(c => Math.abs(c.center - bdi) <= 0.02);
+                        if (match) {
+                            match.center = (match.center * match.count + bdi) / (match.count + 1);
+                            match.count++;
+                        } else {
+                            clusters.push({ center: bdi, count: 1, label: '' });
+                        }
+                    }
+                    clusters.sort((a, b) => b.count - a.count);
+
+                    if (clusters.length >= 1) clusters[0].label = 'BDI Geral';
+                    if (clusters.length >= 2) clusters[1].label = 'BDI Equipamentos';
+                    if (clusters.length >= 3) clusters[2].label = 'BDI Especial';
+
+                    setBdiDetectionInfo({ clusters, total: detections.length });
+
+                    const round2 = (n: number) => Math.round(n * 10000) / 100;
+                    const updates: Record<string, any> = {};
+                    if (clusters.length >= 1) updates.bdi_percent = round2(clusters[0].center);
+                    if (clusters.length >= 2 && Math.abs(clusters[0].center - clusters[1].center) > 0.02) {
+                        updates.bdi_equipamentos = round2(clusters[1].center);
+                    }
+                    if (clusters.length >= 3 && Math.abs(clusters[0].center - clusters[2].center) > 0.02) {
+                        updates.bdi_especial = round2(clusters[2].center);
+                        setShowBdiEspecial(true);
+                    }
+
+                    if (Object.keys(updates).length > 0) {
+                        setParams(prev => ({ ...prev, ...updates }));
+                    }
+                }
+                bdiAutoFilledRef.current = true;
+            }
+
         } catch (err: any) {
             console.error('Fetch error:', err);
             setError(err.message || 'Erro ao carregar itens.');
@@ -114,6 +173,15 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
 
     const handleGenerateBudget = async () => {
         if (!jobId) return;
+
+        if (params.bdi_percent === 0) {
+            const proceed = window.confirm(
+                'BDI não informado — deseja continuar com 0%?\n\n' +
+                'O orçamento será gerado sem incidência de BDI sobre os preços unitários.'
+            );
+            if (!proceed) return;
+        }
+
         setGenerating(true);
 
         try {
@@ -131,6 +199,12 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                     },
                     enable_structure_parser_v1: true,
                     bdi_equipamentos: params.bdi_equipamentos,
+                    bdi_especial: params.bdi_especial,
+                    bdi_rates: [
+                        { label: 'BDI Geral', value: params.bdi_percent, is_default: true },
+                        ...(params.bdi_equipamentos > 0 ? [{ label: 'BDI Equipamentos', value: params.bdi_equipamentos }] : []),
+                        ...(params.bdi_especial >= 1 ? [{ label: params.bdi_especial_label || 'BDI Especial', value: params.bdi_especial }] : [])
+                    ],
                     obra_nome: params.obra_nome,
                     municipio: params.municipio,
                     bases_selecionadas: params.bases_selecionadas
@@ -577,7 +651,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                     <section className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col justify-between">
                         <div>
                             <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4">Bonificação e Despesas Indiretas (BDI)</h2>
-                            <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div className={`grid gap-4 mb-4 ${showBdiEspecial || params.bdi_especial > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">BDI Geral (%)</label>
                                     <div className="relative">
@@ -589,6 +663,12 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                         />
                                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">%</span>
                                     </div>
+                                    {bdiDetectionInfo.clusters[0] && (
+                                        <p className="text-[10px] text-blue-500 mt-1 font-medium">Detectado em {bdiDetectionInfo.clusters[0].count} de {bdiDetectionInfo.total} itens</p>
+                                    )}
+                                    {(params.bdi_percent < 10 || params.bdi_percent > 40) && params.bdi_percent > 0 && (
+                                        <p className="text-[10px] text-amber-600 mt-1 font-medium">⚠ Valor fora da faixa usual (10-40%)</p>
+                                    )}
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">BDI Equipamentos (%)</label>
@@ -601,12 +681,56 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                         />
                                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">%</span>
                                     </div>
+                                    {bdiDetectionInfo.clusters[1] && (
+                                        <p className="text-[10px] text-orange-500 mt-1 font-medium">Detectado em {bdiDetectionInfo.clusters[1].count} de {bdiDetectionInfo.total} itens</p>
+                                    )}
+                                    {(params.bdi_equipamentos < 10 || params.bdi_equipamentos > 40) && params.bdi_equipamentos > 0 && (
+                                        <p className="text-[10px] text-amber-600 mt-1 font-medium">⚠ Valor fora da faixa usual (10-40%)</p>
+                                    )}
                                 </div>
+                                {(showBdiEspecial || params.bdi_especial > 0) && (
+                                    <div>
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <input
+                                                type="text"
+                                                className="text-xs font-bold text-slate-500 uppercase bg-transparent border-b border-dashed border-slate-300 focus:border-emerald-500 outline-none w-full"
+                                                value={params.bdi_especial_label || 'BDI Especial'}
+                                                onChange={e => setParams({ ...params, bdi_especial_label: e.target.value })}
+                                                placeholder="Nome da faixa"
+                                            />
+                                            <span className="text-[10px] text-slate-400">(%)</span>
+                                        </div>
+                                        <div className="relative">
+                                            <input
+                                                type="number"
+                                                className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-500 outline-none transition-colors font-medium text-sm pr-8 text-emerald-800 focus:bg-emerald-50/50"
+                                                value={params.bdi_especial}
+                                                onChange={e => setParams({ ...params, bdi_especial: parseFloat(e.target.value) || 0 })}
+                                            />
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">%</span>
+                                        </div>
+                                        {bdiDetectionInfo.clusters[2] && (
+                                            <p className="text-[10px] text-emerald-500 mt-1 font-medium">Detectado em {bdiDetectionInfo.clusters[2].count} de {bdiDetectionInfo.total} itens</p>
+                                        )}
+                                        {(params.bdi_especial < 10 || params.bdi_especial > 40) && params.bdi_especial > 0 && (
+                                            <p className="text-[10px] text-amber-600 mt-1 font-medium">⚠ Valor fora da faixa usual (10-40%)</p>
+                                        )}
+                                    </div>
+                                )}
                             </div>
+                            {!showBdiEspecial && params.bdi_especial === 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowBdiEspecial(true)}
+                                    className="text-[11px] px-3 py-1.5 text-emerald-600 font-bold hover:bg-emerald-50 rounded-lg border border-emerald-200 transition-colors mb-4 flex items-center gap-1"
+                                >
+                                    <Plus size={12} /> Adicionar 3ª faixa de BDI
+                                </button>
+                            )}
                             <div className="flex items-start gap-3 text-slate-600 bg-slate-50/80 p-3.5 rounded-xl border border-slate-100">
                                 <Info size={16} className="shrink-0 mt-0.5 text-blue-500" />
                                 <p className="text-[11px] leading-relaxed">
-                                    O <strong>BDI Equipamentos</strong> será aplicado automaticamente aos itens classificados sob esse critério durante a importação para garantir conformidade técnica.
+                                    Os valores de BDI foram detectados automaticamente a partir dos itens do seu orçamento. Confira e ajuste se necessário.
                                 </p>
                             </div>
                         </div>
