@@ -407,23 +407,13 @@ BEGIN
         END IF;
 
         -- =====================================================================
-        -- M13: Calculate BDI from PDF total vs base price
-        -- Formula: BDI = ((total / (qty * unit_price)) - 1) * 100
-        -- v_item.total = total from PDF (WITH BDI applied)
-        -- v_item.quantity * v_item.unit_price = base total (WITHOUT BDI)
+        -- M13: Get BDI from deterministic stage B
         -- =====================================================================
         v_bdi_calc := NULL;
-        IF COALESCE(v_item.quantity, 0) > 0
-           AND COALESCE(v_item.unit_price, 0) > 0
-           AND COALESCE(v_item.total, 0) > 0 THEN
-            v_bdi_calc := ROUND(
-                ((v_item.total / (v_item.quantity * v_item.unit_price)) - 1) * 100,
-                2
-            );
-            -- Sanity: reject negative or absurd values
-            IF v_bdi_calc <= 0 OR v_bdi_calc >= 200 THEN
-                v_bdi_calc := NULL;
-            END IF;
+        IF v_item.bdi_percent IS NOT NULL 
+           AND v_item.bdi_percent > 0 
+           AND v_item.bdi_percent < 200 THEN
+            v_bdi_calc := v_item.bdi_percent;
         END IF;
 
         INSERT INTO public.budget_items (
