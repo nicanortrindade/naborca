@@ -1437,7 +1437,7 @@ const BudgetEditor = () => {
     useEffect(() => {
         const handler = setTimeout(() => {
             const val = parseFloat(localBDI);
-            if (!isNaN(val) && val !== budget?.bdi && localBDI !== '') {
+            if (!isNaN(val) && val !== budget?.bdi && localBDI !== '' && budget != null) {
                 handleUpdateBDI(val);
             }
         }, 800);
