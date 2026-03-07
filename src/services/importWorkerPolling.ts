@@ -117,16 +117,6 @@ export async function runImportParseWorkerUntilDone(params: {
 
             const job = jobRaw as any;
 
-            // ROBUST SUCCESS CHECK
-            if (isTerminalSuccessStatus(job?.status)) {
-                logTelemetry('info', 'polling_terminal', { jobId, result: 'terminal_success', status: job.status });
-                return {
-                    finalStatus: 'success',
-                    message: job.status === 'waiting_user_extraction_failed'
-                        ? "Extração limitada. Redirecionando..."
-                        : "Aguardando revisão."
-                };
-            }
 
             if (jobError) {
                 console.warn("[IMPORT-POLL] Error fetching job:", jobError);

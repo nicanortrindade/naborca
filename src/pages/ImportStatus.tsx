@@ -75,12 +75,6 @@ export default function ImportStatus() {
 
             if (jobError) throw jobError;
 
-            // PRIORITY REDIRECT: IF BUDGET EXISTS, GO THERE (Ignore status)
-            if ((jobData as any)?.result_budget_id) {
-                console.log("[ImportStatus] Budget ready, redirecting:", (jobData as any).result_budget_id);
-                navigate(toRelativePath(`/budgets/${(jobData as any).result_budget_id}`));
-                return; // Stop processing
-            }
 
             // B. Fetch Latest File
             const { data: fileData, error: fileError } = await (supabase
@@ -150,11 +144,6 @@ export default function ImportStatus() {
             pollIntervalRef.current = null;
         }
 
-        // PRIORITY NAVIGATION: If budget exists, go there immediately
-        if ((job as any)?.result_budget_id) {
-            console.log("Redirecting to existing budget:", (job as any).result_budget_id);
-            navigate(toRelativePath(`/budgets/${(job as any).result_budget_id}`));
-        }
 
     }, [uiStatus, id, job]);
 
