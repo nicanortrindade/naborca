@@ -720,18 +720,9 @@ export function generateCandidatesStageA(text: string, options: {
                 const _contextAfterLines: string[] = [];
                 for (let _j = i + 1; _j < Math.min(limit, i + 6); _j++) {
                     const _nextLine = lines[_j].replace(/\r/g, '').trim();
-                    // Paramos se a linha é claramente um novo item (path ou code+banco)
-                    // EXCETO se for a primeira linha E contiver apenas unidade + números
-                    // (dados da linha de dados do item atual)
-                    const isNewItem = REGEX_ITEM_PATH.test(_nextLine) || REGEX_CODE_PREFIX_B2.test(_nextLine);
-                    if (isNewItem) {
-                        // Primeira linha: verificar se parece ser dados de continuação
-                        if (_j === i + 1 && /^\s*(UN|m²|m³|M2|M3|KG|VB|CJ|MÊS|MES|H|ML|M|L|T)\s+[\d.,]+/i.test(_nextLine)) {
-                            _contextAfterLines.push(lines[_j]);
-                            continue;
-                        }
-                        break;
-                    }
+                    // Skip boundary check for the first line (i+1): it may be the code/description of the current item,
+                    // or it could be the continuation values that were merged by the OCR.
+                    if (_j > i + 1 && (REGEX_ITEM_PATH.test(_nextLine) || REGEX_CODE_PREFIX_B2.test(_nextLine))) break;
                     _contextAfterLines.push(lines[_j]);
                 }
                 const _contextAfter = (trailingMatch ? trailingMatch[2] + '\n' : '') + _contextAfterLines.join('\n');

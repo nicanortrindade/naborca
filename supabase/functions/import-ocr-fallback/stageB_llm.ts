@@ -479,20 +479,12 @@ CRITICAL: When bank name is fused to code (e.g. "SINAPI103689", "ORSE4554"):
 - Set code to ONLY the numeric/alphanumeric part ("103689", "4554")
 - Do NOT include the bank name in the code field
 
-ANTI-LEAKAGE GUARD (MANDATORY):
-BEFORE returning quantity, unit_price, or total_price for any item:
-- Verify these values appear in the CURRENT candidate's own snippet or evidence_lines.
-- If the values ONLY appear in context_before, they belong to the PREVIOUS item. Return null.
-- If two consecutive items in YOUR output share identical (quantity, unit_price, total_price)
-  AND have different descriptions, the SECOND item almost certainly copied from the first.
-  Set quantity=null, unit_price=null, total_price=null for the second item.
-
-Example of WRONG output (leakage):
-  Item 1: code="92762", quantity="85,32", unit_price="14,28"
-  Item 2: code="92760", quantity="85,32", unit_price="14,28"  ← WRONG: copied from Item 1
-Correct output:
-  Item 1: code="92762", quantity="85,32", unit_price="14,28"
-  Item 2: code="92760", quantity=null, unit_price=null  ← Values not in its own evidence
+ANTI-LEAKAGE AWARENESS:
+When processing multiple items in a batch, each item has its own evidence (snippet + context_after).
+Extract quantity, unit_price, and total_price from EACH item's own evidence independently.
+Do NOT copy values from a previous item when the current item's evidence clearly shows different values.
+If the current item's evidence has NO numeric values at all, return null — but this should be rare.
+Most budget items DO have their own quantity and price in their evidence.
 `;
 
 // ------------------------------------------------------------------
@@ -1262,10 +1254,7 @@ ${JSON.stringify(candidatesContext, null, 2)}
                 }
 
                 if (pq === cq && pp === cp && descDiff && codesAreSequential) {
-                    curr.quantity = null;
-                    curr.unit_price = null;
-                    curr.total_price = null;
-                    curr.warnings = [...(curr.warnings || []), 'anti_leakage_nullified'];
+                    curr.warnings = [...(curr.warnings || []), 'possible_leakage_adjacent'];
                 }
             }
         }
