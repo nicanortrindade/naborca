@@ -177,7 +177,7 @@ export async function runImportParseWorkerUntilDone(params: {
             }
 
             // --- REGRA ABSOLUTA: Se existem itens, o job está pronto para revisão ---
-            if ((itemsCount || 0) > 0 && !job?.result_budget_id) {
+            if ((itemsCount || 0) > 0 && !job?.result_budget_id && isTerminalSuccessStatus(job?.status)) {
                 logTelemetry('info', 'polling_terminal', { jobId, result: 'success_items_exist_priority', items: itemsCount });
                 return {
                     finalStatus: 'success',
