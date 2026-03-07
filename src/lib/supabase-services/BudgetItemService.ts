@@ -161,6 +161,7 @@ function toDomain(row: BudgetItemRow): BudgetItem {
         type: (row.type as any) || 'material',
         source: (row.source as any) || 'OWN',
         itemType: (row.item_type as any) || undefined,
+        customBDI: (row as any).custom_bdi ?? undefined,
         calculationMemory: row.calculation_memory || undefined,
         calculationSteps: row.calculation_steps || undefined,
         isLocked: row.is_locked || false,
