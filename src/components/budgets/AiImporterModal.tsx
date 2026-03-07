@@ -138,6 +138,7 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         .eq('id', jobId)
                         .single();
 
+                    const hasBudgetId = !!jobData?.result_budget_id;
                     const isFinalized = jobData?.stage === 'finalized';
                     const isPendingHydration = jobData?.stage === 'pending_hydration';
                     const isExtractionComplete =
@@ -145,7 +146,6 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
                         (jobData?.stage === 'extraction_complete' ||
                             jobData?.stage === 'pending_hydration' ||
                             (jobData?.status === 'done' && !jobData?.result_budget_id));
-                    const hasBudgetId = !!jobData?.result_budget_id;
 
                     // Redireciona quando finalizado com budget_id
                     if (isFinalized && hasBudgetId) {
@@ -166,13 +166,28 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
 
                     // Dispara finalização uma vez quando extração completa
                     if (isExtractionComplete && !finalizationTriggered) {
-                        finalizationTriggered = true;
-                        finalizeTriggeredRef.current[jobId] = true;
-                        localStorage.setItem(`finalize_attempted_${jobId}`, 'true');
-                        clearImportSession();
-                        navigate(toRelativePath(`/importacoes/${jobId}`));
-                        onClose();
-                        return;
+                        // GUARDA: Verificar se há itens no banco antes de navegar
+                        let aiItemsCount = 0;
+                        try {
+                            const { count } = await supabase
+                                .from('import_ai_items' as any)
+                                .select('*', { count: 'exact', head: true })
+                                .eq('job_id', jobId);
+                            aiItemsCount = count || 0;
+                        } catch (e) {
+                            console.warn('[UI-IMPORT] Failed to count AI items, continuing poll cycle', e);
+                        }
+
+                        if (aiItemsCount > 0) {
+                            finalizationTriggered = true;
+                            finalizeTriggeredRef.current[jobId] = true;
+                            localStorage.setItem(`finalize_attempted_${jobId}`, 'true');
+                            clearImportSession();
+                            navigate(toRelativePath(`/importacoes/${jobId}`));
+                            onClose();
+                            return;
+                        }
+                        // aiItemsCount === 0 → continuar polling (sleep 3s no final do loop)
                     }
 
                     // If finalization was triggered but taking too long, redirect to review

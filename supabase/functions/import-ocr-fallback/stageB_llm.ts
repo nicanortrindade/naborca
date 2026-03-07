@@ -478,6 +478,21 @@ CRITICAL: When bank name is fused to code (e.g. "SINAPI103689", "ORSE4554"):
 - Set price_source to the bank name ("SINAPI", "ORSE")
 - Set code to ONLY the numeric/alphanumeric part ("103689", "4554")
 - Do NOT include the bank name in the code field
+
+ANTI-LEAKAGE GUARD (MANDATORY):
+BEFORE returning quantity, unit_price, or total_price for any item:
+- Verify these values appear in the CURRENT candidate's own snippet or evidence_lines.
+- If the values ONLY appear in context_before, they belong to the PREVIOUS item. Return null.
+- If two consecutive items in YOUR output share identical (quantity, unit_price, total_price)
+  AND have different descriptions, the SECOND item almost certainly copied from the first.
+  Set quantity=null, unit_price=null, total_price=null for the second item.
+
+Example of WRONG output (leakage):
+  Item 1: code="92762", quantity="85,32", unit_price="14,28"
+  Item 2: code="92760", quantity="85,32", unit_price="14,28"  ← WRONG: copied from Item 1
+Correct output:
+  Item 1: code="92762", quantity="85,32", unit_price="14,28"
+  Item 2: code="92760", quantity=null, unit_price=null  ← Values not in its own evidence
 `;
 
 // ------------------------------------------------------------------
@@ -1204,6 +1219,53 @@ ${JSON.stringify(candidatesContext, null, 2)}
                         raw_output_excerpt: JSON.stringify(raw).substring(0, 300)
                     });
                     console.warn(`[STAGE-B] Batch ${batchIndex} Item Invalid:`, reason);
+                }
+            }
+        }
+
+        // C10: ANTI-LEAKAGE DETERMINISTIC GUARD
+        // Se dois itens consecutivos têm quantity E unit_price idênticos, 
+        // descrições DIFERENTES, E códigos sequenciais (∆≤5), anula os valores do segundo item.
+        // A condição de código sequencial evita falsos positivos em casos legítimos
+        // (ex: duas armações CA-50 de bitolas diferentes com mesma quantidade/preço).
+        if (validatedItems.length >= 2) {
+            for (let i = 1; i < validatedItems.length; i++) {
+                const prev = validatedItems[i - 1];
+                const curr = validatedItems[i];
+
+                // Só aplica se ambos têm valores preenchidos
+                if (prev.quantity == null || curr.quantity == null) continue;
+                if (prev.unit_price == null || curr.unit_price == null) continue;
+
+                // Normalizar para comparação
+                const pq = String(prev.quantity).replace(',', '.').trim();
+                const cq = String(curr.quantity).replace(',', '.').trim();
+                const pp = String(prev.unit_price).replace(',', '.').trim();
+                const cp = String(curr.unit_price).replace(',', '.').trim();
+
+                // Descrições diferentes mas valores idênticos
+                const descDiff = (prev.description || '').trim().toUpperCase() !==
+                    (curr.description || '').trim().toUpperCase();
+
+                // PROTEÇÃO contra falsos positivos:
+                // Só anula se os códigos são numéricos sequenciais (∆ ≤ 5).
+                // Ex: 92762/92760 = provavelmente leakage (∆=2)
+                // Ex: 92762/45312 = provavelmente coincidência legítima (∆=47450)
+                // Se um ou ambos não têm código, aplica normalmente (não há como validar).
+                let codesAreSequential = true; // default: aplica a guarda
+                if (prev.code && curr.code) {
+                    const prevNum = parseInt(prev.code.replace(/\D/g, ''), 10);
+                    const currNum = parseInt(curr.code.replace(/\D/g, ''), 10);
+                    if (!isNaN(prevNum) && !isNaN(currNum)) {
+                        codesAreSequential = Math.abs(currNum - prevNum) <= 5;
+                    }
+                }
+
+                if (pq === cq && pp === cp && descDiff && codesAreSequential) {
+                    curr.quantity = null;
+                    curr.unit_price = null;
+                    curr.total_price = null;
+                    curr.warnings = [...(curr.warnings || []), 'anti_leakage_nullified'];
                 }
             }
         }
