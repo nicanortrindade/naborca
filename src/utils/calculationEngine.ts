@@ -26,6 +26,50 @@ export interface BudgetCalculationResult {
 }
 
 /**
+ * Gera itemNumber hierárquico para N níveis (ex: 1, 1.1, 1.1.1, 1.1.1.1, ...)
+ * Usa parentId para construir a árvore e atribui números sequenciais por grupo de irmãos.
+ * Retorna um Map<string, string> de itemId → itemNumber.
+ */
+export function generateItemNumbers(items: any[]): Map<string, string> {
+    // 1. Construir mapa de filhos agrupados por parentId
+    const childrenMap = new Map<string | null, any[]>();
+    for (const item of items) {
+        const pid = item.parentId || null;
+        if (!childrenMap.has(pid)) childrenMap.set(pid, []);
+        childrenMap.get(pid)!.push(item);
+    }
+
+    // 2. Ordenar cada grupo de filhos por order (ou order_index)
+    for (const [, children] of childrenMap) {
+        children.sort((a: any, b: any) => {
+            const oa = a.order ?? a.order_index ?? 0;
+            const ob = b.order ?? b.order_index ?? 0;
+            return oa - ob;
+        });
+    }
+
+    // 3. Percorrer recursivamente e atribuir números
+    const result = new Map<string, string>();
+
+    function traverse(parentId: string | null, prefix: string) {
+        const children = childrenMap.get(parentId);
+        if (!children) return;
+        let counter = 0;
+        for (const child of children) {
+            counter++;
+            const num = prefix ? `${prefix}.${counter}` : `${counter}`;
+            if (child.id) {
+                result.set(child.id, num);
+            }
+            traverse(child.id, num);
+        }
+    }
+
+    traverse(null, '');
+    return result;
+}
+
+/**
  * Corrige hierarquia de itens (Virtual Parenting)
  * Essencial para itens importados via planilha que podem vir sem parentId explícito.
  */

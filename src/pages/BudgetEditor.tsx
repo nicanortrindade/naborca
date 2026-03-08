@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'rea
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { BudgetService } from '../lib/supabase-services/BudgetService';
 import { BudgetItemService } from '../lib/supabase-services/BudgetItemService'; // Removed prepareItemsForDisplay
-import { calculateBudget, repairHierarchy } from '../utils/calculationEngine';
+import { calculateBudget, repairHierarchy, generateItemNumbers } from '../utils/calculationEngine';
 import { BudgetItemCompositionService } from '../lib/supabase-services/BudgetItemCompositionService';
 import GlobalAdjustmentModal from '../components/budgets/GlobalAdjustmentModal';
 import { InsumoService } from '../lib/supabase-services/InsumoService';
@@ -1464,15 +1464,9 @@ const BudgetEditor = () => {
                 newItems.splice(afterIndex + 1, 0, newItem);
                 newItems.forEach((it, idx) => { it.order = idx + 1; });
                 const repairedItems = repairHierarchy(newItems);
-                let c1 = 0; let c2 = 0; let c3 = 0;
-                const payload = repairedItems.map((item) => {
-                    if (item.level === 1) { c1++; c2 = 0; c3 = 0; }
-                    else if (item.level === 2) { c2++; c3 = 0; }
-                    else if (item.level >= 3) { c3++; }
-                    let itemNumberStr = "";
-                    if (item.level === 1) itemNumberStr = `${c1}`;
-                    else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
-                    else itemNumberStr = `${c1}.${c2}.${c3}`;
+                const numberMap = generateItemNumbers(repairedItems);
+                const payload = repairedItems.map((item, idx) => {
+                    const itemNumberStr = numberMap.get(item.id!) || `${idx + 1}`;
                     const finalParentId = item.parentId && String(item.parentId).trim() !== "" && String(item.parentId).trim().toLowerCase() !== "null" ? String(item.parentId) : null;
                     return { id: item.id!, order: item.order, parentId: finalParentId, itemNumber: itemNumberStr };
                 });
@@ -1604,19 +1598,10 @@ const BudgetEditor = () => {
 
                 const repairedItems = repairHierarchy(newItems);
 
-                let c1 = 0; let c2 = 0; let c3 = 0;
-                const payload = repairedItems.map((item) => {
-                    if (item.level === 1) { c1++; c2 = 0; c3 = 0; }
-                    else if (item.level === 2) { c2++; c3 = 0; }
-                    else if (item.level >= 3) { c3++; }
-
-                    let itemNumberStr = "";
-                    if (item.level === 1) itemNumberStr = `${c1}`;
-                    else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
-                    else itemNumberStr = `${c1}.${c2}.${c3}`;
-
+                const numberMap = generateItemNumbers(repairedItems);
+                const payload = repairedItems.map((item, idx) => {
+                    const itemNumberStr = numberMap.get(item.id!) || `${idx + 1}`;
                     const finalParentId = item.parentId && String(item.parentId).trim() !== "" && String(item.parentId).trim().toLowerCase() !== "null" ? String(item.parentId) : null;
-
                     return { id: item.id!, order: item.order, parentId: finalParentId, itemNumber: itemNumberStr };
                 });
 
@@ -1667,15 +1652,9 @@ const BudgetEditor = () => {
             const repairedItems = repairHierarchy(viewItems || []);
 
             // Renumber all items
-            let c1 = 0, c2 = 0, c3 = 0;
-            const payload = repairedItems.map((item: any) => {
-                if (item.level === 1) { c1++; c2 = 0; c3 = 0; }
-                else if (item.level === 2) { c2++; c3 = 0; }
-                else { c3++; }
-                let num = '';
-                if (item.level === 1) num = `${c1}`;
-                else if (item.level === 2) num = `${c1}.${c2}`;
-                else num = `${c1}.${c2}.${c3}`;
+            const numberMap = generateItemNumbers(repairedItems);
+            const payload = repairedItems.map((item: any, idx: number) => {
+                const num = numberMap.get(item.id!) || `${idx + 1}`;
                 const pid = item.parentId && String(item.parentId).trim() !== '' && String(item.parentId).trim().toLowerCase() !== 'null' ? String(item.parentId) : null;
                 return { id: item.id!, order: item.order, parentId: pid, itemNumber: num };
             });
@@ -1825,26 +1804,10 @@ const BudgetEditor = () => {
         try {
             const sortedItems = [...items].sort((a, b) => (a.order || 0) - (b.order || 0));
 
-            let c1 = 0; // Etapa (L1)
-            let c2 = 0; // Sub-etapa (L2)
-            let c3 = 0; // Item (L3)
+            const numberMap = generateItemNumbers(sortedItems);
 
             const updates = sortedItems.map((item, i) => {
-                if (item.level === 1) {
-                    c1++;
-                    c2 = 0;
-                    c3 = 0;
-                } else if (item.level === 2) {
-                    c2++;
-                    c3 = 0;
-                } else if (item.level >= 3) {
-                    c3++;
-                }
-
-                let itemNumberStr = "";
-                if (item.level === 1) itemNumberStr = `${c1}`;
-                else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
-                else itemNumberStr = `${c1}.${c2}.${c3}`;
+                const itemNumberStr = numberMap.get(item.id!) || `${i + 1}`;
 
                 const currentOrder = i + 1;
 
@@ -1949,26 +1912,12 @@ const BudgetEditor = () => {
             return;
         }
 
-        // 4. Renumerar (Reconstruir 1.1, 1.2, 1.2.1)
-        // Logica espelhada do handleReorderItems
-        let c1 = 0; // Etapa
-        let c2 = 0; // Sub
-        let c3 = 0; // Item
+        // 4. Renumerar (suporte a N níveis via generateItemNumbers)
+        const numberMap = generateItemNumbers(repairedItems);
 
         // Preparar Payload para RPC
-        const payload: ReorderRPCItem[] = repairedItems.map((item) => {
-            if (item.level === 1) {
-                c1++; c2 = 0; c3 = 0;
-            } else if (item.level === 2) {
-                c2++; c3 = 0;
-            } else if (item.level >= 3) {
-                c3++;
-            }
-
-            let itemNumberStr = "";
-            if (item.level === 1) itemNumberStr = `${c1}`;
-            else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
-            else itemNumberStr = `${c1}.${c2}.${c3}`;
+        const payload: ReorderRPCItem[] = repairedItems.map((item, idx) => {
+            const itemNumberStr = numberMap.get(item.id!) || `${idx + 1}`;
 
             // Sanitize parentId to strict UUID or null
             const parentId =
@@ -1976,7 +1925,6 @@ const BudgetEditor = () => {
                     ? String(item.parentId)
                     : null;
 
-            // Objeto simplificado para o RPC
             return {
                 id: item.id!,
                 order: item.order,
@@ -4374,15 +4322,9 @@ const BudgetEditor = () => {
                                                                                     newItems.splice(inlineSearch.afterIndex + 1, 0, newItem);
                                                                                     newItems.forEach((it, idx) => { it.order = idx + 1; });
                                                                                     const repairedItems = repairHierarchy(newItems);
-                                                                                    let c1 = 0, c2 = 0, c3 = 0;
-                                                                                    const payload = repairedItems.map((item: any) => {
-                                                                                        if (item.level === 1) { c1++; c2 = 0; c3 = 0; }
-                                                                                        else if (item.level === 2) { c2++; c3 = 0; }
-                                                                                        else { c3++; }
-                                                                                        let num = '';
-                                                                                        if (item.level === 1) num = `${c1}`;
-                                                                                        else if (item.level === 2) num = `${c1}.${c2}`;
-                                                                                        else num = `${c1}.${c2}.${c3}`;
+                                                                                    const numberMap = generateItemNumbers(repairedItems);
+                                                                                    const payload = repairedItems.map((item: any, idx: number) => {
+                                                                                        const num = numberMap.get(item.id!) || `${idx + 1}`;
                                                                                         const pid = item.parentId && String(item.parentId).trim() !== '' && String(item.parentId).trim().toLowerCase() !== 'null' ? String(item.parentId) : null;
                                                                                         return { id: item.id!, order: item.order, parentId: pid, itemNumber: num };
                                                                                     });
