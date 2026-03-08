@@ -651,6 +651,17 @@ const BudgetEditor = () => {
     const inlineInsertRef = useRef<HTMLInputElement>(null);
     const [showBaseSelector, setShowBaseSelector] = useState(false);
 
+    // Inline resource search (Composição/Insumo)
+    const [inlineSearch, setInlineSearch] = useState<{
+        afterIndex: number;
+        parentId: string | null;
+        type: 'CPU' | 'INS';
+    } | null>(null);
+    const [inlineSearchTerm, setInlineSearchTerm] = useState('');
+    const [inlineSearchResults, setInlineSearchResults] = useState<any[]>([]);
+    const [inlineSearchLoading, setInlineSearchLoading] = useState(false);
+    const inlineSearchRef = useRef<HTMLInputElement>(null);
+
     // Estados de Busca e Filtros Multi-Base
     const [selectedBases, setSelectedBases] = useState<string[]>(() => {
         const saved = localStorage.getItem('naborca_search_bases');
@@ -661,6 +672,55 @@ const BudgetEditor = () => {
     useEffect(() => {
         localStorage.setItem('naborca_search_bases', JSON.stringify(selectedBases));
     }, [selectedBases]);
+
+    // Inline search debounce — direct search without reusing shared state
+    useEffect(() => {
+        if (!inlineSearch || inlineSearchTerm.length < 3) {
+            setInlineSearchResults([]);
+            return;
+        }
+        setInlineSearchLoading(true);
+        const timer = setTimeout(async () => {
+            try {
+                const bases = budget?.settings?.bases_selecionadas || selectedBases;
+                const priceContext = budget?.settings?.bases_refs
+                    ? { competence: Object.values(budget.settings.bases_refs)[0] }
+                    : undefined;
+                const safeQuery = inlineSearchTerm.trim();
+                let results: any[] = [];
+                if (inlineSearch.type === 'INS') {
+                    const [userResults, publicResults] = await Promise.all([
+                        InsumoService.search(safeQuery),
+                        SinapiService.searchInputs(safeQuery, {
+                            sources: bases.filter((b: string) => b !== 'OWN'),
+                            ...priceContext
+                        })
+                    ]);
+                    const normUser = (userResults || []).map((i: any) => normalizeResource(i, 'insumo'));
+                    const normPublic = (publicResults || []).map((i: any) => normalizeResource(i, 'insumo'));
+                    results = [...normUser, ...normPublic];
+                } else {
+                    const [userResults, publicResults] = await Promise.all([
+                        CompositionService.search(safeQuery),
+                        SinapiService.searchCompositions(safeQuery, {
+                            sources: bases.filter((b: string) => b !== 'OWN'),
+                            ...priceContext
+                        })
+                    ]);
+                    const normUser = (userResults || []).map((i: any) => normalizeResource(i, 'composition'));
+                    const normPublic = (publicResults || []).map((c: any) => normalizeResource(c, 'composition'));
+                    results = [...normUser, ...normPublic];
+                }
+                setInlineSearchResults(results);
+            } catch (e) {
+                console.error('[inlineSearch] error:', e);
+                setInlineSearchResults([]);
+            } finally {
+                setInlineSearchLoading(false);
+            }
+        }, 400);
+        return () => clearTimeout(timer);
+    }, [inlineSearchTerm, inlineSearch]);
 
     // Estados de Loading para Exportações e Ferramentas
     const [isExportingAnalytic, setIsExportingAnalytic] = useState(false);
@@ -3923,10 +3983,14 @@ const BudgetEditor = () => {
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            setInsertContext({ parentId: isGroup ? item.id : item.parentId, afterIndex: index });
-                                                            setAddItemTab('CPU');
-                                                            setSearchTerm('');
-                                                            setIsAddingItem(true);
+                                                            setInlineSearch({
+                                                                afterIndex: index,
+                                                                parentId: isGroup ? item.id : item.parentId,
+                                                                type: 'CPU'
+                                                            });
+                                                            setInlineSearchTerm('');
+                                                            setInlineSearchResults([]);
+                                                            setTimeout(() => inlineSearchRef.current?.focus(), 100);
                                                         }}
                                                         className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]"
                                                     >
@@ -3936,10 +4000,14 @@ const BudgetEditor = () => {
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            setInsertContext({ parentId: isGroup ? item.id : item.parentId, afterIndex: index });
-                                                            setAddItemTab('INS');
-                                                            setSearchTerm('');
-                                                            setIsAddingItem(true);
+                                                            setInlineSearch({
+                                                                afterIndex: index,
+                                                                parentId: isGroup ? item.id : item.parentId,
+                                                                type: 'INS'
+                                                            });
+                                                            setInlineSearchTerm('');
+                                                            setInlineSearchResults([]);
+                                                            setTimeout(() => inlineSearchRef.current?.focus(), 100);
                                                         }}
                                                         className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]"
                                                     >
@@ -4104,6 +4172,159 @@ const BudgetEditor = () => {
                                                 <td className="p-1 border-r border-blue-200 text-center text-blue-400 text-[10px]">—</td>
                                                 <td className="p-1 border-r border-blue-200 text-center text-blue-400 text-[10px]">—</td>
                                                 <td className="p-1 border-r border-blue-200 text-center text-blue-400 text-[10px]">—</td>
+                                            </tr>
+                                        )}
+                                        {inlineSearch && inlineSearch.afterIndex === index && (
+                                            <tr className="bg-amber-50/80 border-b border-amber-200 animate-in fade-in slide-in-from-top-1">
+                                                <td colSpan={2} className="px-2 py-2">
+                                                    <span className={clsx(
+                                                        "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full",
+                                                        inlineSearch.type === 'CPU'
+                                                            ? "bg-amber-100 text-amber-700"
+                                                            : "bg-blue-100 text-blue-700"
+                                                    )}>
+                                                        {inlineSearch.type === 'CPU' ? 'Composição' : 'Insumo'}
+                                                    </span>
+                                                </td>
+                                                <td colSpan={8} className="px-2 py-2">
+                                                    <div className="relative">
+                                                        <input
+                                                            ref={inlineSearchRef}
+                                                            type="text"
+                                                            value={inlineSearchTerm}
+                                                            onChange={(e) => setInlineSearchTerm(e.target.value)}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Escape') {
+                                                                    setInlineSearch(null);
+                                                                    setInlineSearchTerm('');
+                                                                    setInlineSearchResults([]);
+                                                                }
+                                                            }}
+                                                            placeholder="Digite código ou descrição (min. 3 caracteres)..."
+                                                            className="w-full text-xs border border-amber-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-amber-400 focus:border-amber-400 bg-white"
+                                                        />
+                                                        {inlineSearchLoading && (
+                                                            <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                                                                <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+                                                            </div>
+                                                        )}
+                                                        {inlineSearchResults.length > 0 && (
+                                                            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-[200] max-h-[240px] overflow-y-auto">
+                                                                {inlineSearchResults.map((res: any, i: number) => (
+                                                                    <button
+                                                                        key={res.code + '-' + i}
+                                                                        onClick={async () => {
+                                                                            try {
+                                                                                setLoading(true);
+                                                                                const targetParentId = inlineSearch.parentId;
+                                                                                const itemData: any = {
+                                                                                    budgetId: budgetId,
+                                                                                    order: getNextOrder(),
+                                                                                    level: 3,
+                                                                                    parentId: targetParentId,
+                                                                                    itemNumber: '',
+                                                                                    code: res.code || '',
+                                                                                    description: res.description || '',
+                                                                                    unit: res.unit || 'UN',
+                                                                                    quantity: 1,
+                                                                                    unitPrice: res.price ?? 0,
+                                                                                    type: res.originalType || (inlineSearch.type === 'CPU' ? 'service' : 'material'),
+                                                                                    source: res.source || 'SINAPI',
+                                                                                    itemType: inlineSearch.type === 'CPU' ? 'composicao' : 'insumo',
+                                                                                    compositionId: inlineSearch.type === 'CPU' ? (res.id || res.raw?.id) : null,
+                                                                                    insumoId: inlineSearch.type === 'INS' ? (res.id || res.raw?.id) : null,
+                                                                                };
+                                                                                const newItem = await BudgetItemService.create(itemData);
+                                                                                if (newItem && items) {
+                                                                                    const newItems = [...items];
+                                                                                    newItems.splice(inlineSearch.afterIndex + 1, 0, newItem);
+                                                                                    newItems.forEach((it, idx) => { it.order = idx + 1; });
+                                                                                    const repairedItems = repairHierarchy(newItems);
+                                                                                    let c1 = 0, c2 = 0, c3 = 0;
+                                                                                    const payload = repairedItems.map((item: any) => {
+                                                                                        if (item.level === 1) { c1++; c2 = 0; c3 = 0; }
+                                                                                        else if (item.level === 2) { c2++; c3 = 0; }
+                                                                                        else { c3++; }
+                                                                                        let num = '';
+                                                                                        if (item.level === 1) num = `${c1}`;
+                                                                                        else if (item.level === 2) num = `${c1}.${c2}`;
+                                                                                        else num = `${c1}.${c2}.${c3}`;
+                                                                                        const pid = item.parentId && String(item.parentId).trim() !== '' && String(item.parentId).trim().toLowerCase() !== 'null' ? String(item.parentId) : null;
+                                                                                        return { id: item.id!, order: item.order, parentId: pid, itemNumber: num };
+                                                                                    });
+                                                                                    await (supabase as any).rpc('reorder_budget_items', { items: payload });
+                                                                                }
+                                                                                await loadBudget();
+                                                                            } catch (e: any) {
+                                                                                console.error('[inlineSearch] add error:', e);
+                                                                                alert('Erro ao adicionar item: ' + (e.message || ''));
+                                                                            } finally {
+                                                                                setLoading(false);
+                                                                                setInlineSearch(null);
+                                                                                setInlineSearchTerm('');
+                                                                                setInlineSearchResults([]);
+                                                                            }
+                                                                        }}
+                                                                        className="w-full text-left px-3 py-2 hover:bg-amber-50 border-b border-slate-100 last:border-0 flex items-center gap-3 transition-colors"
+                                                                    >
+                                                                        <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
+                                                                            {res.code}
+                                                                        </span>
+                                                                        <span className="text-xs text-slate-700 line-clamp-1 flex-1">
+                                                                            {res.description}
+                                                                        </span>
+                                                                        {res.price != null && (
+                                                                            <span className="text-xs font-bold text-green-700 shrink-0">
+                                                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(res.price)}
+                                                                            </span>
+                                                                        )}
+                                                                        <span className="text-[8px] text-slate-400 uppercase shrink-0">
+                                                                            {res.source || res.base}
+                                                                        </span>
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {inlineSearchTerm.length >= 3 && !inlineSearchLoading && inlineSearchResults.length === 0 && (
+                                                            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl z-[200] p-3 text-center">
+                                                                <p className="text-xs text-slate-400">Nenhum resultado encontrado</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                <td colSpan={2} className="px-2 py-2 text-right">
+                                                    <div className="flex items-center gap-1 justify-end">
+                                                        <button
+                                                            onClick={() => {
+                                                                setInsertContext({
+                                                                    parentId: inlineSearch.parentId,
+                                                                    afterIndex: inlineSearch.afterIndex
+                                                                });
+                                                                setAddItemTab(inlineSearch.type);
+                                                                setSearchTerm('');
+                                                                setIsAddingItem(true);
+                                                                setInlineSearch(null);
+                                                                setInlineSearchTerm('');
+                                                                setInlineSearchResults([]);
+                                                            }}
+                                                            className="text-[9px] text-slate-400 hover:text-blue-600 px-2 py-1 rounded hover:bg-blue-50 transition-colors"
+                                                            title="Abrir busca avançada"
+                                                        >
+                                                            Avançada
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                setInlineSearch(null);
+                                                                setInlineSearchTerm('');
+                                                                setInlineSearchResults([]);
+                                                            }}
+                                                            className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50 transition-colors"
+                                                            title="Cancelar"
+                                                        >
+                                                            <X size={14} />
+                                                        </button>
+                                                    </div>
+                                                </td>
                                             </tr>
                                         )}
                                     </Fragment>
