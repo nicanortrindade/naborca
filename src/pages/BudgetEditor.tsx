@@ -561,9 +561,9 @@ const BudgetEditor = () => {
     // REGRA 1: Valores vêm PRONTOS do backend
     // O frontend NÃO recalcula valores, apenas calcula peso (%) dinamicamente
 
-    const loadBudget = async () => {
+    const loadBudget = async (silent = false) => {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
             const b = await BudgetService.getById(budgetId);
             setBudget(b);
 
@@ -1268,7 +1268,7 @@ const BudgetEditor = () => {
                 type: 'group',
                 source: "",
             });
-            await loadBudget();
+            await loadBudget(true);
         } catch (e) {
             console.error(e);
         }
@@ -1308,7 +1308,7 @@ const BudgetEditor = () => {
                 type: 'group',
                 source: "",
             });
-            await loadBudget();
+            await loadBudget(true);
         } catch (e: any) {
             console.error("Falha ao criar Sub-etapa:", e);
             alert(`Erro ao salvar no banco: ${e.message || "Verifique sua conexão"}`);
@@ -1368,7 +1368,6 @@ const BudgetEditor = () => {
         const { type, afterIndex, parentId } = inlineInsert;
         const description = inlineInsertText.trim().toUpperCase();
         try {
-            setLoading(true);
             setInlineInsert(null);
             const level = type === 'etapa' ? 1 : 2;
             const itemParentId = type === 'etapa' ? null : parentId;
@@ -1410,7 +1409,9 @@ const BudgetEditor = () => {
                     console.error("Contextual Reorder Error (inline insert):", e);
                 }
             }
-            await loadBudget();
+            await loadBudget(true);
+            setInlineInsert(null);
+            setInlineInsertText('');
         } catch (e: any) {
             console.error("Falha ao criar grupo posicional:", e);
             alert(`Erro ao salvar: ${e.message || "Verifique sua conexão"}`);
@@ -1426,7 +1427,6 @@ const BudgetEditor = () => {
 
     const handleBindComposition = async (targetItem: any, resource: NormalizedResource) => {
         try {
-            setLoading(true);
             console.log("[handleBindComposition]", { targetId: targetItem.id, resourceCode: resource.code });
 
             // 1. Encontrar a pendência (Issue) associada
@@ -1447,7 +1447,7 @@ const BudgetEditor = () => {
             });
 
             // 3. Recarregar e Limpar Estado
-            await loadBudget();
+            await loadBudget(true);
             setIsAddingItem(false);
             setBindingItem(null);
             setSelectedResource(null);
@@ -1470,7 +1470,6 @@ const BudgetEditor = () => {
         }
 
         try {
-            setLoading(true);
             console.log("[handleAddItem] Starting...", {
                 budgetId,
                 resource: selectedResource.code,
@@ -1555,7 +1554,7 @@ const BudgetEditor = () => {
                 }
             }
 
-            await loadBudget();
+            await loadBudget(true);
             setIsAddingItem(false);
             setSelectedResource(null);
             setInsertContext(null);
@@ -1590,7 +1589,7 @@ const BudgetEditor = () => {
         try {
             await BudgetItemService.delete(itemId);
 
-            await loadBudget();
+            await loadBudget(true);
         } catch (e) {
             console.error(e);
         }
@@ -2299,7 +2298,7 @@ const BudgetEditor = () => {
                 }));
             }
 
-            await loadBudget();
+            await loadBudget(true);
         } catch (error) {
             console.error("Error updating item:", error);
             alert("Erro ao atualizar item.");
@@ -3316,7 +3315,6 @@ const BudgetEditor = () => {
                                     <button
                                         onClick={async () => {
                                             if (window.confirm(`Remover ${selectedItemIds.size} itens selecionados?`)) {
-                                                setLoading(true);
                                                 try {
                                                     const ids = Array.from(selectedItemIds);
                                                     // Delete items
@@ -3326,7 +3324,7 @@ const BudgetEditor = () => {
                                                         await BudgetItemCompositionService.deleteByBudgetItemId(itId);
                                                     }
                                                     // Reload data
-                                                    await loadBudget();
+                                                    await loadBudget(true);
                                                     setSelectedItemIds(new Set());
                                                 } catch (e) {
                                                     console.error(e);
@@ -3421,7 +3419,7 @@ const BudgetEditor = () => {
                                                                     bases_refs: newRefs
                                                                 };
                                                                 await BudgetService.update(budget.id, { settings: newSettings });
-                                                                await loadBudget();
+                                                                await loadBudget(true);
                                                             }}
                                                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                                                         />
@@ -3435,7 +3433,7 @@ const BudgetEditor = () => {
                                                                     const newRefs = { ...budget?.settings?.bases_refs, [base]: e.target.value };
                                                                     const newSettings = { ...budget.settings, bases_refs: newRefs };
                                                                     await BudgetService.update(budget.id, { settings: newSettings });
-                                                                    await loadBudget();
+                                                                    await loadBudget(true);
                                                                 }}
                                                                 className="text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-white text-slate-600 w-16"
                                                             >
@@ -3451,7 +3449,7 @@ const BudgetEditor = () => {
                                                                     const newRefs = { ...budget?.settings?.bases_refs, [base]: e.target.value };
                                                                     const newSettings = { ...budget.settings, bases_refs: newRefs };
                                                                     await BudgetService.update(budget.id, { settings: newSettings });
-                                                                    await loadBudget();
+                                                                    await loadBudget(true);
                                                                 }}
                                                                 className="text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-white text-slate-600 w-24"
                                                             />
@@ -4078,7 +4076,7 @@ const BudgetEditor = () => {
                                                                 const newQty = parseFloat(editingQuantity.value.replace(',', '.'));
                                                                 if (!isNaN(newQty) && newQty !== item.quantity) {
                                                                     await BudgetItemService.update(item.id!, { quantity: newQty });
-                                                                    await loadBudget();
+                                                                    await loadBudget(true);
                                                                 }
                                                                 setEditingQuantity(null);
                                                             }}
@@ -4255,7 +4253,6 @@ const BudgetEditor = () => {
                                                                         key={res.code + '-' + i}
                                                                         onClick={async () => {
                                                                             try {
-                                                                                setLoading(true);
                                                                                 const targetParentId = inlineSearch.parentId;
                                                                                 const itemData: any = {
                                                                                     budgetId: budgetId,
@@ -4294,7 +4291,7 @@ const BudgetEditor = () => {
                                                                                     });
                                                                                     await (supabase as any).rpc('reorder_budget_items', { items: payload });
                                                                                 }
-                                                                                await loadBudget();
+                                                                                await loadBudget(true);
                                                                             } catch (e: any) {
                                                                                 console.error('[inlineSearch] add error:', e);
                                                                                 alert('Erro ao adicionar item: ' + (e.message || ''));
