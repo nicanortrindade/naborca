@@ -148,7 +148,7 @@ BEGIN
     FOR v_item IN
         SELECT * FROM public.import_ai_items
         WHERE job_id = p_job_id
-        ORDER BY idx ASC
+        ORDER BY string_to_array(item_path, '.')::int[] ASC NULLS LAST, idx ASC
     LOOP
         v_items_processed   := v_items_processed + 1;
         v_parser_warnings   := ARRAY[]::text[];

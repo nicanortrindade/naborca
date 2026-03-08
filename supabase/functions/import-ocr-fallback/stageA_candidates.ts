@@ -233,7 +233,8 @@ export function generateCandidatesStageA(text: string, options: {
             }
             // Guard: descarta totais de seção (dígito colado em texto maiúsculo + número)
             if (REGEX_SECTION_TOTAL.test(snippet) && !item.warnings?.includes('section_title_candidate')) {
-                const possibleTitle = snippet.replace(/^\d{1,2}/, '').replace(/[\d.,]+$/, '').trim();
+                // Fix: Limpeza agressiva no final para remover resíduos como "FUNDAÇÃO185"
+                const possibleTitle = snippet.replace(/^\d{1,2}/, '').replace(/\d[\d.,]*$/g, '').trim();
                 if (KNOWN_N1_SINGLE_WORD.has(possibleTitle.toUpperCase())) {
                     item.warnings = [...(item.warnings || []), 'section_title_candidate'];
                     item.extracted_signals = {

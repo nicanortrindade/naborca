@@ -214,6 +214,14 @@ EXTRACTION RULES:
     context_after: "m² 3,15 651,96 814,95 2.567,09 0,0907 %"
     → unit: "m²", quantity: "3,15", unit_price: "651,96", total_price: "2.567,09"
 
+12c. **PRICE COLUMN MISALIGNMENT GUARD (CRITICAL)**:
+    For items with dimensions, ratios, or sizes in the description (like "MAXIM-AR", "1,20x1,00m", "1:2:8"), do NOT confuse specification numbers with price columns.
+    - Identify the EXACT sequence of numbers AFTER the unit.
+    - The Total Price will ALWAYS be the LARGEST number near the end (excluding the % weight).
+    - If the sequence has extra numbers (e.g., Mão de Obra, Material splits before the Unit Price), do not blindly pick the second number.
+    - The 'unit_price' MUST be the number that mathematically approximates 'Total Price / quantity' (either direct or minus BDI).
+    - DO NOT HALLUCINATE OR RECALCULATE VALUES. Extract them EXACTLY as they appear in the text.
+
 13. **DESCRIPTION + VALUES STUCK TOGETHER (MANDATORY)**:
     When the description text contains a concatenated sequence of Brazilian-format numbers
     at the end (e.g. "MEIA-CANAM 290,57 20,4825,607.438,590,2628 %"), these are NOT part of
