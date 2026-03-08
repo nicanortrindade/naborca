@@ -3306,127 +3306,138 @@ const BudgetEditor = () => {
             {
                 !isMobile && (
                     <div className="px-6 py-2 bg-slate-50/50 border-b border-border flex items-center justify-between shrink-0">
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => { setInsertContext(null); setIsAddingItem(true); }}
-                                className="bg-accent hover:bg-accent/90 text-white text-xs font-semibold px-3 py-1.5 rounded-md shadow-sm transition-all flex items-center gap-1.5"
-                            >
-                                <Plus size={14} /> NOVO ITEM
-                            </button>
-                            <div className="w-px h-4 bg-slate-300 mx-2"></div>
-                            <button onClick={() => handleAddTitle()} className="text-secondary hover:text-primary hover:bg-white px-3 py-1.5 rounded text-xs font-medium transition-colors border border-transparent hover:border-border">
-                                + Etapa (N1)
-                            </button>
-                            <button onClick={() => handleAddSubTitle(1)} className="text-secondary hover:text-primary hover:bg-white px-3 py-1.5 rounded text-xs font-medium transition-colors border border-transparent hover:border-border">
-                                + Sub-etapa (N2)
-                            </button>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            {/* Bases ativas do orçamento */}
-                            <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Bases:</span>
-                                {(budget?.settings?.bases_selecionadas || ['SINAPI']).map((base: string) => (
-                                    <span
-                                        key={base}
-                                        className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full"
-                                    >
-                                        {base}
-                                        {budget?.settings?.bases_refs?.[base] && (
-                                            <span className="ml-1 text-blue-500 font-normal">
-                                                {budget.settings.bases_refs[base]}
-                                            </span>
-                                        )}
-                                    </span>
-                                ))}
-                                <div className="relative">
-                                    <button
-                                        onClick={() => setShowBaseSelector(!showBaseSelector)}
-                                        className="text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full p-0.5 transition-colors"
-                                        title="Adicionar ou remover bases"
-                                    >
-                                        <Plus size={14} />
-                                    </button>
-                                    {showBaseSelector && (
-                                        <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl p-3 z-[100] min-w-[260px]">
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Selecionar Bases</p>
-                                            {['SINAPI', 'SICRO', 'ORSE', 'EMBASA', 'COELBA', 'SUDEB', 'SEINFRA-BA', 'SEINFRA-CE', 'CPOS', 'FDE', 'EMOP', 'SUDECAP', 'SETOP', 'IOPES'].map(base => {
-                                                const isActive = (budget?.settings?.bases_selecionadas || ['SINAPI']).includes(base);
-                                                const isSeinfra = base.startsWith('SEINFRA');
-                                                const currentRef = budget?.settings?.bases_refs?.[base] || (isSeinfra ? '028' : '2025-01');
-                                                return (
-                                                    <div key={base} className="flex items-center gap-2 py-1 px-1 rounded hover:bg-slate-50">
-                                                        <label className="flex items-center gap-2 cursor-pointer flex-1">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={isActive}
-                                                                onChange={async () => {
-                                                                    const currentBases: string[] = budget?.settings?.bases_selecionadas || ['SINAPI'];
-                                                                    const currentRefs = budget?.settings?.bases_refs || {};
-                                                                    let newBases: string[];
-                                                                    let newRefs = { ...currentRefs };
-                                                                    if (isActive) {
-                                                                        newBases = currentBases.filter((b: string) => b !== base);
-                                                                        delete newRefs[base];
-                                                                    } else {
-                                                                        newBases = [...currentBases, base];
-                                                                        newRefs[base] = currentRef;
-                                                                    }
-                                                                    const newSettings = {
-                                                                        ...budget.settings,
-                                                                        bases_selecionadas: newBases,
-                                                                        bases_refs: newRefs
-                                                                    };
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Bases:</span>
+                            {(budget?.settings?.bases_selecionadas || ['SINAPI']).map((base: string) => (
+                                <span
+                                    key={base}
+                                    className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full"
+                                >
+                                    {base}
+                                    {budget?.settings?.bases_refs?.[base] && (
+                                        <span className="ml-1 text-blue-500 font-normal">
+                                            {budget.settings.bases_refs[base]}
+                                        </span>
+                                    )}
+                                </span>
+                            ))}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowBaseSelector(!showBaseSelector)}
+                                    className="text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full p-0.5 transition-colors"
+                                    title="Adicionar ou remover bases"
+                                >
+                                    <Plus size={14} />
+                                </button>
+                                {showBaseSelector && (
+                                    <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-xl p-3 z-[100] min-w-[260px]">
+                                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Selecionar Bases</p>
+                                        {['SINAPI', 'SICRO', 'ORSE', 'EMBASA', 'COELBA', 'SUDEB', 'SEINFRA-BA', 'SEINFRA-CE', 'CPOS', 'FDE', 'EMOP', 'SUDECAP', 'SETOP', 'IOPES'].map(base => {
+                                            const isActive = (budget?.settings?.bases_selecionadas || ['SINAPI']).includes(base);
+                                            const isSeinfra = base.startsWith('SEINFRA');
+                                            const currentRef = budget?.settings?.bases_refs?.[base] || (isSeinfra ? '028' : '2025-01');
+                                            return (
+                                                <div key={base} className="flex items-center gap-2 py-1 px-1 rounded hover:bg-slate-50">
+                                                    <label className="flex items-center gap-2 cursor-pointer flex-1">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isActive}
+                                                            onChange={async () => {
+                                                                const currentBases: string[] = budget?.settings?.bases_selecionadas || ['SINAPI'];
+                                                                const currentRefs = budget?.settings?.bases_refs || {};
+                                                                let newBases: string[];
+                                                                let newRefs = { ...currentRefs };
+                                                                if (isActive) {
+                                                                    newBases = currentBases.filter((b: string) => b !== base);
+                                                                    delete newRefs[base];
+                                                                } else {
+                                                                    newBases = [...currentBases, base];
+                                                                    newRefs[base] = currentRef;
+                                                                }
+                                                                const newSettings = {
+                                                                    ...budget.settings,
+                                                                    bases_selecionadas: newBases,
+                                                                    bases_refs: newRefs
+                                                                };
+                                                                await BudgetService.update(budget.id, { settings: newSettings });
+                                                                await loadBudget();
+                                                            }}
+                                                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                                        />
+                                                        <span className={clsx("text-xs font-medium", isActive ? "text-blue-700" : "text-slate-600")}>{base}</span>
+                                                    </label>
+                                                    {isActive && (
+                                                        isSeinfra ? (
+                                                            <select
+                                                                value={currentRef}
+                                                                onChange={async (e) => {
+                                                                    const newRefs = { ...budget?.settings?.bases_refs, [base]: e.target.value };
+                                                                    const newSettings = { ...budget.settings, bases_refs: newRefs };
                                                                     await BudgetService.update(budget.id, { settings: newSettings });
                                                                     await loadBudget();
                                                                 }}
-                                                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                                                className="text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-white text-slate-600 w-16"
+                                                            >
+                                                                {['028', '027', '026', '025', '024'].map(v => (
+                                                                    <option key={v} value={v}>{v}</option>
+                                                                ))}
+                                                            </select>
+                                                        ) : (
+                                                            <input
+                                                                type="month"
+                                                                value={currentRef}
+                                                                onChange={async (e) => {
+                                                                    const newRefs = { ...budget?.settings?.bases_refs, [base]: e.target.value };
+                                                                    const newSettings = { ...budget.settings, bases_refs: newRefs };
+                                                                    await BudgetService.update(budget.id, { settings: newSettings });
+                                                                    await loadBudget();
+                                                                }}
+                                                                className="text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-white text-slate-600 w-24"
                                                             />
-                                                            <span className={clsx("text-xs font-medium", isActive ? "text-blue-700" : "text-slate-600")}>{base}</span>
-                                                        </label>
-                                                        {isActive && (
-                                                            isSeinfra ? (
-                                                                <select
-                                                                    value={currentRef}
-                                                                    onChange={async (e) => {
-                                                                        const newRefs = { ...budget?.settings?.bases_refs, [base]: e.target.value };
-                                                                        const newSettings = { ...budget.settings, bases_refs: newRefs };
-                                                                        await BudgetService.update(budget.id, { settings: newSettings });
-                                                                        await loadBudget();
-                                                                    }}
-                                                                    className="text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-white text-slate-600 w-16"
-                                                                >
-                                                                    {['028', '027', '026', '025', '024'].map(v => (
-                                                                        <option key={v} value={v}>{v}</option>
-                                                                    ))}
-                                                                </select>
-                                                            ) : (
-                                                                <input
-                                                                    type="month"
-                                                                    value={currentRef}
-                                                                    onChange={async (e) => {
-                                                                        const newRefs = { ...budget?.settings?.bases_refs, [base]: e.target.value };
-                                                                        const newSettings = { ...budget.settings, bases_refs: newRefs };
-                                                                        await BudgetService.update(budget.id, { settings: newSettings });
-                                                                        await loadBudget();
-                                                                    }}
-                                                                    className="text-[10px] border border-slate-200 rounded px-1 py-0.5 bg-white text-slate-600 w-24"
-                                                                />
-                                                            )
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-                                            <button
-                                                onClick={() => setShowBaseSelector(false)}
-                                                className="mt-2 w-full text-center text-[10px] text-slate-400 hover:text-slate-600 py-1 border-t border-slate-100 pt-2"
-                                            >
-                                                Fechar
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
+                                                        )
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                        <button
+                                            onClick={() => setShowBaseSelector(false)}
+                                            className="mt-2 w-full text-center text-[10px] text-slate-400 hover:text-slate-600 py-1 border-t border-slate-100 pt-2"
+                                        >
+                                            Fechar
+                                        </button>
+                                    </div>
+                                )}
                             </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                            <button
+                                onClick={() => {
+                                    const summary = getExecutiveSummary();
+                                    const text = summary.map((s: any) => `${s.name}: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(s.value)}`).join('\n');
+                                    alert("Resumo Executivo (por Centro de Custo):\n\n" + text);
+                                }}
+                                className="text-xs text-slate-500 hover:text-green-600 font-medium px-2 py-1 flex items-center gap-1 transition-colors"
+                                title="Resumo Executivo"
+                            >
+                                <FileText size={12} /> Resumo
+                            </button>
+                            <button
+                                onClick={handleReorderItems}
+                                disabled={loading}
+                                className="text-xs text-slate-500 hover:text-accent font-medium px-2 py-1 flex items-center gap-1 transition-colors"
+                                title="Renumerar itens"
+                            >
+                                <Activity size={12} className={clsx(loading && "animate-spin")} /> Renumerar
+                            </button>
+                            <button
+                                onClick={() => setShowImpact(!showImpact)}
+                                className={clsx(
+                                    "text-xs font-medium px-2 py-1 flex items-center gap-1 transition-colors rounded",
+                                    showImpact ? "bg-indigo-50 text-indigo-600" : "text-slate-500 hover:text-slate-800"
+                                )}
+                            >
+                                <TrendingUp size={12} /> Impacto
+                            </button>
                         </div>
                     </div>
                 )
