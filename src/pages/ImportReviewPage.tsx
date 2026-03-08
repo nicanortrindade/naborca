@@ -41,6 +41,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         encargo_horista_percent: 0,
         encargo_mensalista_percent: 0,
         bases_selecionadas: ['SINAPI'] as string[],
+        bases_refs: {} as Record<string, string>,
         bdi_equipamentos: 0,
         bdi_especial: 0,
         bdi_especial_label: '',
@@ -190,7 +191,8 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                     job_id: jobId,
                     import_job_id: jobId,
                     uf: params.uf,
-                    competence: params.competence,
+                    competence: Object.values(params.bases_refs)[0] || params.competence || '2025-01',
+                    bases_refs: params.bases_refs,
                     desonerado: params.encargo_mode === 'desonerado',
                     bdi_mode: params.bdi_percent,
                     social_charges: {
@@ -329,9 +331,16 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         setParams(prev => {
             const selecionadas = prev.bases_selecionadas;
             if (selecionadas.includes(base)) {
-                return { ...prev, bases_selecionadas: selecionadas.filter(b => b !== base) };
+                const newRefs = { ...prev.bases_refs };
+                delete newRefs[base];
+                return { ...prev, bases_selecionadas: selecionadas.filter(b => b !== base), bases_refs: newRefs };
             } else {
-                return { ...prev, bases_selecionadas: [...selecionadas, base] };
+                const defaultRef = base.startsWith('SEINFRA') ? '028' : prev.competence || '2025-01';
+                return {
+                    ...prev,
+                    bases_selecionadas: [...selecionadas, base],
+                    bases_refs: { ...prev.bases_refs, [base]: defaultRef }
+                };
             }
         });
     };
@@ -380,6 +389,39 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         'Não vinculado': 'bg-orange-500',
         'Próprio': 'bg-slate-500',
         'Manual': 'bg-purple-500'
+    };
+
+    const BaseRefInput = ({ base }: { base: string }) => {
+        if (!params.bases_selecionadas.includes(base)) return null;
+        if (base.startsWith('SEINFRA')) {
+            return (
+                <select
+                    value={params.bases_refs[base] || '028'}
+                    onChange={e => setParams(prev => ({
+                        ...prev,
+                        bases_refs: { ...prev.bases_refs, [base]: e.target.value }
+                    }))}
+                    className="px-2 py-1.5 border border-slate-200 rounded-lg bg-white text-xs font-medium focus:border-blue-500 outline-none"
+                >
+                    <option value="023.1">023.1</option>
+                    <option value="025">025</option>
+                    <option value="026">026</option>
+                    <option value="027">027</option>
+                    <option value="028">028</option>
+                </select>
+            );
+        }
+        return (
+            <input
+                type="month"
+                value={params.bases_refs[base] || params.competence || '2025-01'}
+                onChange={e => setParams(prev => ({
+                    ...prev,
+                    bases_refs: { ...prev.bases_refs, [base]: e.target.value }
+                }))}
+                className="px-2 py-1.5 border border-slate-200 rounded-lg bg-white text-xs font-medium focus:border-blue-500 outline-none w-36"
+            />
+        );
     };
 
     return (
@@ -529,13 +571,15 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Bases Nacionais</label>
                                     <div className="flex flex-wrap gap-2">
                                         {BASES_NACIONAIS.map(base => (
-                                            <button
-                                                key={base}
-                                                onClick={() => toggleBase(base)}
-                                                className={`px-4 py-2 rounded-lg text-xs font-bold border transition-all ${params.bases_selecionadas.includes(base) ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-200' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:bg-slate-50'}`}
-                                            >
-                                                {base}
-                                            </button>
+                                            <div key={base} className="flex items-center gap-2">
+                                                <button
+                                                    onClick={() => toggleBase(base)}
+                                                    className={`px-4 py-2 rounded-lg text-xs font-bold border transition-all ${params.bases_selecionadas.includes(base) ? 'bg-blue-600 text-white border-blue-600 shadow-sm shadow-blue-200' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:bg-slate-50'}`}
+                                                >
+                                                    {base}
+                                                </button>
+                                                <BaseRefInput base={base} />
+                                            </div>
                                         ))}
                                     </div>
                                 </div>
@@ -544,13 +588,15 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Bases Regionais</label>
                                     <div className="flex flex-wrap gap-2">
                                         {BASES_REGIONAIS_DESTAQUE.map(base => (
-                                            <button
-                                                key={base}
-                                                onClick={() => toggleBase(base)}
-                                                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${params.bases_selecionadas.includes(base) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:bg-slate-50'}`}
-                                            >
-                                                {base}
-                                            </button>
+                                            <div key={base} className="flex items-center gap-2">
+                                                <button
+                                                    onClick={() => toggleBase(base)}
+                                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${params.bases_selecionadas.includes(base) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:bg-slate-50'}`}
+                                                >
+                                                    {base}
+                                                </button>
+                                                <BaseRefInput base={base} />
+                                            </div>
                                         ))}
                                     </div>
                                 </div>
@@ -567,13 +613,15 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                         <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Outras Bases</label>
                                         <div className="flex flex-wrap gap-2">
                                             {BASES_OUTRAS.map(base => (
-                                                <button
-                                                    key={base}
-                                                    onClick={() => toggleBase(base)}
-                                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${params.bases_selecionadas.includes(base) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:bg-slate-50'}`}
-                                                >
-                                                    {base}
-                                                </button>
+                                                <div key={base} className="flex items-center gap-2">
+                                                    <button
+                                                        onClick={() => toggleBase(base)}
+                                                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${params.bases_selecionadas.includes(base) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:bg-slate-50'}`}
+                                                    >
+                                                        {base}
+                                                    </button>
+                                                    <BaseRefInput base={base} />
+                                                </div>
                                             ))}
                                         </div>
                                     </div>
@@ -589,16 +637,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                         <div>
                             <h2 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4">Regime e Encargos Sociais</h2>
                             <div className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Competência</label>
-                                        <input
-                                            type="month"
-                                            className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none transition-colors font-medium text-sm"
-                                            value={params.competence}
-                                            onChange={e => setParams({ ...params, competence: e.target.value })}
-                                        />
-                                    </div>
+                                <div className="grid grid-cols-1 gap-4">
                                     <div>
                                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Regime</label>
                                         <div className="flex gap-1 bg-slate-100 p-1 rounded-xl h-[46px]">
