@@ -440,7 +440,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                         <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl min-w-[140px] flex-shrink-0">
                             <div className="flex items-center gap-2 text-slate-500 mb-1">
                                 <Calculator size={14} />
-                                <span className="text-[10px] font-bold uppercase tracking-wider">Valor Total</span>
+                                <span className="text-[10px] font-bold uppercase tracking-wider">Valor Bruto Extraído</span>
                             </div>
                             <div className="font-bold text-slate-800 truncate">
                                 {valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
@@ -476,6 +476,23 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                     </div>
                 </div>
             </header>
+
+            {/* Aviso de divergência pré/pós-processamento */}
+            {(jobStage === 'pending_hydration' || jobStage === 'finalized') && (
+                <div className="max-w-7xl mx-auto w-full px-4 md:px-6 mt-3">
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                        <AlertTriangle className="text-amber-500 flex-shrink-0 mt-0.5" size={18} />
+                        <div>
+                            <p className="text-sm font-bold text-amber-800">Dados pré-processamento</p>
+                            <p className="text-xs text-amber-700 mt-1">
+                                Os valores e contagens acima são dos dados brutos extraídos pelo OCR/IA.
+                                O orçamento final pode divergir devido a deduplicação, remoção de itens inválidos e aplicação de BDI.
+                                Consulte a tela do orçamento para os totais definitivos.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6 space-y-6">
 
