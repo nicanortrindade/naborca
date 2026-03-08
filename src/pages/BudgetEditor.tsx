@@ -1317,68 +1317,115 @@ const BudgetEditor = () => {
 
     // ===== INSERÇÃO POSICIONAL INLINE: Etapa/Sub-etapa no menu de contexto =====
     const handleStartInlineInsert = (type: 'etapa' | 'subetapa', afterIndex: number, parentId: string | null) => {
-        let provisionalNumber = '';
+        const clickedRow = visibleRows?.[afterIndex];
+        if (!clickedRow) return;
+        const clickedLevel = clickedRow.level || 1;
         let insertAfterIndex = afterIndex;
+        let newLevel: number;
+        let newParentId: string | null;
 
         if (type === 'etapa') {
-            // Find the parent N1 if clicked on N2 or N3
-            const clickedRow = visibleRows?.[afterIndex];
-            let n1Index = afterIndex;
-            if (clickedRow && clickedRow.level > 1) {
-                // Walk backwards to find the parent N1
-                for (let i = afterIndex - 1; i >= 0; i--) {
-                    if (visibleRows[i].level === 1) {
-                        n1Index = i;
-                        break;
-                    }
+            // ETAPA = create SIBLING (same level, same parent)
+            newLevel = clickedLevel;
+            newParentId = clickedRow.parentId || null;
+
+            // Advance past all children of clicked item
+            for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
+                if (visibleRows[i].level <= clickedLevel) break;
+                insertAfterIndex = i;
+            }
+            // Then advance past all siblings and their children at same level
+            for (let i = insertAfterIndex + 1; i < (visibleRows?.length || 0); i++) {
+                if (newParentId === null) {
+                    // For N1: go to end of entire list
+                    insertAfterIndex = i;
+                } else {
+                    // For N2+: stop when we hit a level <= parent level
+                    const parentLevel = clickedLevel - 1;
+                    if (visibleRows[i].level <= parentLevel) break;
+                    insertAfterIndex = i;
                 }
             }
-            // Now advance past ALL children of that N1
-            for (let i = n1Index + 1; i < (visibleRows?.length || 0); i++) {
-                if (visibleRows[i].level === 1) break; // next N1 found, stop
-                insertAfterIndex = i; // keep advancing past children
+            // Handle N1 at end of list
+            if (newParentId === null) {
+                insertAfterIndex = (visibleRows?.length || 1) - 1;
             }
-            let etapaCount = 0;
-            for (let i = 0; i <= n1Index && i < (visibleRows?.length || 0); i++) {
-                if (visibleRows[i].level === 1) etapaCount++;
-            }
-            provisionalNumber = `${etapaCount + 1}`;
         } else {
-            // Sub-etapa: find insertion point based on where clicked
-            const clickedRow = visibleRows?.[afterIndex];
-            if (clickedRow && clickedRow.level === 1) {
-                // Clicked on N1: insert after all its children
+            if (clickedLevel <= 2) {
+                // N1/N2 + Subetapa = create CHILD (level + 1, parent = clicked item)
+                newLevel = clickedLevel + 1;
+                newParentId = clickedRow.id || null;
+
+                // Advance past all children of clicked item
                 for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
-                    if (visibleRows[i].level === 1) break;
+                    if (visibleRows[i].level <= clickedLevel) break;
                     insertAfterIndex = i;
                 }
-            } else if (clickedRow && clickedRow.level === 2) {
-                // Clicked on N2: insert after ALL children of the parent N1
-                // Find the parent N1 first
-                let parentN1Index = afterIndex;
-                for (let i = afterIndex - 1; i >= 0; i--) {
-                    if (visibleRows[i].level === 1) {
-                        parentN1Index = i;
-                        break;
-                    }
-                }
-                // Now advance past all children of that N1
-                for (let i = parentN1Index + 1; i < (visibleRows?.length || 0); i++) {
-                    if (visibleRows[i].level === 1) break; // next N1 found, stop
+            } else {
+                // N3+ + Subetapa = create SIBLING (same level, same parent)
+                newLevel = clickedLevel;
+                newParentId = clickedRow.parentId || null;
+
+                // Advance past all siblings and their children under same parent
+                const parentLevel = clickedLevel - 1;
+                for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
+                    if (visibleRows[i].level <= parentLevel) break;
                     insertAfterIndex = i;
                 }
-            }
-            const parentItem = items.find(i => i.id === parentId);
-            if (parentItem) {
-                let subCount = 0;
-                for (let i = 0; i < items.length; i++) {
-                    if (items[i].level === 2 && items[i].parentId === parentId) subCount++;
-                }
-                const parentRow = visibleRows?.find(r => r.id === parentId);
-                const parentNum = parentRow?.itemNumber || '?';
-                provisionalNumber = `${parentNum}.${subCount + 1}`;
             }
         }
+
+        // Calculate provisional number
+        let provisionalNumber = '';
+        if (type === 'etapa') {
+            // Count existing siblings at same level under same parent
+            const clickedNum = clickedRow.itemNumber || '';
+            const numParts = clickedNum.split('.');
+            // Find the last sibling number at this level
+            let maxSiblingNum = 0;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].level === clickedLevel && items[i].parentId === (newParentId || null)) {
+                    const parts = (items[i].itemNumber || '').split('.');
+                    const lastNum = parseInt(parts[parts.length - 1] || '0', 10);
+                    if (lastNum > maxSiblingNum) maxSiblingNum = lastNum;
+                }
+            }
+            if (numParts.length === 1) {
+                provisionalNumber = `${maxSiblingNum + 1}`;
+            } else {
+                numParts[numParts.length - 1] = `${maxSiblingNum + 1}`;
+                provisionalNumber = numParts.join('.');
+            }
+        } else {
+            if (clickedLevel <= 2) {
+                // Child: count existing children of clicked item
+                let maxChildNum = 0;
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].parentId === clickedRow.id && items[i].level === newLevel) {
+                        const parts = (items[i].itemNumber || '').split('.');
+                        const lastNum = parseInt(parts[parts.length - 1] || '0', 10);
+                        if (lastNum > maxChildNum) maxChildNum = lastNum;
+                    }
+                }
+                const clickedNum = clickedRow.itemNumber || '?';
+                provisionalNumber = `${clickedNum}.${maxChildNum + 1}`;
+            } else {
+                // Sibling: count existing siblings under same parent
+                let maxSiblingNum = 0;
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].level === clickedLevel && items[i].parentId === newParentId) {
+                        const parts = (items[i].itemNumber || '').split('.');
+                        const lastNum = parseInt(parts[parts.length - 1] || '0', 10);
+                        if (lastNum > maxSiblingNum) maxSiblingNum = lastNum;
+                    }
+                }
+                const parentRow = visibleRows?.find((r: any) => r.id === newParentId);
+                const parentNum = parentRow?.itemNumber || '?';
+                provisionalNumber = `${parentNum}.${maxSiblingNum + 1}`;
+            }
+        }
+
+        parentId = newParentId;
         setInlineInsert({ type, afterIndex: insertAfterIndex, parentId, provisionalNumber });
         setInlineInsertText('');
         setTimeout(() => inlineInsertRef.current?.focus(), 50);
@@ -1393,8 +1440,10 @@ const BudgetEditor = () => {
         const description = inlineInsertText.trim().toUpperCase();
         try {
             setInlineInsert(null);
-            const level = type === 'etapa' ? 1 : 2;
-            const itemParentId = type === 'etapa' ? null : parentId;
+            // Determine level from provisional number (count dots + 1)
+            const dots = (inlineInsert.provisionalNumber || '').split('.').length - 1;
+            const level = dots + 1;
+            const itemParentId = level === 1 ? null : parentId;
             const newItem = await BudgetItemService.create({
                 budgetId: budgetId,
                 order: getNextOrder(),
@@ -4000,11 +4049,11 @@ const BudgetEditor = () => {
                                                 {/* Menu Flutuante de Ações */}
                                                 <div className="absolute right-0 top-1/2 -translate-y-1/2 bg-white shadow-xl border border-slate-200 rounded flex items-center py-1 px-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-all z-50 whitespace-nowrap text-slate-600 hidden group-hover:flex">
                                                     {/* Inserção Estrutural: Etapa e Sub-etapa */}
-                                                    {(isNivel1 || isNivel2) && (
+                                                    {(isNivel1 || isNivel2 || item.level >= 3) && (
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                handleStartInlineInsert('etapa', index, null);
+                                                                handleStartInlineInsert('etapa', index, item.parentId || null);
                                                             }}
                                                             className="flex flex-col items-center justify-center px-1.5 hover:bg-indigo-50 rounded py-1 min-w-[50px] text-indigo-600"
                                                         >
@@ -4012,11 +4061,11 @@ const BudgetEditor = () => {
                                                             <span className="text-[9px] font-bold">Etapa</span>
                                                         </button>
                                                     )}
-                                                    {(isNivel1 || isNivel2) && (
+                                                    {(isNivel1 || isNivel2 || item.level >= 3) && (
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                handleStartInlineInsert('subetapa', index, isNivel1 ? item.id || null : item.parentId || null);
+                                                                handleStartInlineInsert('subetapa', index, item.id || null);
                                                             }}
                                                             className="flex flex-col items-center justify-center px-1.5 hover:bg-sky-50 rounded py-1 min-w-[50px] text-sky-600"
                                                         >
