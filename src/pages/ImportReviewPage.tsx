@@ -483,11 +483,11 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                     <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
                         <AlertTriangle className="text-amber-500 flex-shrink-0 mt-0.5" size={18} />
                         <div>
-                            <p className="text-sm font-bold text-amber-800">Dados pré-processamento</p>
+                            <p className="text-sm font-bold text-amber-800">Valores estimados</p>
                             <p className="text-xs text-amber-700 mt-1">
-                                Os valores e contagens acima são dos dados brutos extraídos pelo OCR/IA.
-                                O orçamento final pode divergir devido a deduplicação, remoção de itens inválidos e aplicação de BDI.
-                                Consulte a tela do orçamento para os totais definitivos.
+                                Os valores exibidos acima são estimativas da extração automática.
+                                O orçamento final pode apresentar pequenas diferenças após o processamento.
+                                Consulte a tela do orçamento para os valores definitivos.
                             </p>
                         </div>
                     </div>
