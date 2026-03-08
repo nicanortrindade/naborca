@@ -1345,9 +1345,18 @@ const BudgetEditor = () => {
                     insertAfterIndex = i;
                 }
             } else if (clickedRow && clickedRow.level === 2) {
-                // Clicked on N2: insert after the last child (N3) of this N2
-                for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
-                    if (visibleRows[i].level <= 2) break; // next N1 or N2 found, stop
+                // Clicked on N2: insert after ALL children of the parent N1
+                // Find the parent N1 first
+                let parentN1Index = afterIndex;
+                for (let i = afterIndex - 1; i >= 0; i--) {
+                    if (visibleRows[i].level === 1) {
+                        parentN1Index = i;
+                        break;
+                    }
+                }
+                // Now advance past all children of that N1
+                for (let i = parentN1Index + 1; i < (visibleRows?.length || 0); i++) {
+                    if (visibleRows[i].level === 1) break; // next N1 found, stop
                     insertAfterIndex = i;
                 }
             }
@@ -1595,6 +1604,30 @@ const BudgetEditor = () => {
         if (!window.confirm("Remover este item?")) return;
         try {
             await BudgetItemService.delete(itemId);
+
+            // Reload to get updated items list
+            const viewItems = await BudgetItemService.getByBudgetId(budgetId, { pageSize: 1000 });
+            const repairedItems = repairHierarchy(viewItems || []);
+
+            // Renumber all items
+            let c1 = 0, c2 = 0, c3 = 0;
+            const payload = repairedItems.map((item: any) => {
+                if (item.level === 1) { c1++; c2 = 0; c3 = 0; }
+                else if (item.level === 2) { c2++; c3 = 0; }
+                else { c3++; }
+                let num = '';
+                if (item.level === 1) num = `${c1}`;
+                else if (item.level === 2) num = `${c1}.${c2}`;
+                else num = `${c1}.${c2}.${c3}`;
+                const pid = item.parentId && String(item.parentId).trim() !== '' && String(item.parentId).trim().toLowerCase() !== 'null' ? String(item.parentId) : null;
+                return { id: item.id!, order: item.order, parentId: pid, itemNumber: num };
+            });
+
+            try {
+                await (supabase as any).rpc('reorder_budget_items', { items: payload });
+            } catch (e) {
+                console.error('Reorder after delete error:', e);
+            }
 
             await loadBudget(true);
         } catch (e) {
