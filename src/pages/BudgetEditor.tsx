@@ -1116,22 +1116,21 @@ const BudgetEditor = () => {
 
         // 0. Pre-process: Virtual Parenting for Imported Items (Fix Orphans)
         // Percorre NA ORDEM ATUAL (já correta do serviço) para rastrear o último pai visto
-        let lastL1: any = null;
-        let lastL2: any = null;
-
+        const lastAtLevel: Record<number, any> = {};
         const fixedItems = [...allItems].map(item => {
             const newItem = { ...item };
+            const level = newItem.level || 1;
 
-            // Track parents based on visual order
-            if (newItem.level === 1) {
-                lastL1 = newItem;
-                lastL2 = null;
-            } else if (newItem.level === 2) {
-                lastL2 = newItem;
-                if (!newItem.parentId && lastL1) newItem.parentId = lastL1.id;
-            } else if (newItem.level >= 3) {
-                if (!newItem.parentId && lastL2) newItem.parentId = lastL2.id;
+            lastAtLevel[level] = newItem;
+            for (const key of Object.keys(lastAtLevel)) {
+                if (Number(key) > level) delete lastAtLevel[Number(key)];
             }
+
+            if (!newItem.parentId && level > 1) {
+                const parent = lastAtLevel[level - 1];
+                if (parent) newItem.parentId = parent.id;
+            }
+
             return newItem;
         });
 
@@ -1355,11 +1354,15 @@ const BudgetEditor = () => {
             newLevel = clickedLevel + 1;
             newParentId = clickedRow.id || null;
 
-            // Avança past todos os descendentes do item clicado
+            // Encontra a posição do último descendente do item clicado em visibleRows
+            // || 99: itens sem level definido nunca causam break prematuro
+            let lastDescendantIndex = afterIndex;
             for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
-                if (visibleRows[i].level <= clickedLevel) break;
-                insertAfterIndex = i;
+                const rowLevel = visibleRows[i]?.level || 99;
+                if (rowLevel <= clickedLevel) break;
+                lastDescendantIndex = i;
             }
+            insertAfterIndex = lastDescendantIndex;
         }
 
         // Calculate provisional number
@@ -1388,7 +1391,7 @@ const BudgetEditor = () => {
             const clickedId = clickedRow?.id;
             let childCount = 0;
             for (let i = 0; i < items.length; i++) {
-                if (items[i].parentId === clickedId && items[i].level === clickedLevel + 1) childCount++;
+                if (items[i].parentId === clickedId) childCount++;
             }
             const clickedNum = clickedRow?.itemNumber || '?';
             provisionalNumber = `${clickedNum}.${childCount + 1}`;
@@ -1430,7 +1433,44 @@ const BudgetEditor = () => {
             });
             if (items) {
                 const newItems = [...items];
-                newItems.splice(afterIndex + 1, 0, newItem);
+                let spliceAt: number;
+                if (type === 'subetapa' && parentId) {
+                    // Encontrar TODOS os descendentes do pai (por parentId, recursivo)
+                    const findAllDescendantIds = (pId: string): Set<string> => {
+                        const ids = new Set<string>();
+                        for (const it of newItems) {
+                            if (it.parentId === pId && it.id) {
+                                ids.add(it.id);
+                                // Recursivo: descendentes dos descendentes
+                                const subIds = findAllDescendantIds(it.id);
+                                subIds.forEach(id => ids.add(id));
+                            }
+                        }
+                        return ids;
+                    };
+
+                    const descendantIds = findAllDescendantIds(parentId);
+
+                    // Encontrar o maior índice entre o pai e todos os seus descendentes
+                    const parentIndex = newItems.findIndex(it => it.id === parentId);
+                    let maxIndex = parentIndex;
+
+                    for (let i = 0; i < newItems.length; i++) {
+                        if (newItems[i].id && descendantIds.has(newItems[i].id)) {
+                            if (i > maxIndex) maxIndex = i;
+                        }
+                    }
+
+                    spliceAt = maxIndex + 1;
+                } else {
+                    // Etapa: converte índice do visibleRows para o items via id
+                    const targetId = visibleRows?.[afterIndex]?.id;
+                    const targetIndexInItems = targetId
+                        ? newItems.findIndex(it => it.id === targetId)
+                        : afterIndex;
+                    spliceAt = (targetIndexInItems >= 0 ? targetIndexInItems : afterIndex) + 1;
+                }
+                newItems.splice(spliceAt, 0, newItem);
                 newItems.forEach((it, idx) => { it.order = idx + 1; });
                 const repairedItems = repairHierarchy(newItems);
                 const numberMap = generateItemNumbers(repairedItems);
@@ -3743,7 +3783,7 @@ const BudgetEditor = () => {
 
                                 const isNivel1 = item.rowType === 'etapa' || item.level === 1; // Fallback to level if rowType missing
                                 const isNivel2 = item.rowType === 'subetapa' || item.level === 2;
-                                const isNivel3Group = item.level === 3 && item.type === 'group'; // Subgrupo dentro de subgrupo
+                                const isNivel3Group = item.level >= 3 && item.type === 'group'; // Subgrupo dentro de subgrupo
                                 const isItem = item.rowType === 'item' || (!isNivel1 && !isNivel2 && !isNivel3Group);
 
                                 // Aplicar cores de fundo
@@ -4169,7 +4209,7 @@ const BudgetEditor = () => {
                                                 <td className="p-1 border-r border-blue-200">
                                                     <div className="flex items-center gap-2">
                                                         <div className="text-[10px] text-blue-500 font-medium text-center w-6">
-                                                            {inlineInsert.type === 'etapa' ? 'N1' : 'N2'}
+                                                            {'N' + ((inlineInsert.provisionalNumber || '').split('.').length)}
                                                         </div>
                                                         <input
                                                             ref={inlineInsertRef}

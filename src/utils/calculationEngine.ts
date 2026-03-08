@@ -75,27 +75,34 @@ export function generateItemNumbers(items: any[]): Map<string, string> {
  */
 export function repairHierarchy(items: BudgetItem[]): BudgetItem[] {
     if (!items) return [];
-
-    // Sort by order index
     const sorted = [...items].sort((a, b) => (a.order || 0) - (b.order || 0));
 
-    let lastL1: BudgetItem | null = null;
-    let lastL2: BudgetItem | null = null;
+    // Stack-based approach: track last item at each level
+    const lastAtLevel: Record<number, BudgetItem> = {};
 
     return sorted.map(item => {
         const newItem = { ...item };
+        const level = newItem.level || 1;
 
-        if (newItem.level === 1) {
-            lastL1 = newItem;
-            lastL2 = null;
-        } else if (newItem.level === 2) {
-            lastL2 = newItem;
-            if (!newItem.parentId && lastL1) newItem.parentId = lastL1.id;
-        } else if (newItem.level >= 3) {
-            if (!newItem.parentId && lastL2) newItem.parentId = lastL2.id;
-            // Fallback: se não tiver L2, tenta ligar no L1 (incomum mas possível)
-            else if (!newItem.parentId && lastL1) newItem.parentId = lastL1.id;
+        // Track this item at its level
+        lastAtLevel[level] = newItem;
+
+        // Clear all deeper levels (a new N2 resets N3, N4, etc.)
+        for (const key of Object.keys(lastAtLevel)) {
+            if (Number(key) > level) delete lastAtLevel[Number(key)];
         }
+
+        // Only repair parentId if it's missing
+        if (!newItem.parentId && level > 1) {
+            // Find the closest ancestor (level - 1)
+            const parent = lastAtLevel[level - 1];
+            if (parent) {
+                newItem.parentId = parent.id;
+            }
+        }
+
+        // NEVER overwrite level - trust the database value
+
         return newItem;
     });
 }
