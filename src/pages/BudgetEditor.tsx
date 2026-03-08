@@ -1351,27 +1351,14 @@ const BudgetEditor = () => {
                 insertAfterIndex = (visibleRows?.length || 1) - 1;
             }
         } else {
-            if (clickedLevel <= 2) {
-                // N1/N2 + Subetapa = create CHILD (level + 1, parent = clicked item)
-                newLevel = clickedLevel + 1;
-                newParentId = clickedRow.id || null;
+            // SUBETAPA: sempre cria FILHO do item clicado (nível + 1)
+            newLevel = clickedLevel + 1;
+            newParentId = clickedRow.id || null;
 
-                // Advance past all children of clicked item
-                for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
-                    if (visibleRows[i].level <= clickedLevel) break;
-                    insertAfterIndex = i;
-                }
-            } else {
-                // N3+ + Subetapa = create SIBLING (same level, same parent)
-                newLevel = clickedLevel;
-                newParentId = clickedRow.parentId || null;
-
-                // Advance past all siblings and their children under same parent
-                const parentLevel = clickedLevel - 1;
-                for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
-                    if (visibleRows[i].level <= parentLevel) break;
-                    insertAfterIndex = i;
-                }
+            // Avança past todos os descendentes do item clicado
+            for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
+                if (visibleRows[i].level <= clickedLevel) break;
+                insertAfterIndex = i;
             }
         }
 
@@ -1397,32 +1384,14 @@ const BudgetEditor = () => {
                 provisionalNumber = numParts.join('.');
             }
         } else {
-            if (clickedLevel <= 2) {
-                // Child: count existing children of clicked item
-                let maxChildNum = 0;
-                for (let i = 0; i < items.length; i++) {
-                    if (items[i].parentId === clickedRow.id && items[i].level === newLevel) {
-                        const parts = (items[i].itemNumber || '').split('.');
-                        const lastNum = parseInt(parts[parts.length - 1] || '0', 10);
-                        if (lastNum > maxChildNum) maxChildNum = lastNum;
-                    }
-                }
-                const clickedNum = clickedRow.itemNumber || '?';
-                provisionalNumber = `${clickedNum}.${maxChildNum + 1}`;
-            } else {
-                // Sibling: count existing siblings under same parent
-                let maxSiblingNum = 0;
-                for (let i = 0; i < items.length; i++) {
-                    if (items[i].level === clickedLevel && items[i].parentId === newParentId) {
-                        const parts = (items[i].itemNumber || '').split('.');
-                        const lastNum = parseInt(parts[parts.length - 1] || '0', 10);
-                        if (lastNum > maxSiblingNum) maxSiblingNum = lastNum;
-                    }
-                }
-                const parentRow = visibleRows?.find((r: any) => r.id === newParentId);
-                const parentNum = parentRow?.itemNumber || '?';
-                provisionalNumber = `${parentNum}.${maxSiblingNum + 1}`;
+            // SUBETAPA: conta filhos diretos existentes do item clicado
+            const clickedId = clickedRow?.id;
+            let childCount = 0;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].parentId === clickedId && items[i].level === clickedLevel + 1) childCount++;
             }
+            const clickedNum = clickedRow?.itemNumber || '?';
+            provisionalNumber = `${clickedNum}.${childCount + 1}`;
         }
 
         parentId = newParentId;
@@ -1803,35 +1772,35 @@ const BudgetEditor = () => {
         setLoading(true);
         try {
             const sortedItems = [...items].sort((a, b) => (a.order || 0) - (b.order || 0));
+            const repairedItems = repairHierarchy(sortedItems);
+            const numberMap = generateItemNumbers(repairedItems);
 
-            const numberMap = generateItemNumbers(sortedItems);
-
-            const updates = sortedItems.map((item, i) => {
-                const itemNumberStr = numberMap.get(item.id!) || `${i + 1}`;
-
-                const currentOrder = i + 1;
-
-                if (item.order !== currentOrder || item.itemNumber !== itemNumberStr) {
-                    return BudgetItemService.update(item.id!, {
-                        order: currentOrder,
-                        itemNumber: itemNumberStr
-                    }).catch(err => {
-                        console.error(`Falha ao atualizar item ${item.id}: `, err);
-                        return { error: true, itemId: item.id };
-                    });
-                }
-                return Promise.resolve({ success: true });
+            const payload = repairedItems.map((item, idx) => {
+                const itemNumberStr = numberMap.get(item.id!) || `${idx + 1}`;
+                const pid = item.parentId && String(item.parentId).trim() !== '' && String(item.parentId).trim().toLowerCase() !== 'null'
+                    ? String(item.parentId)
+                    : null;
+                return {
+                    id: item.id!,
+                    order: idx + 1,
+                    parentId: pid,
+                    itemNumber: itemNumberStr,
+                };
             });
 
-            const results = await Promise.all(updates);
-            const failures = results.filter((r: any) => r?.error);
-
-            if (failures.length > 0) {
-                alert(`Atenção: ${failures.length} itens não puderam ser atualizados.`);
-            } else {
-                await loadBudget();
-                alert("Numeração e Ordem recalculadas com sucesso!");
+            // Enviar em batches de 200 para evitar timeout
+            const BATCH_SIZE = 200;
+            for (let i = 0; i < payload.length; i += BATCH_SIZE) {
+                const batch = payload.slice(i, i + BATCH_SIZE);
+                const { error } = await (supabase as SupabaseClient<any>).rpc('reorder_budget_items', { items: batch });
+                if (error) {
+                    console.error(`Erro no batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error);
+                    throw error;
+                }
             }
+
+            await loadBudget();
+            alert("Numeração e Ordem recalculadas com sucesso!");
         } catch (error) {
             console.error("Erro geral ao reordenar:", error);
             alert("Erro ao recalcular numeração.");
@@ -3997,7 +3966,7 @@ const BudgetEditor = () => {
                                                 {/* Menu Flutuante de Ações */}
                                                 <div className="absolute right-0 top-1/2 -translate-y-1/2 bg-white shadow-xl border border-slate-200 rounded flex items-center py-1 px-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-all z-50 whitespace-nowrap text-slate-600 hidden group-hover:flex">
                                                     {/* Inserção Estrutural: Etapa e Sub-etapa */}
-                                                    {(isNivel1 || isNivel2 || item.level >= 3) && (
+                                                    {(!item.code && item.type === 'group') && (
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
@@ -4009,7 +3978,7 @@ const BudgetEditor = () => {
                                                             <span className="text-[9px] font-bold">Etapa</span>
                                                         </button>
                                                     )}
-                                                    {(isNivel1 || isNivel2 || item.level >= 3) && (
+                                                    {(!item.code && item.type === 'group') && (
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();

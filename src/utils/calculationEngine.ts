@@ -129,139 +129,95 @@ export function calculateBudget(items: BudgetItem[], bdiPercent: number): Budget
     const bdiMultiplier = 1 + (safeNum(bdiPercent) / 100);
     const itemMap = new Map<string, CalculatedItem>();
 
-    // Mapa auxiliar para agrupar filhos por pai
-    const childrenByParent = new Map<string, BudgetItem[]>();
-
-    // 1. Indexar e Calcular Básicos (L3+)
-    items.forEach(item => {
+    // 1. Construir mapa de filhos por parentId
+    const childrenMap = new Map<string, BudgetItem[]>();
+    const parentIds = new Set<string>();
+    for (const item of items) {
         if (item.parentId) {
-            if (!childrenByParent.has(item.parentId)) childrenByParent.set(item.parentId, []);
-            childrenByParent.get(item.parentId)!.push(item);
+            if (!childrenMap.has(item.parentId)) childrenMap.set(item.parentId, []);
+            childrenMap.get(item.parentId)!.push(item);
+            parentIds.add(item.parentId);
         }
+    }
 
-        const isGroup = item.level < 3 || item.type === 'group' || (item as any).type === 'etapa' || (item as any).type === 'subetapa';
+    // 2. Calcular recursivamente bottom-up (funciona para N níveis)
+    function calcItem(item: BudgetItem): CalculatedItem {
+        const existing = itemMap.get(item.id!);
+        if (existing) return existing;
+
+        const children = childrenMap.get(item.id!) || [];
+        const isGroup = parentIds.has(item.id!) ||
+            item.type === 'group' ||
+            (item as any).type === 'etapa' ||
+            (item as any).type === 'subetapa' ||
+            item.level < 3;
 
         let baseUnit = 0;
         let baseTotal = 0;
         let finalUnit = 0;
         let finalTotal = 0;
 
-        if (!isGroup) {
+        if (isGroup && children.length > 0) {
+            // Grupo: soma recursiva dos filhos
+            for (const child of children) {
+                const childCalc = calcItem(child);
+                baseTotal += childCalc.baseTotal;
+                finalTotal += childCalc.finalTotal;
+            }
+        } else if (!isGroup) {
+            // Item folha: calcula diretamente
             const qty = safeNum(item.quantity);
             const unit = safeNum(item.unitPrice);
-
-            baseUnit = unit;
-            baseTotal = qty * unit;
-
             const itemBdi = (item.customBDI != null && item.customBDI > 0)
                 ? item.customBDI
                 : bdiPercent;
-            const itemBdiMultiplier = 1 + (safeNum(itemBdi) / 100);
+            const itemBdiMult = 1 + (safeNum(itemBdi) / 100);
 
-            finalUnit = baseUnit * itemBdiMultiplier;
-            finalTotal = baseTotal * itemBdiMultiplier;
+            baseUnit = unit;
+            baseTotal = qty * unit;
+            finalUnit = baseUnit * itemBdiMult;
+            finalTotal = baseTotal * itemBdiMult;
         }
 
-        itemMap.set(item.id!, {
+        const calc: CalculatedItem = {
             id: item.id!,
             baseUnit,
             baseTotal,
             finalUnit,
             finalTotal,
-            weight: 0, // Será calculado depois
-            level: item.level || 3,
-            isGroup: !!isGroup
-        });
-    });
+            weight: 0,
+            level: item.level || 1,
+            isGroup: !!isGroup,
+        };
+        itemMap.set(item.id!, calc);
+        return calc;
+    }
 
-    // 2. Calcular Agregações - Subetapas (L2)
-    // Precisamos garantir ordem bottom-up ou simplesmente filtrar por level.
-    // Como L2 depende de L3, calculamos L2 primeiro (baseado nos L3 já calculados no passo anterior).
+    // 3. Calcular todos os itens
+    for (const item of items) {
+        calcItem(item);
+    }
 
-    const l2Items = items.filter(i => i.level === 2);
-    l2Items.forEach(sub => {
-        const children = items.filter(i => i.parentId === sub.id && i.level >= 3); // Filhos diretos itens
-
-        let subBaseTotal = 0;
-        let subFinalTotal = 0;
-
-        children.forEach(child => {
-            const childCalc = itemMap.get(child.id!);
-            if (childCalc) {
-                subBaseTotal += childCalc.baseTotal;
-                subFinalTotal += childCalc.finalTotal;
-            }
-        });
-
-        const subCalc = itemMap.get(sub.id!);
-        if (subCalc) {
-            subCalc.baseTotal = subBaseTotal;
-            subCalc.finalTotal = subFinalTotal;
-            // Unitário de grupo não existe ou é igual ao total? Geralmente vazio.
-        }
-    });
-
-    // 3. Calcular Agregações - Etapas (L1)
-    const l1Items = items.filter(i => i.level === 1);
+    // 4. Total global: soma dos itens folha (level >= 3 e !isGroup) para evitar dupla contagem
     let totalGlobalBase = 0;
     let totalGlobalFinal = 0;
-
-    l1Items.forEach(etapa => {
-        // Filhos diretos podem ser Subetapas (L2) OU Itens (L3) órfãos/diretos?
-        // Assumindo estrutura estrita L1 -> L2. Mas o sistema permite L1 -> L3?
-        // Vamos somar todos os filhos diretos baseados no map calculated.
-
-        const children = items.filter(i => i.parentId === etapa.id);
-
-        let etapaBaseTotal = 0;
-        let etapaFinalTotal = 0;
-
-        children.forEach(child => {
-            const childCalc = itemMap.get(child.id!);
-            if (childCalc) {
-                etapaBaseTotal += childCalc.baseTotal;
-                etapaFinalTotal += childCalc.finalTotal;
-            }
-        });
-
-        const etapaCalc = itemMap.get(etapa.id!);
-        if (etapaCalc) {
-            etapaCalc.baseTotal = etapaBaseTotal;
-            etapaCalc.finalTotal = etapaFinalTotal;
-        }
-    });
-
-    // ROBUST CALCULATION: Sum all Level 3+ items directly for Global Total
-    // This ensures that even if items are orphaned (not under an L1 Etapa), they are counted.
-    totalGlobalBase = 0;
-    totalGlobalFinal = 0;
-
     itemMap.forEach(calc => {
-        // Sum only leaf nodes (Level 3+) or explicit items to avoid double counting groups
-        // Assuming groups are L1/L2 or type='group'
-        if ((calc.level >= 3 && !calc.isGroup)) {
+        if (!calc.isGroup) {
             totalGlobalBase += calc.baseTotal;
             totalGlobalFinal += calc.finalTotal;
         }
     });
 
-    // Se houver itens soltos no nível raiz (sem pai) que não são L1 (erro de estrutura?),
-    // idealmente deveríamos somar. Mas vamos focar na soma das Etapas (L1) como Global.
-    // Ajuste: Total Global deve ser a soma de todos os itens L3+ para garantir precisão, independente da hierarquia visual?
-    // Regra de negócio: Orçamento = Soma das Etapas. Se houver item fora de etapa, ele é "invisible cost"?
-    // Vamos manter Soma das Etapas para consistência visual.
-
-    // 4. Calcular Pesos
-    totalGlobalFinal = totalGlobalFinal || 1; // Evitar divisão por zero
-
+    // 5. Calcular pesos
+    const totalForWeight = totalGlobalFinal || 1;
     itemMap.forEach(calc => {
-        calc.weight = (calc.finalTotal / totalGlobalFinal) * 100;
+        calc.weight = (calc.finalTotal / totalForWeight) * 100;
     });
 
     return {
         itemMap,
         totalGlobalBase,
         totalGlobalFinal,
-        bdiMultiplier
+        bdiMultiplier,
     };
 }
