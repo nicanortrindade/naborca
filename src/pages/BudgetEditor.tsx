@@ -2333,18 +2333,28 @@ const BudgetEditor = () => {
         // V2: Use factors obj
         const { materialFactor, laborFactor, bdiFactor } = adjustmentFactors;
 
-        // BDI Budget (Display)
-        // If mode=bdi_only, bdi is effectively changed on items finalPrice, but global BDI % remains same on budget settings.
-        // Or should we fake the budget BDI? No. Keep it clean. Items have final Price.
-
         // Recalculate totals for Weight distribution
         let totalFinalAdj = 0;
 
         // First Pass: Calculate Adjusted Values & Total
         const adjustedItems = items.map(item => {
-            const isGroup = item.type === 'group';
+            const isGroup = item.type === 'group' || (!item.code && (item.level || 0) < 99);
 
-            // Calc adjusted parts using V2 Util
+            if (isGroup) {
+                // Grupo: preserva totais do calculateBudget, não recalcula
+                return {
+                    ...item,
+                    _adjusted: { origin: '' },
+                    _amounts: {
+                        unitPrice: 0,
+                        finalPrice: 0,
+                        totalPrice: item.totalPrice || 0,  // Vem do calculateBudget
+                        totalFinal: item.finalPrice || 0,   // Vem do calculateBudget
+                    }
+                };
+            }
+
+            // Folha: aplica ajustes normalmente
             const adjusted = getAdjustedItemValues(
                 {
                     unitPrice: item.unitPrice || 0,
@@ -2360,7 +2370,7 @@ const BudgetEditor = () => {
             const totalPrice = quantity * adjusted.unitPrice; // Total Base
             const finalPrice = quantity * adjusted.finalPrice; // Total Final
 
-            if (!isGroup && item.level >= 3) {
+            if (item.level >= 3) {
                 totalFinalAdj += finalPrice;
             }
 
@@ -2376,31 +2386,7 @@ const BudgetEditor = () => {
             };
         });
 
-        // Post-pass: Callculate rollup totals for groups (Sections N1, Groups N2)
-        for (let i = adjustedItems.length - 1; i >= 0; i--) {
-            const item = adjustedItems[i];
-            const isGroup = item.type === 'group' || item.level === 1 || item.level === 2;
-
-            if (isGroup) {
-                let gTotalBase = 0;
-                let gTotalFinal = 0;
-                const myLevel = item.level;
-
-                for (let j = i + 1; j < adjustedItems.length; j++) {
-                    const child = adjustedItems[j];
-                    if (child.level <= myLevel) break; // Reached next sibling or upper level
-
-                    // Sum only leaves to avoid recursive double-counting
-                    const childIsGroup = child.type === 'group' || child.level === 1 || child.level === 2;
-                    if (!childIsGroup) {
-                        gTotalBase += (child._amounts.totalPrice || 0);
-                        gTotalFinal += (child._amounts.totalFinal || 0);
-                    }
-                }
-                item._amounts.totalPrice = gTotalBase;
-                item._amounts.totalFinal = gTotalFinal;
-            }
-        }
+        // PARTE 2: Agregação Linear fajuta REMOVIDA. O Engine já faz isso.
 
         return adjustedItems.map((item, idx) => {
             const isGroup = item.type === 'group' || item.level === 1 || item.level === 2;
@@ -2419,7 +2405,7 @@ const BudgetEditor = () => {
                 // Metadados
                 kind: isGroup ? 'GROUP' : 'ITEM',
                 itemNumber,
-                origin: item._adjusted.origin, // Info extra para debug/UI se quiser
+                origin: item._adjusted?.origin, // Info extra para debug/UI se quiser
 
                 // Dados Higienizados
                 code: isGroup ? '' : (item.code || ''),
@@ -2431,9 +2417,9 @@ const BudgetEditor = () => {
                 unitPrice: isGroup ? undefined : unitPrice,        // Unit Base
                 unitPriceWithBDI: isGroup ? undefined : finalPrice, // Unit Final (com BDI + Ajuste)
 
-                // Totais
-                totalPrice: totalPrice,         // Group rollup works natively now
-                finalPrice: itemTotalFinal,     // Group rollup works natively now
+                // Totais (Agora baseados no calculateBudget para grupos!)
+                totalPrice: totalPrice,
+                finalPrice: itemTotalFinal,
 
                 total: itemTotalFinal, // Alias para legacy grids
                 pesoRaw: pesoRaw
@@ -3671,6 +3657,7 @@ const BudgetEditor = () => {
                                                 </div>
                                                 <div>
                                                     <p className="text-[10px] text-slate-400 uppercase">Total</p>
+                                                    {item.level === 3 && item.type === 'group' && console.log(`[DEBUG RENDER N3] ${item.description?.substring(0, 40)} | totalPrice=${item.totalPrice} | finalPrice=${item.finalPrice} | baseTotal=${(item as any).baseTotal} | calculatedTotal=${(item as any).calculatedTotal}`)}
                                                     <p className="font-bold font-mono">
                                                         {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalPrice)}
                                                     </p>
