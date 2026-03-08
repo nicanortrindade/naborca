@@ -661,6 +661,7 @@ const BudgetEditor = () => {
     const [inlineSearchResults, setInlineSearchResults] = useState<any[]>([]);
     const [inlineSearchLoading, setInlineSearchLoading] = useState(false);
     const inlineSearchRef = useRef<HTMLInputElement>(null);
+    const [editingQuantity, setEditingQuantity] = useState<{ itemId: string; value: string } | null>(null);
 
     // Estados de Busca e Filtros Multi-Base
     const [selectedBases, setSelectedBases] = useState<string[]>(() => {
@@ -3965,11 +3966,11 @@ const BudgetEditor = () => {
                                                             <span className="text-[9px] font-bold">Etapa</span>
                                                         </button>
                                                     )}
-                                                    {isNivel1 && (
+                                                    {(isNivel1 || isNivel2) && (
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                handleStartInlineInsert('subetapa', index, item.id || null);
+                                                                handleStartInlineInsert('subetapa', index, isNivel1 ? item.id || null : item.parentId || null);
                                                             }}
                                                             className="flex flex-col items-center justify-center px-1.5 hover:bg-sky-50 rounded py-1 min-w-[50px] text-sky-600"
                                                         >
@@ -4050,12 +4051,51 @@ const BudgetEditor = () => {
                                                 </div>
                                             </td>
 
-                                            {/* Quantidade */}
-                                            <td className={clsx(
-                                                "p-1 text-right border-r border-slate-300 font-mono px-2 w-[90px] min-w-[90px] max-w-[90px]",
-                                                isNivel1 ? "text-white" : "text-slate-700"
-                                            )}>
-                                                {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(item.quantity) : ''}
+                                            {/* Quantidade — duplo clique para editar */}
+                                            <td
+                                                className={clsx(
+                                                    "p-1 text-right border-r border-slate-300 font-mono px-2 w-[90px] min-w-[90px] max-w-[90px]",
+                                                    isNivel1 ? "text-white" : "text-slate-700",
+                                                    !isGroup && !item.isLocked && "cursor-pointer hover:bg-blue-50"
+                                                )}
+                                                onDoubleClick={() => {
+                                                    if (!isGroup && !item.isLocked) {
+                                                        setEditingQuantity({
+                                                            itemId: item.id!,
+                                                            value: String(item.quantity ?? 0)
+                                                        });
+                                                    }
+                                                }}
+                                            >
+                                                {!isGroup ? (
+                                                    editingQuantity && editingQuantity.itemId === item.id ? (
+                                                        <input
+                                                            type="text"
+                                                            autoFocus
+                                                            value={editingQuantity.value}
+                                                            onChange={(e) => setEditingQuantity({ ...editingQuantity, value: e.target.value })}
+                                                            onBlur={async () => {
+                                                                const newQty = parseFloat(editingQuantity.value.replace(',', '.'));
+                                                                if (!isNaN(newQty) && newQty !== item.quantity) {
+                                                                    await BudgetItemService.update(item.id!, { quantity: newQty });
+                                                                    await loadBudget();
+                                                                }
+                                                                setEditingQuantity(null);
+                                                            }}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Enter') {
+                                                                    (e.target as HTMLInputElement).blur();
+                                                                }
+                                                                if (e.key === 'Escape') {
+                                                                    setEditingQuantity(null);
+                                                                }
+                                                            }}
+                                                            className="w-full text-right text-xs font-mono border border-blue-400 rounded px-1 py-0.5 focus:ring-2 focus:ring-blue-400 focus:outline-none bg-white"
+                                                        />
+                                                    ) : (
+                                                        new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(item.quantity)
+                                                    )
+                                                ) : ''}
                                             </td>
 
                                             {/* Unidade */}
