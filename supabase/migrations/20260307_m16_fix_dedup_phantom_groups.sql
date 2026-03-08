@@ -110,14 +110,15 @@ BEGIN
         UPDATE public.budgets
         SET settings = p_params, updated_at = now(), sinapi_uf = v_uf,
             sinapi_competence = v_competence,
-            sinapi_regime = CASE WHEN v_desonerado THEN 'DESONERADO' ELSE 'NAO_DESONERADO' END
+            sinapi_regime = CASE WHEN v_desonerado THEN 'DESONERADO' ELSE 'NAO_DESONERADO' END,
+            bdi = COALESCE((p_params->>'bdi_mode')::numeric, 0)
         WHERE id = v_budget_id;
     ELSE
-        INSERT INTO public.budgets (user_id, name, status, sinapi_uf, sinapi_competence, sinapi_regime, settings, created_at)
+        INSERT INTO public.budgets (user_id, name, status, sinapi_uf, sinapi_competence, sinapi_regime, settings, bdi, created_at)
         VALUES (v_job.user_id, 'Orçamento Importado ' || to_char(now(), 'DD/MM HH24:MI'), 'draft',
             v_uf, v_competence,
             CASE WHEN v_desonerado THEN 'DESONERADO' ELSE 'NAO_DESONERADO' END,
-            p_params, now())
+            p_params, COALESCE((p_params->>'bdi_mode')::numeric, 0), now())
         RETURNING id INTO v_budget_id;
 
         UPDATE public.import_jobs SET result_budget_id = v_budget_id WHERE id = p_job_id;
