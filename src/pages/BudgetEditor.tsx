@@ -1336,12 +1336,19 @@ const BudgetEditor = () => {
             }
             provisionalNumber = `${etapaCount + 1}`;
         } else {
-            // Sub-etapa: find the last child N2/N3 of this N1 parent
+            // Sub-etapa: find insertion point based on where clicked
             const clickedRow = visibleRows?.[afterIndex];
             if (clickedRow && clickedRow.level === 1) {
+                // Clicked on N1: insert after all its children
                 for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
-                    if (visibleRows[i].level === 1) break; // next N1 found, stop
-                    insertAfterIndex = i; // keep advancing past children
+                    if (visibleRows[i].level === 1) break;
+                    insertAfterIndex = i;
+                }
+            } else if (clickedRow && clickedRow.level === 2) {
+                // Clicked on N2: insert after the last child (N3) of this N2
+                for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
+                    if (visibleRows[i].level <= 2) break; // next N1 or N2 found, stop
+                    insertAfterIndex = i;
                 }
             }
             const parentItem = items.find(i => i.id === parentId);
