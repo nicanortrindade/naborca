@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { BudgetService } from '../lib/supabase-services/BudgetService';
 import { BudgetItemService } from '../lib/supabase-services/BudgetItemService'; // Removed prepareItemsForDisplay
@@ -10,7 +10,7 @@ import { InsumoService } from '../lib/supabase-services/InsumoService';
 import { CompositionService } from '../lib/supabase-services/CompositionService';
 import { SinapiService } from '../lib/supabase-services/SinapiService';
 import { CompanyService } from '../lib/supabase-services/CompanyService';
-import { ArrowLeft, Box, Plus, Trash2, Search, X, Download, FileText, FileSpreadsheet, BarChart, Calculator, Percent, Lock, Unlock, Copy, RefreshCcw, AlertTriangle, TrendingUp, Save, Database, Calendar, Activity, Eye, ChevronDown, ChevronUp, AlertOctagon, Edit2, ListOrdered, GripVertical, Loader, Package } from 'lucide-react';
+import { ArrowLeft, Box, Plus, Trash2, Search, X, Download, FileText, FileSpreadsheet, BarChart, Calculator, Percent, Lock, Unlock, Copy, RefreshCcw, AlertTriangle, TrendingUp, Save, Database, Calendar, Activity, Eye, ChevronDown, ChevronUp, AlertOctagon, Edit2, ListOrdered, GripVertical, Loader, Package, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -640,6 +640,16 @@ const BudgetEditor = () => {
     const [editingInlineId, setEditingInlineId] = useState<string | null>(null);
     const [editingInlineText, setEditingInlineText] = useState("");
 
+    // Inline Insert State for contextual N1/N2 creation
+    const [inlineInsert, setInlineInsert] = useState<{
+        type: 'etapa' | 'subetapa';
+        afterIndex: number;
+        parentId: string | null;
+        provisionalNumber: string;
+    } | null>(null);
+    const [inlineInsertText, setInlineInsertText] = useState("");
+    const inlineInsertRef = useRef<HTMLInputElement>(null);
+
     // Estados de Busca e Filtros Multi-Base
     const [selectedBases, setSelectedBases] = useState<string[]>(() => {
         const saved = localStorage.getItem('naborca_search_bases');
@@ -1243,6 +1253,95 @@ const BudgetEditor = () => {
         }
     };
 
+    // ===== INSERÇÃO POSICIONAL INLINE: Etapa/Sub-etapa no menu de contexto =====
+    const handleStartInlineInsert = (type: 'etapa' | 'subetapa', afterIndex: number, parentId: string | null) => {
+        let provisionalNumber = '';
+        if (type === 'etapa') {
+            let etapaCount = 0;
+            for (let i = 0; i <= afterIndex && i < (visibleRows?.length || 0); i++) {
+                if (visibleRows[i].level === 1) etapaCount++;
+            }
+            provisionalNumber = `${etapaCount + 1}`;
+        } else {
+            const parentItem = items.find(i => i.id === parentId);
+            if (parentItem) {
+                let subCount = 0;
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].level === 2 && items[i].parentId === parentId) subCount++;
+                }
+                const parentRow = visibleRows?.find(r => r.id === parentId);
+                const parentNum = parentRow?.itemNumber || '?';
+                provisionalNumber = `${parentNum}.${subCount + 1}`;
+            }
+        }
+        setInlineInsert({ type, afterIndex, parentId, provisionalNumber });
+        setInlineInsertText('');
+        setTimeout(() => inlineInsertRef.current?.focus(), 50);
+    };
+
+    const handleConfirmInlineInsert = async () => {
+        if (!inlineInsert || !inlineInsertText.trim()) {
+            setInlineInsert(null);
+            return;
+        }
+        const { type, afterIndex, parentId } = inlineInsert;
+        const description = inlineInsertText.trim().toUpperCase();
+        try {
+            setLoading(true);
+            setInlineInsert(null);
+            const level = type === 'etapa' ? 1 : 2;
+            const itemParentId = type === 'etapa' ? null : parentId;
+            const newItem = await BudgetItemService.create({
+                budgetId: budgetId,
+                order: getNextOrder(),
+                level,
+                parentId: itemParentId,
+                itemNumber: "",
+                code: "",
+                description,
+                unit: "",
+                quantity: 1,
+                unitPrice: 0,
+                totalPrice: 0,
+                type: 'group',
+                source: "",
+            });
+            if (items) {
+                const newItems = [...items];
+                newItems.splice(afterIndex + 1, 0, newItem);
+                newItems.forEach((it, idx) => { it.order = idx + 1; });
+                const repairedItems = repairHierarchy(newItems);
+                let c1 = 0; let c2 = 0; let c3 = 0;
+                const payload = repairedItems.map((item) => {
+                    if (item.level === 1) { c1++; c2 = 0; c3 = 0; }
+                    else if (item.level === 2) { c2++; c3 = 0; }
+                    else if (item.level >= 3) { c3++; }
+                    let itemNumberStr = "";
+                    if (item.level === 1) itemNumberStr = `${c1}`;
+                    else if (item.level === 2) itemNumberStr = `${c1}.${c2}`;
+                    else itemNumberStr = `${c1}.${c2}.${c3}`;
+                    const finalParentId = item.parentId && String(item.parentId).trim() !== "" && String(item.parentId).trim().toLowerCase() !== "null" ? String(item.parentId) : null;
+                    return { id: item.id!, order: item.order, parentId: finalParentId, itemNumber: itemNumberStr };
+                });
+                try {
+                    await (supabase as SupabaseClient<any>).rpc("reorder_budget_items", { items: payload });
+                } catch (e) {
+                    console.error("Contextual Reorder Error (inline insert):", e);
+                }
+            }
+            await loadBudget();
+        } catch (e: any) {
+            console.error("Falha ao criar grupo posicional:", e);
+            alert(`Erro ao salvar: ${e.message || "Verifique sua conexão"}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleCancelInlineInsert = () => {
+        setInlineInsert(null);
+        setInlineInsertText('');
+    };
 
     const handleBindComposition = async (targetItem: any, resource: NormalizedResource) => {
         try {
@@ -3499,323 +3598,408 @@ const BudgetEditor = () => {
                                             : "font-normal text-slate-700";            // Item real
 
                                 return (
-                                    <tr
-                                        key={item.id}
-                                        id={`item-${item.id}`}
-                                        onDragOver={(e) => handleDragOver(e, index)}
-                                        onDrop={(e) => handleDrop(e, index)}
-                                        className={clsx(
-                                            "border-b border-slate-300 transition-colors group",
-                                            rowBg,
-                                            dragOverIndex === index && "border-t-2 border-t-blue-500",
-                                            highlightedItemId === item.id && "bg-yellow-100 ring-2 ring-inset ring-yellow-400 z-10",
-                                            selectedItemIds.has(item.id!) && !isGroup && "bg-indigo-50" // Realce de seleção
-                                        )}
-                                        onClick={(e) => {
-                                            // Seleção com CTRL/Click na linha
-                                            if ((e.ctrlKey || e.metaKey) && !isGroup) {
-                                                const newSelected = new Set(selectedItemIds);
-                                                if (newSelected.has(item.id!)) newSelected.delete(item.id!);
-                                                else newSelected.add(item.id!);
-                                                setSelectedItemIds(newSelected);
-                                            }
-                                        }}
-                                    >
-                                        {/* Checkbox Column */}
-                                        <td className={clsx(
-                                            "p-1 text-center border-r border-slate-300",
-                                            isNivel1 ? "border-r-blue-700" : ""
-                                        )}>
-                                            {!isGroup && (
-                                                <input
-                                                    type="checkbox"
-                                                    className="rounded border-slate-400 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                                    checked={selectedItemIds.has(item.id!)}
-                                                    onChange={(e) => {
-                                                        const newSelected = new Set(selectedItemIds);
-                                                        if (e.target.checked) newSelected.add(item.id!);
-                                                        else newSelected.delete(item.id!);
-                                                        setSelectedItemIds(newSelected);
-                                                    }}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                />
-                                            )}
-                                        </td>
-
-                                        {/* Drag Handle */}
-                                        <td className="p-0 text-center border-r border-slate-300">
-                                            <div
-                                                className="flex items-center justify-center h-full w-full cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600"
-                                                draggable={!isMobile}
-                                                onDragStart={(e) => handleDragStart(e, index)}
-                                                onDragEnd={() => setDragOverIndex(null)}
-                                            >
-                                                <GripVertical size={14} className="opacity-50 group-hover:opacity-100 transition-opacity" />
-                                            </div>
-                                        </td>
-
-                                        {/* Item Number */}
-                                        <td
+                                    <Fragment key={item.id}>
+                                        <tr
+                                            id={`item-${item.id}`}
+                                            onDragOver={(e) => handleDragOver(e, index)}
+                                            onDrop={(e) => handleDrop(e, index)}
                                             className={clsx(
-                                                "p-1 px-2 text-center border-r border-slate-300 font-mono font-bold whitespace-nowrap cursor-grab active:cursor-grabbing",
-                                                isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-blue-900" : "text-slate-700"
+                                                "border-b border-slate-300 transition-colors group",
+                                                rowBg,
+                                                dragOverIndex === index && "border-t-2 border-t-blue-500",
+                                                highlightedItemId === item.id && "bg-yellow-100 ring-2 ring-inset ring-yellow-400 z-10",
+                                                selectedItemIds.has(item.id!) && !isGroup && "bg-indigo-50" // Realce de seleção
                                             )}
+                                            onClick={(e) => {
+                                                // Seleção com CTRL/Click na linha
+                                                if ((e.ctrlKey || e.metaKey) && !isGroup) {
+                                                    const newSelected = new Set(selectedItemIds);
+                                                    if (newSelected.has(item.id!)) newSelected.delete(item.id!);
+                                                    else newSelected.add(item.id!);
+                                                    setSelectedItemIds(newSelected);
+                                                }
+                                            }}
                                         >
-                                            {hierarchicalNumber}
-                                        </td>
-
-                                        {/* Banco (Fonte) */}
-                                        <td className="p-1 px-1 text-center border-r border-slate-300">
-                                            {item.level >= 3 && (
-                                                <span className={clsx(
-                                                    "text-[9px] px-1 py-0.5 rounded font-bold uppercase",
-                                                    item.source === 'SINAPI' ? "bg-blue-100 text-blue-700" :
-                                                        item.source === 'SICRO' ? "bg-orange-100 text-orange-700" :
-                                                            item.source === 'ORSE' ? "bg-green-100 text-green-700" :
-                                                                item.source === 'SEINFRA' ? "bg-purple-100 text-purple-700" :
-                                                                    item.source === 'SETOP' ? "bg-cyan-100 text-cyan-700" :
-                                                                        item.source === 'EMBASA' ? "bg-teal-100 text-teal-700" :
-                                                                            item.source === 'SBC' ? "bg-amber-100 text-amber-700" :
-                                                                                item.source ? "bg-slate-100 text-slate-600" : "bg-gray-50 text-gray-400"
-                                                )}>
-                                                    {item.source === 'AI_EXTRACTED_CODE' ? 'IA'
-                                                        : item.source === 'IMPORTADO' ? 'IMP'
-                                                            : item.source === 'OWN' ? 'Próprio'
-                                                                : item.source || '-'}
-                                                </span>
-                                            )}
-                                        </td>
-
-                                        {/* Código */}
-                                        <td className={clsx(
-                                            "p-1 px-1 text-center border-r border-slate-300 font-mono text-[10px]",
-                                            isNivel1 ? "text-white/80 border-r-blue-700" : "text-slate-500"
-                                        )} title={item.code || ''}>
-                                            {item.level >= 3 && (item.code || '-')}
-                                        </td>
-
-                                        {/* Descrição */}
-                                        <td className="p-1 border-r border-slate-300 relative group/desc w-auto align-top">
-                                            <div className={clsx(
-                                                "w-full min-h-[1.75rem] py-1",
-                                                item.hydrationStatus === 'pending_review' && "pr-[90px]" // Espaço para o botão Vincular absoluto
+                                            {/* Checkbox Column */}
+                                            <td className={clsx(
+                                                "p-1 text-center border-r border-slate-300",
+                                                isNivel1 ? "border-r-blue-700" : ""
                                             )}>
-                                                {!isGroup && !item.isLocked ? (
-                                                    <span
-                                                        className={clsx(
-                                                            "cursor-pointer hover:underline whitespace-normal break-words block w-full leading-snug",
-                                                            textStyle,
-                                                            isNivel2 && "pl-6", // Indent Level 2
-                                                            isItem && "pl-10"   // Indent Level 3
-                                                        )}
-                                                        style={{ whiteSpace: 'normal', overflowWrap: 'break-word', wordBreak: 'break-word' }}
-                                                        onClick={() => handleStartEdit(item)}
-                                                    >
-                                                        {item.description}
-                                                    </span>
-                                                ) : editingInlineId === item.id ? (
+                                                {!isGroup && (
                                                     <input
-                                                        autoFocus
-                                                        className={clsx(
-                                                            "bg-transparent border-b border-blue-400 outline-none w-full text-slate-900",
-                                                            textStyle,
-                                                            isNivel2 && "ml-6",
-                                                            isItem && "ml-10"
-                                                        )}
-                                                        value={editingInlineText}
-                                                        onChange={e => setEditingInlineText(e.target.value)}
-                                                        onBlur={() => handleInlineEditSave(item.id!, editingInlineText)}
-                                                        onKeyDown={e => {
-                                                            if (e.key === 'Enter') handleInlineEditSave(item.id!, editingInlineText);
-                                                            if (e.key === 'Escape') setEditingInlineId(null);
+                                                        type="checkbox"
+                                                        className="rounded border-slate-400 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                        checked={selectedItemIds.has(item.id!)}
+                                                        onChange={(e) => {
+                                                            const newSelected = new Set(selectedItemIds);
+                                                            if (e.target.checked) newSelected.add(item.id!);
+                                                            else newSelected.delete(item.id!);
+                                                            setSelectedItemIds(newSelected);
                                                         }}
-                                                        onFocus={e => e.target.select()}
+                                                        onClick={(e) => e.stopPropagation()}
                                                     />
-                                                ) : (
+                                                )}
+                                            </td>
+
+                                            {/* Drag Handle */}
+                                            <td className="p-0 text-center border-r border-slate-300">
+                                                <div
+                                                    className="flex items-center justify-center h-full w-full cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600"
+                                                    draggable={!isMobile}
+                                                    onDragStart={(e) => handleDragStart(e, index)}
+                                                    onDragEnd={() => setDragOverIndex(null)}
+                                                >
+                                                    <GripVertical size={14} className="opacity-50 group-hover:opacity-100 transition-opacity" />
+                                                </div>
+                                            </td>
+
+                                            {/* Item Number */}
+                                            <td
+                                                className={clsx(
+                                                    "p-1 px-2 text-center border-r border-slate-300 font-mono font-bold whitespace-nowrap cursor-grab active:cursor-grabbing",
+                                                    isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-blue-900" : "text-slate-700"
+                                                )}
+                                            >
+                                                {hierarchicalNumber}
+                                            </td>
+
+                                            {/* Banco (Fonte) */}
+                                            <td className="p-1 px-1 text-center border-r border-slate-300">
+                                                {item.level >= 3 && (
                                                     <span className={clsx(
-                                                        "whitespace-normal break-words block w-full transition-colors relative group/inline leading-snug",
-                                                        (isGroup || item.level === 1 || item.level === 2)
-                                                            ? "cursor-text hover:bg-black/10 rounded"
-                                                            : "",
-                                                        textStyle,
-                                                        isNivel2 && "pl-6",
-                                                        isItem && "pl-10"
-                                                    )}
-                                                        style={{ whiteSpace: 'normal', overflowWrap: 'break-word', wordBreak: 'break-word' }}
-                                                        onDoubleClick={() => {
-                                                            if (isGroup || item.level === 1 || item.level === 2) {
-                                                                setEditingInlineText(item.description);
-                                                                setEditingInlineId(item.id!);
-                                                            }
-                                                        }}
-                                                        title={(isGroup || item.level === 1 || item.level === 2) ? "Duplo clique para editar" : ""}
-                                                    >
-                                                        {item.description}
-                                                        {(isGroup || item.level === 1 || item.level === 2) && (
-                                                            <span className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/inline:opacity-100 text-blue-400 pointer-events-none transition-opacity">
-                                                                <Edit2 size={12} />
-                                                            </span>
-                                                        )}
+                                                        "text-[9px] px-1 py-0.5 rounded font-bold uppercase",
+                                                        item.source === 'SINAPI' ? "bg-blue-100 text-blue-700" :
+                                                            item.source === 'SICRO' ? "bg-orange-100 text-orange-700" :
+                                                                item.source === 'ORSE' ? "bg-green-100 text-green-700" :
+                                                                    item.source === 'SEINFRA' ? "bg-purple-100 text-purple-700" :
+                                                                        item.source === 'SETOP' ? "bg-cyan-100 text-cyan-700" :
+                                                                            item.source === 'EMBASA' ? "bg-teal-100 text-teal-700" :
+                                                                                item.source === 'SBC' ? "bg-amber-100 text-amber-700" :
+                                                                                    item.source ? "bg-slate-100 text-slate-600" : "bg-gray-50 text-gray-400"
+                                                    )}>
+                                                        {item.source === 'AI_EXTRACTED_CODE' ? 'IA'
+                                                            : item.source === 'IMPORTADO' ? 'IMP'
+                                                                : item.source === 'OWN' ? 'Próprio'
+                                                                    : item.source || '-'}
                                                     </span>
                                                 )}
+                                            </td>
+
+                                            {/* Código */}
+                                            <td className={clsx(
+                                                "p-1 px-1 text-center border-r border-slate-300 font-mono text-[10px]",
+                                                isNivel1 ? "text-white/80 border-r-blue-700" : "text-slate-500"
+                                            )} title={item.code || ''}>
+                                                {item.level >= 3 && (item.code || '-')}
+                                            </td>
+
+                                            {/* Descrição */}
+                                            <td className="p-1 border-r border-slate-300 relative group/desc w-auto align-top">
+                                                <div className={clsx(
+                                                    "w-full min-h-[1.75rem] py-1",
+                                                    item.hydrationStatus === 'pending_review' && "pr-[90px]" // Espaço para o botão Vincular absoluto
+                                                )}>
+                                                    {!isGroup && !item.isLocked ? (
+                                                        <span
+                                                            className={clsx(
+                                                                "cursor-pointer hover:underline whitespace-normal break-words block w-full leading-snug",
+                                                                textStyle,
+                                                                isNivel2 && "pl-6", // Indent Level 2
+                                                                isItem && "pl-10"   // Indent Level 3
+                                                            )}
+                                                            style={{ whiteSpace: 'normal', overflowWrap: 'break-word', wordBreak: 'break-word' }}
+                                                            onClick={() => handleStartEdit(item)}
+                                                        >
+                                                            {item.description}
+                                                        </span>
+                                                    ) : editingInlineId === item.id ? (
+                                                        <input
+                                                            autoFocus
+                                                            className={clsx(
+                                                                "bg-transparent border-b border-blue-400 outline-none w-full text-slate-900",
+                                                                textStyle,
+                                                                isNivel2 && "ml-6",
+                                                                isItem && "ml-10"
+                                                            )}
+                                                            value={editingInlineText}
+                                                            onChange={e => setEditingInlineText(e.target.value)}
+                                                            onBlur={() => handleInlineEditSave(item.id!, editingInlineText)}
+                                                            onKeyDown={e => {
+                                                                if (e.key === 'Enter') handleInlineEditSave(item.id!, editingInlineText);
+                                                                if (e.key === 'Escape') setEditingInlineId(null);
+                                                            }}
+                                                            onFocus={e => e.target.select()}
+                                                        />
+                                                    ) : (
+                                                        <span className={clsx(
+                                                            "whitespace-normal break-words block w-full transition-colors relative group/inline leading-snug",
+                                                            (isGroup || item.level === 1 || item.level === 2)
+                                                                ? "cursor-text hover:bg-black/10 rounded"
+                                                                : "",
+                                                            textStyle,
+                                                            isNivel2 && "pl-6",
+                                                            isItem && "pl-10"
+                                                        )}
+                                                            style={{ whiteSpace: 'normal', overflowWrap: 'break-word', wordBreak: 'break-word' }}
+                                                            onDoubleClick={() => {
+                                                                if (isGroup || item.level === 1 || item.level === 2) {
+                                                                    setEditingInlineText(item.description);
+                                                                    setEditingInlineId(item.id!);
+                                                                }
+                                                            }}
+                                                            title={(isGroup || item.level === 1 || item.level === 2) ? "Duplo clique para editar" : ""}
+                                                        >
+                                                            {item.description}
+                                                            {(isGroup || item.level === 1 || item.level === 2) && (
+                                                                <span className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover/inline:opacity-100 text-blue-400 pointer-events-none transition-opacity">
+                                                                    <Edit2 size={12} />
+                                                                </span>
+                                                            )}
+                                                        </span>
+                                                    )}
 
 
-                                                {/* CTA: Vincular Composição (Quando Pendente) */}
-                                                {item.hydrationStatus === 'pending_review' && (
+                                                    {/* CTA: Vincular Composição (Quando Pendente) */}
+                                                    {item.hydrationStatus === 'pending_review' && (
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setBindingItem(item);
+                                                                setAddItemTab('CPU');
+                                                                setSearchTerm(item.code || '');
+                                                                setIsAddingItem(true);
+                                                            }}
+                                                            className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-300 transition-colors animate-pulse z-20"
+                                                            title="Este item foi importado mas não possui composição vinculada. Clique para selecionar uma composição."
+                                                        >
+                                                            <AlertTriangle size={10} /> Vincular
+                                                        </button>
+                                                    )}
+                                                </div>
+
+                                                {validatePriceRange(item) !== 'normal' && !isGroup && (
+                                                    <div className="absolute right-1 top-1 text-orange-500">
+                                                        <AlertOctagon size={10} />
+                                                    </div>
+                                                )}
+
+                                                {/* Menu Flutuante de Ações */}
+                                                <div className="absolute right-0 top-1/2 -translate-y-1/2 bg-white shadow-xl border border-slate-200 rounded flex items-center py-1 px-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-all z-50 whitespace-nowrap text-slate-600 hidden group-hover:flex">
+                                                    {/* Inserção Estrutural: Etapa e Sub-etapa */}
+                                                    {(isNivel1 || isNivel2) && (
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleStartInlineInsert('etapa', index, null);
+                                                            }}
+                                                            className="flex flex-col items-center justify-center px-1.5 hover:bg-indigo-50 rounded py-1 min-w-[50px] text-indigo-600"
+                                                        >
+                                                            <ListOrdered size={13} className="mb-0.5" />
+                                                            <span className="text-[9px] font-bold">Etapa</span>
+                                                        </button>
+                                                    )}
+                                                    {isNivel1 && (
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleStartInlineInsert('subetapa', index, item.id || null);
+                                                            }}
+                                                            className="flex flex-col items-center justify-center px-1.5 hover:bg-sky-50 rounded py-1 min-w-[50px] text-sky-600"
+                                                        >
+                                                            <ChevronDown size={13} className="mb-0.5" />
+                                                            <span className="text-[9px] font-bold">Subetapa</span>
+                                                        </button>
+                                                    )}
+                                                    {(isNivel1 || isNivel2) && (
+                                                        <div className="w-[1px] h-6 bg-slate-200 mx-0.5"></div>
+                                                    )}
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            setBindingItem(item);
+                                                            setInsertContext({ parentId: isGroup ? item.id : item.parentId, afterIndex: index });
                                                             setAddItemTab('CPU');
-                                                            setSearchTerm(item.code || '');
+                                                            setSearchTerm('');
                                                             setIsAddingItem(true);
                                                         }}
-                                                        className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-300 transition-colors animate-pulse z-20"
-                                                        title="Este item foi importado mas não possui composição vinculada. Clique para selecionar uma composição."
+                                                        className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]"
                                                     >
-                                                        <AlertTriangle size={10} /> Vincular
+                                                        <Database size={13} className="text-slate-700 mb-0.5" />
+                                                        <span className="text-[9px] font-bold">Composição</span>
                                                     </button>
-                                                )}
-                                            </div>
-
-                                            {validatePriceRange(item) !== 'normal' && !isGroup && (
-                                                <div className="absolute right-1 top-1 text-orange-500">
-                                                    <AlertOctagon size={10} />
-                                                </div>
-                                            )}
-
-                                            {/* Menu Flutuante de Ações */}
-                                            <div className="absolute right-0 top-1/2 -translate-y-1/2 bg-white shadow-xl border border-slate-200 rounded flex items-center py-1 px-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-all z-50 whitespace-nowrap text-slate-600 hidden group-hover:flex">
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setInsertContext({ parentId: isGroup ? item.id : item.parentId, afterIndex: index });
-                                                        setAddItemTab('CPU');
-                                                        setSearchTerm('');
-                                                        setIsAddingItem(true);
-                                                    }}
-                                                    className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]"
-                                                >
-                                                    <Database size={13} className="text-slate-700 mb-0.5" />
-                                                    <span className="text-[9px] font-bold">Composição</span>
-                                                </button>
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setInsertContext({ parentId: isGroup ? item.id : item.parentId, afterIndex: index });
-                                                        setAddItemTab('INS');
-                                                        setSearchTerm('');
-                                                        setIsAddingItem(true);
-                                                    }}
-                                                    className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]"
-                                                >
-                                                    <Box size={13} className="text-slate-700 mb-0.5" />
-                                                    <span className="text-[9px] font-bold">Insumo</span>
-                                                </button>
-
-                                                <div className="w-[1px] h-6 bg-slate-200 mx-0.5"></div>
-
-                                                {!isGroup && !item.isLocked && (
                                                     <button
-                                                        onClick={(e) => { e.stopPropagation(); handleStartEdit(item); }}
-                                                        className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px] text-slate-500 hover:text-green-600"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setInsertContext({ parentId: isGroup ? item.id : item.parentId, afterIndex: index });
+                                                            setAddItemTab('INS');
+                                                            setSearchTerm('');
+                                                            setIsAddingItem(true);
+                                                        }}
+                                                        className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]"
                                                     >
-                                                        <Edit2 size={13} className="mb-0.5" />
-                                                        <span className="text-[9px] font-bold">Editar</span>
+                                                        <Box size={13} className="text-slate-700 mb-0.5" />
+                                                        <span className="text-[9px] font-bold">Insumo</span>
                                                     </button>
+
+                                                    <div className="w-[1px] h-6 bg-slate-200 mx-0.5"></div>
+
+                                                    {!isGroup && !item.isLocked && (
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleStartEdit(item); }}
+                                                            className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px] text-slate-500 hover:text-green-600"
+                                                        >
+                                                            <Edit2 size={13} className="mb-0.5" />
+                                                            <span className="text-[9px] font-bold">Editar</span>
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleToggleLock(item); }}
+                                                        className={clsx("flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]", item.isLocked ? "text-amber-500" : "text-slate-500")}
+                                                    >
+                                                        {item.isLocked ? <Lock size={13} className="mb-0.5" /> : <Unlock size={13} className="mb-0.5" />}
+                                                        <span className="text-[9px] font-bold">{item.isLocked ? "Desbloq." : "Bloquear"}</span>
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleDuplicateItem(item); }}
+                                                        className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px] text-slate-500 hover:text-blue-600"
+                                                    >
+                                                        <Copy size={13} className="mb-0.5" />
+                                                        <span className="text-[9px] font-bold">Duplicar</span>
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleDeleteItem(item.id!); }}
+                                                        className="flex flex-col items-center justify-center px-1.5 hover:bg-red-50 rounded py-1 text-slate-500 hover:text-red-500 min-w-[50px]"
+                                                    >
+                                                        <Trash2 size={13} className="mb-0.5" />
+                                                        <span className="text-[9px] font-bold">Excluir</span>
+                                                    </button>
+                                                </div>
+                                            </td>
+
+                                            {/* Quantidade */}
+                                            <td className={clsx(
+                                                "p-1 text-right border-r border-slate-300 font-mono px-2 w-[90px] min-w-[90px] max-w-[90px]",
+                                                isNivel1 ? "text-white" : "text-slate-700"
+                                            )}>
+                                                {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(item.quantity) : ''}
+                                            </td>
+
+                                            {/* Unidade */}
+                                            <td className={clsx(
+                                                "p-1 text-center border-r border-slate-300 w-[80px] min-w-[80px] max-w-[80px]",
+                                                isNivel1 ? "text-white/70" : "text-slate-500"
+                                            )}>
+                                                <div className="truncate w-full px-1" title={!isGroup ? (item.unit || '') : ''}>
+                                                    {!isGroup && (item.unit || '-')}
+                                                </div>
+                                            </td>
+
+                                            {/* Valor Unitário (Sem BDI) */}
+                                            <td className={clsx(
+                                                "p-1 text-right border-r border-slate-300 font-mono px-2",
+                                                isNivel1 ? "text-white" : "text-slate-600"
+                                            )}>
+                                                {!isGroup ? (
+                                                    item.type === 'service' || item.type === 'composition' ? (
+                                                        <div className="flex items-center justify-end gap-1 group/calc cursor-help">
+                                                            <span>{new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)}</span>
+                                                            <Calculator size={8} className={isNivel1 ? "text-white/50" : "text-slate-300 opacity-0 group-hover/calc:opacity-100"} />
+                                                        </div>
+                                                    ) : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)
+                                                ) : ''}
+                                            </td>
+
+                                            {/* Valor Unitário (Com BDI) - REQUISITADO */}
+                                            <td className={clsx(
+                                                "p-1 text-right border-r border-slate-300 font-mono font-bold px-2 relative",
+                                                isNivel1 ? "text-white bg-white/10" : "text-indigo-600 bg-indigo-50/30"
+                                            )}>
+                                                <div className="flex items-center justify-end gap-1">
+                                                    {!isGroup && item.customBDI != null && item.customBDI > 0 && item.customBDI !== budget?.bdi ? (
+                                                        <span className="text-[8px] bg-orange-100 text-orange-700 px-1 rounded whitespace-nowrap border border-orange-200" title="BDI Diferenciado">
+                                                            {item.customBDI.toFixed(2)}%
+                                                        </span>
+                                                    ) : null}
+                                                    {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(unitPriceWithBDI) : ''}
+                                                </div>
+                                            </td>
+
+                                            {/* Total - Usa finalPrice que já inclui BDI */}
+                                            {/* Total */}
+                                            <td className={clsx(
+                                                "p-1 text-right border-r border-slate-300 font-mono font-bold px-2 whitespace-nowrap min-w-[110px]",
+                                                isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-[#1e3a8a] border-r-blue-200" : "text-slate-800"
+                                            )}>
+                                                {/* Use finalPrice direto - já calculado pelo frontend */}
+                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                                                    displayTotal
                                                 )}
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleToggleLock(item); }}
-                                                    className={clsx("flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px]", item.isLocked ? "text-amber-500" : "text-slate-500")}
-                                                >
-                                                    {item.isLocked ? <Lock size={13} className="mb-0.5" /> : <Unlock size={13} className="mb-0.5" />}
-                                                    <span className="text-[9px] font-bold">{item.isLocked ? "Desbloq." : "Bloquear"}</span>
-                                                </button>
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleDuplicateItem(item); }}
-                                                    className="flex flex-col items-center justify-center px-1.5 hover:bg-slate-100 rounded py-1 min-w-[50px] text-slate-500 hover:text-blue-600"
-                                                >
-                                                    <Copy size={13} className="mb-0.5" />
-                                                    <span className="text-[9px] font-bold">Duplicar</span>
-                                                </button>
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleDeleteItem(item.id!); }}
-                                                    className="flex flex-col items-center justify-center px-1.5 hover:bg-red-50 rounded py-1 text-slate-500 hover:text-red-500 min-w-[50px]"
-                                                >
-                                                    <Trash2 size={13} className="mb-0.5" />
-                                                    <span className="text-[9px] font-bold">Excluir</span>
-                                                </button>
-                                            </div>
-                                        </td>
+                                            </td>
 
-                                        {/* Quantidade */}
-                                        <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono px-2 w-[90px] min-w-[90px] max-w-[90px]",
-                                            isNivel1 ? "text-white" : "text-slate-700"
-                                        )}>
-                                            {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(item.quantity) : ''}
-                                        </td>
-
-                                        {/* Unidade */}
-                                        <td className={clsx(
-                                            "p-1 text-center border-r border-slate-300 w-[80px] min-w-[80px] max-w-[80px]",
-                                            isNivel1 ? "text-white/70" : "text-slate-500"
-                                        )}>
-                                            <div className="truncate w-full px-1" title={!isGroup ? (item.unit || '') : ''}>
-                                                {!isGroup && (item.unit || '-')}
-                                            </div>
-                                        </td>
-
-                                        {/* Valor Unitário (Sem BDI) */}
-                                        <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono px-2",
-                                            isNivel1 ? "text-white" : "text-slate-600"
-                                        )}>
-                                            {!isGroup ? (
-                                                item.type === 'service' || item.type === 'composition' ? (
-                                                    <div className="flex items-center justify-end gap-1 group/calc cursor-help">
-                                                        <span>{new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)}</span>
-                                                        <Calculator size={8} className={isNivel1 ? "text-white/50" : "text-slate-300 opacity-0 group-hover/calc:opacity-100"} />
+                                            {/* Peso */}
+                                            <td className={clsx(
+                                                "p-1 text-center border-r border-slate-300 text-[9px]",
+                                                isNivel1 ? "text-white/70 border-r-blue-700" : "text-slate-400"
+                                            )}>
+                                                {peso.toFixed(2)}%
+                                            </td>
+                                        </tr>
+                                        {inlineInsert && inlineInsert.afterIndex === index && (
+                                            <tr className="border-b border-blue-300 bg-blue-50">
+                                                <td className="p-1 text-center border-r border-blue-200"></td>
+                                                <td className="p-1 text-center border-r border-blue-200"></td>
+                                                <td className="p-1 text-center border-r border-blue-200 font-mono text-blue-600 font-bold text-[11px]">
+                                                    {inlineInsert.provisionalNumber}
+                                                </td>
+                                                <td className="p-1 border-r border-blue-200"></td>
+                                                <td className="p-1 border-r border-blue-200"></td>
+                                                <td className="p-1 border-r border-blue-200">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="text-[10px] text-blue-500 font-medium text-center w-6">
+                                                            {inlineInsert.type === 'etapa' ? 'N1' : 'N2'}
+                                                        </div>
+                                                        <input
+                                                            ref={inlineInsertRef}
+                                                            type="text"
+                                                            value={inlineInsertText}
+                                                            onChange={(e) => setInlineInsertText(e.target.value)}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Enter') {
+                                                                    e.preventDefault();
+                                                                    handleConfirmInlineInsert();
+                                                                } else if (e.key === 'Escape') {
+                                                                    e.preventDefault();
+                                                                    handleCancelInlineInsert();
+                                                                }
+                                                            }}
+                                                            placeholder="Descrição..."
+                                                            className="flex-1 bg-white border border-blue-300 rounded px-2 py-1 text-[11px] font-bold uppercase focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                                                            autoFocus
+                                                        />
+                                                        <button
+                                                            onClick={handleConfirmInlineInsert}
+                                                            className="p-1 rounded hover:bg-green-100 text-green-600 transition-colors"
+                                                            title="Confirmar (Enter)"
+                                                        >
+                                                            <Check size={16} />
+                                                        </button>
+                                                        <button
+                                                            onClick={handleCancelInlineInsert}
+                                                            className="p-1 rounded hover:bg-red-100 text-red-500 transition-colors"
+                                                            title="Cancelar (Esc)"
+                                                        >
+                                                            <X size={16} />
+                                                        </button>
                                                     </div>
-                                                ) : new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(rawUnitPrice)
-                                            ) : ''}
-                                        </td>
-
-                                        {/* Valor Unitário (Com BDI) - REQUISITADO */}
-                                        <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono font-bold px-2 relative",
-                                            isNivel1 ? "text-white bg-white/10" : "text-indigo-600 bg-indigo-50/30"
-                                        )}>
-                                            <div className="flex items-center justify-end gap-1">
-                                                {!isGroup && item.customBDI != null && item.customBDI > 0 && item.customBDI !== budget?.bdi ? (
-                                                    <span className="text-[8px] bg-orange-100 text-orange-700 px-1 rounded whitespace-nowrap border border-orange-200" title="BDI Diferenciado">
-                                                        {item.customBDI.toFixed(2)}%
-                                                    </span>
-                                                ) : null}
-                                                {!isGroup ? new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(unitPriceWithBDI) : ''}
-                                            </div>
-                                        </td>
-
-                                        {/* Total - Usa finalPrice que já inclui BDI */}
-                                        {/* Total */}
-                                        <td className={clsx(
-                                            "p-1 text-right border-r border-slate-300 font-mono font-bold px-2 whitespace-nowrap min-w-[110px]",
-                                            isNivel1 ? "text-white border-r-blue-700" : isNivel2 ? "text-[#1e3a8a] border-r-blue-200" : "text-slate-800"
-                                        )}>
-                                            {/* Use finalPrice direto - já calculado pelo frontend */}
-                                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
-                                                displayTotal
-                                            )}
-                                        </td>
-
-                                        {/* Peso */}
-                                        <td className={clsx(
-                                            "p-1 text-center border-r border-slate-300 text-[9px]",
-                                            isNivel1 ? "text-white/70 border-r-blue-700" : "text-slate-400"
-                                        )}>
-                                            {peso.toFixed(2)}%
-                                        </td>
-                                    </tr>
+                                                </td>
+                                                <td className="p-1 border-r border-blue-200 text-center text-blue-400 text-[10px]">—</td>
+                                                <td className="p-1 border-r border-blue-200 text-center text-blue-400 text-[10px]">—</td>
+                                                <td className="p-1 border-r border-blue-200 text-center text-blue-400 text-[10px]">—</td>
+                                                <td className="p-1 border-r border-blue-200 text-center text-blue-400 text-[10px]">—</td>
+                                                <td className="p-1 border-r border-blue-200 text-center text-blue-400 text-[10px]">—</td>
+                                                <td className="p-1 border-r border-blue-200 text-center text-blue-400 text-[10px]">—</td>
+                                            </tr>
+                                        )}
+                                    </Fragment>
                                 );
                             })}
                             {items?.length === 0 && (
