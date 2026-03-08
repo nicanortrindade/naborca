@@ -1321,17 +1321,25 @@ const BudgetEditor = () => {
         let insertAfterIndex = afterIndex;
 
         if (type === 'etapa') {
-            // Find the last descendant of the clicked group (N1)
-            // so the new etapa appears after all children
+            // Find the parent N1 if clicked on N2 or N3
             const clickedRow = visibleRows?.[afterIndex];
-            if (clickedRow && clickedRow.level === 1) {
-                for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
-                    if (visibleRows[i].level === 1) break; // next N1 found, stop
-                    insertAfterIndex = i; // keep advancing past children
+            let n1Index = afterIndex;
+            if (clickedRow && clickedRow.level > 1) {
+                // Walk backwards to find the parent N1
+                for (let i = afterIndex - 1; i >= 0; i--) {
+                    if (visibleRows[i].level === 1) {
+                        n1Index = i;
+                        break;
+                    }
                 }
             }
+            // Now advance past ALL children of that N1
+            for (let i = n1Index + 1; i < (visibleRows?.length || 0); i++) {
+                if (visibleRows[i].level === 1) break; // next N1 found, stop
+                insertAfterIndex = i; // keep advancing past children
+            }
             let etapaCount = 0;
-            for (let i = 0; i <= afterIndex && i < (visibleRows?.length || 0); i++) {
+            for (let i = 0; i <= n1Index && i < (visibleRows?.length || 0); i++) {
                 if (visibleRows[i].level === 1) etapaCount++;
             }
             provisionalNumber = `${etapaCount + 1}`;
