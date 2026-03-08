@@ -1256,13 +1256,32 @@ const BudgetEditor = () => {
     // ===== INSERÇÃO POSICIONAL INLINE: Etapa/Sub-etapa no menu de contexto =====
     const handleStartInlineInsert = (type: 'etapa' | 'subetapa', afterIndex: number, parentId: string | null) => {
         let provisionalNumber = '';
+        let insertAfterIndex = afterIndex;
+
         if (type === 'etapa') {
+            // Find the last descendant of the clicked group (N1)
+            // so the new etapa appears after all children
+            const clickedRow = visibleRows?.[afterIndex];
+            if (clickedRow && clickedRow.level === 1) {
+                for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
+                    if (visibleRows[i].level === 1) break; // next N1 found, stop
+                    insertAfterIndex = i; // keep advancing past children
+                }
+            }
             let etapaCount = 0;
             for (let i = 0; i <= afterIndex && i < (visibleRows?.length || 0); i++) {
                 if (visibleRows[i].level === 1) etapaCount++;
             }
             provisionalNumber = `${etapaCount + 1}`;
         } else {
+            // Sub-etapa: find the last child N2/N3 of this N1 parent
+            const clickedRow = visibleRows?.[afterIndex];
+            if (clickedRow && clickedRow.level === 1) {
+                for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
+                    if (visibleRows[i].level === 1) break; // next N1 found, stop
+                    insertAfterIndex = i; // keep advancing past children
+                }
+            }
             const parentItem = items.find(i => i.id === parentId);
             if (parentItem) {
                 let subCount = 0;
@@ -1274,7 +1293,7 @@ const BudgetEditor = () => {
                 provisionalNumber = `${parentNum}.${subCount + 1}`;
             }
         }
-        setInlineInsert({ type, afterIndex, parentId, provisionalNumber });
+        setInlineInsert({ type, afterIndex: insertAfterIndex, parentId, provisionalNumber });
         setInlineInsertText('');
         setTimeout(() => inlineInsertRef.current?.focus(), 50);
     };
