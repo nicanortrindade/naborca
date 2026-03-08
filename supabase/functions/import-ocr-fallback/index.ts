@@ -881,27 +881,12 @@ serve(async (req: Request) => {
                                                             warningsArr.push('price_column_misalign_suspected');
                                                         }
 
-                                                        // ========== DESCRIPTION RECOVERY ==========
-                                                        let finalDescription = item.description;
-                                                        if (rawLine && item.description) {
-                                                            const snippetClean = rawLine
-                                                                .replace(/^\d[\d.]*\s+/, '')           // Remove item_path prefix
-                                                                .replace(/^\d{4,6}\s*/, '')             // Remove composition code
-                                                                .replace(/^(SINAPI|ORSE|SICRO|CPU|SEINFRA)\s*/i, '') // Remove bank prefix
-                                                                .replace(/\s+(UN|M[²³23]?|KG|H|MÊS|VB|CJ|ML|KM|SC|T|L|PÇ|JG|GL)\s+[\d,.\s]+.*$/i, '') // Remove unit + trailing numbers
-                                                                .trim();
-                                                            if (snippetClean.length > item.description.length * 1.3 && snippetClean.length > 50) {
-                                                                finalDescription = snippetClean;
-                                                                warningsArr.push('description_recovered_from_ocr');
-                                                            }
-                                                        }
-
                                                         return {
                                                             job_id: job_id,
                                                             import_file_id: file.id,
                                                             idx: (batchIndex * 40) + idxInBatch + 1,
 
-                                                            description: finalDescription,
+                                                            description: item.description,
                                                             unit: item.unit,
                                                             quantity: pQuantity,
                                                             unit_price: pUnitPrice,
