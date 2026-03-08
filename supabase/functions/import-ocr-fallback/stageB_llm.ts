@@ -73,7 +73,14 @@ EXTRACTION RULES:
    - "TAPUME COM TELHA METÁLICA. AF_03/2024m²" → "TAPUME COM TELHA METÁLICA. AF_03/2024"
    - "Escavação manual em solo m³" → "Escavação manual em solo"
    - "Administração local da obraMÊS" → "Administração local da obra"
-   Place the stripped unit in the "unit" field instead.
+    Place the stripped unit in the "unit" field instead.
+4c. **DESCRIPTION COMPLETENESS (CRITICAL)**:
+    The description field MUST contain the COMPLETE, FULL text of the item description as it appears in the source document.
+    DO NOT summarize, abbreviate, truncate, or shorten descriptions in any way.
+    Even if the description is very long (200+ characters), preserve it in full.
+    The only modifications allowed are: removing the bank prefix (rule 4), removing the trailing unit (rule 4b), and removing numeric values that belong to other columns.
+    Example: if the source says "JANELA DE ALUMINIO ANODIZADO, DE CORRER, 4 FOLHAS, PARA VIDROS, INCLUSO FERRAGENS E ACESSORIOS DE FIXACAO, INSTALADA EM VAO DE 120x120CM, EXCLUSIVE VIDRO E CONTRAMARCO. AF_08/2021"
+    -> the description MUST be exactly that, not a shortened version.
 5. **CODE CLEANING (MANDATORY)**:
    The OCR may concatenate numeric values, bank names, or adaptation suffixes directly
    into the composition code. Apply ALL rules below in sequence:
@@ -804,8 +811,9 @@ function normalizeDescription(raw: any, evidenceLines: any[]): string | null {
             t = t.replace(new RegExp("\\s+" + unit + "\\b"), " ");
         }
 
-        // Remove blocos numéricos finais (quantidade/preço)
-        t = t.replace(/\s+[-–]?\s*(\d{1,3}(\.\d{3})*(,\d+)?|\d+(,\d+)?)\s*.*$/u, "").trim();
+        // Remove blocos numéricos finais SOMENTE se houver 2+ números consecutivos
+        // (indicando colunas de preço: qty unit_price total), não dimensões na descrição
+        t = t.replace(/\s+(\d{1,3}(\.\d{3})*(,\d+)?)\s+(\d{1,3}(\.\d{3})*(,\d+)?)\s*.*$/u, "").trim();
 
         return t.length > 0 ? t : null;
     }
