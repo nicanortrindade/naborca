@@ -56,6 +56,7 @@ export default function ImportStatus() {
     // Polling Ref
     const pollIntervalRef = useRef<number | null>(null);
     const abortRef = useRef<AbortController | null>(null);
+    const jobRef = useRef<ImportJob | null>(null);
 
     // --- 1. DATA FETCHING ---
     const fetchData = useCallback(async () => {
@@ -92,14 +93,12 @@ export default function ImportStatus() {
                 .select('*', { count: 'exact', head: true })
                 .eq('job_id', id);
 
-            console.log('[DEBUG] itemsCount:', itemsCount, 'job_id:', id);
-
             // C. Derive Status
             const derived = deriveUiStatus(jobData, fileData, itemsCount || 0);
-            console.log('[DEBUG] derived:', derived, 'uiStatus:', uiStatus);
 
             // State Updates
             setJob(jobData);
+            jobRef.current = jobData;
             setFile(fileData);
             setUiStatus(derived.status);
             setErrorMessage(derived.error || null);
@@ -110,12 +109,12 @@ export default function ImportStatus() {
             console.error('[ImportStatus] Fetch error:', err);
             // Non-fatal, just don't update if transient. 
             // If job is null (first load), then fatal.
-            if (!job) {
+            if (!jobRef.current) {
                 setUiStatus('failed'); // We only completely fail if we can't load the job
                 setErrorMessage(err.message || 'Erro de conexão.');
             }
         }
-    }, [id, job]);
+    }, [id]);
 
     // --- 2. POLLING ---
     useEffect(() => {
@@ -131,7 +130,8 @@ export default function ImportStatus() {
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
             if (abortRef.current) abortRef.current.abort();
         };
-    }, [id, fetchData]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id]);
 
     useEffect(() => {
         const isFinal = ['ocr_success', 'ocr_success_with_warn', 'ocr_empty', 'review_ready', 'failed', 'extraction_failed_action'].includes(uiStatus);
