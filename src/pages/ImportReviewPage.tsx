@@ -186,6 +186,24 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         setGenerating(true);
 
         try {
+            console.log('=== BDI DEBUG ===', {
+                bdi_percent: params.bdi_percent,
+                bdi_mode_value: params.bdi_percent,
+                typeof_bdi: typeof params.bdi_percent,
+                bdi_equipamentos: params.bdi_equipamentos,
+                bdi_especial: params.bdi_especial,
+                full_body: {
+                    job_id: jobId,
+                    bdi_mode: params.bdi_percent,
+                    bdi_rates: [
+                        { label: 'BDI Geral', value: params.bdi_percent, is_default: true },
+                        ...(params.bdi_equipamentos > 0 ? [{ label: 'BDI Equipamentos', value: params.bdi_equipamentos }] : []),
+                        ...(params.bdi_especial >= 1 ? [{ label: params.bdi_especial_label || 'BDI Especial', value: params.bdi_especial }] : [])
+                    ],
+                    bdi_equipamentos: params.bdi_equipamentos
+                }
+            });
+
             const { data, error } = await supabase.functions.invoke('import-finalize-budget', {
                 body: {
                     job_id: jobId,
