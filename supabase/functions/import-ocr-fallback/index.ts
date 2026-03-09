@@ -525,6 +525,62 @@ function isPdfFile(file: any): { isPdf: boolean; trigger: string | null; } {
     return { isPdf: byCt || byExt, trigger: byCt ? 'content_type' : (byExt ? 'extension' : null) };
 }
 
+// -----------------------------
+// MERGE WRAPPED LINES (v1 — 2026-03-09)
+// Deterministic pre-processor: executa APÓS pdfParse, ANTES de salvar extracted_text.
+// Junta linhas de continuação para que o Gemini receba itens completos (descrição + valores).
+// NÃO altera o prompt do Gemini, SQL, chunking ou frontend.
+// -----------------------------
+function mergeWrappedLines(rawText: string): string {
+    if (!rawText) return rawText;
+
+    // Palavras que indicam continuação, NUNCA início de seção.
+    const CONTINUATION_WORDS = [
+        'DESCARGA', 'SANIT\u00c1RIO', 'PREDIAL', 'INSTALADO', 'FORNECIDO',
+        'SOLD\u00c1VEL', 'EL\u00c1STICA', 'AC\u00daSTICO', 'RECOBRIMENTO', 'ARGAMASSADO',
+        'INC\u00caNDIO', 'DRYWALL', 'ESGOTO', 'PLUVIAL', 'RESIDUAL',
+        'VENTILA\u00c7\u00c3O', 'ELETRODUTO', 'ALVENARIA', 'SANIT\u00c1RIA', 'SANIT\u00c1RIAS'
+    ];
+
+    const isNewItemStart = (line: string): boolean => {
+        const trimmed = line.trim();
+        if (!trimmed) return true;
+        if (/^\d+\.\d+/.test(trimmed)) return true;
+        if (/^\d{5,}/.test(trimmed)) return true;
+        if (/^\s*(TOTAL|SUBTOTAL|BDI)\b/i.test(trimmed)) return true;
+
+        // Título de seção: MAIÚSCULA + sem dígitos + 10-60 chars + NÃO começa com palavra de continuação
+        const isAllCaps = trimmed === trimmed.toUpperCase();
+        const hasNoDigits = !/\d/.test(trimmed);
+        const isShortTitle = trimmed.length >= 10 && trimmed.length <= 60;
+        const firstWord = trimmed.split(/[\s,.()/]/)[0].toUpperCase();
+        const isContinuationWord = CONTINUATION_WORDS.includes(firstWord);
+
+        if (isAllCaps && hasNoDigits && isShortTitle && !isContinuationWord) return true;
+
+        return false;
+    };
+
+    const lines = rawText.split(/\r?\n/);
+    const merged: string[] = [];
+
+    for (const line of lines) {
+        if (isNewItemStart(line) || merged.length === 0) {
+            merged.push(line);
+        } else {
+            merged[merged.length - 1] += ' ' + line.trim();
+        }
+    }
+
+    const result = merged.join('\n');
+    const linesBefore = lines.length;
+    const linesAfter = merged.length;
+    if (linesBefore !== linesAfter) {
+        console.log(`[mergeWrappedLines] Merged ${linesBefore - linesAfter} continuation lines (${linesBefore} \u2192 ${linesAfter})`);
+    }
+    return result;
+}
+
 async function markJobFailed(supabase: any, jobId: string, currentJobData: any, reason: string, userMessage: string, debugSummary: any, technicalError?: string) {
     const errorMsg = technicalError ? String(technicalError).substring(0, 500) : null;
     await supabase.from('import_jobs').update({ status: 'done', current_step: technicalError ? 'waiting_user_technical_failure' : 'waiting_user_extraction_failed', last_error: errorMsg || reason, error_message: userMessage, stage: 'ocr_failed', stage_updated_at: new Date().toISOString(), updated_at: new Date().toISOString(), document_context: { ...(currentJobData?.document_context || {}), ocr_fallback_executed: true, debug_info: { ...createSafeDebugInfo(debugSummary), failure_reason: reason, failure_technical: errorMsg }, user_action: { required: true, reason, message: userMessage, items_count: 0 } } }).eq('id', jobId);
@@ -718,10 +774,11 @@ serve(async (req: Request) => {
                 const pdfData = await extractPdfText(buffer);
                 const realLen = pdfData?.text?.length || 0;
 
-                // Salva extracted_text no banco
+                // Salva extracted_text no banco (com merge de linhas quebradas)
                 if (pdfData?.text) {
+                    const mergedText = mergeWrappedLines(pdfData.text);
                     await supabase.from('import_files').update({
-                        extracted_text: pdfData.text
+                        extracted_text: mergedText
                     }).eq('id', file.id);
                 }
 
