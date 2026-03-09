@@ -568,6 +568,37 @@ function mergeWrappedLines(rawText: string): string {
     return result;
 }
 
+function normalizeColumnSpacing(text: string): string {
+    const beforeLen = text.length;
+    let result = text;
+
+    // 1. Código,00SINAPI → Código,00 | SINAPI |
+    result = result.replace(/(\d,\d{2})(SINAPI)/gi, '$1 | $2 | ');
+
+    // 2. AF_MM/YYYY seguido de grupo → AF_MM/YYYY | GRUPO
+    result = result.replace(/(AF_\d{2}\/\d{4})\s*([A-ZÀ-Ú]{2,})/g, '$1 | $2');
+
+    // 3. TextoMAIÚSCULO grudado com unidade → TEXTO | UN
+    result = result.replace(/([A-ZÀ-Ú]{3,})((?:UN|M2|M3|KG|VB|CJ|PAR|PCT|M)\b)/g, '$1 | $2');
+
+    // 4. Unidade grudada com número → UN | 1,00
+    result = result.replace(/\b(UN|M2|M3|KG|H|VB|CJ|L|T|PAR|PCT|M)\s*(\d)/gi, '$1 | $2');
+
+    // 5. Número,decimal grudado com letra maiúscula → 592,62 | Composição
+    result = result.replace(/(\d,\d{2})([A-ZÀ-Ú])/g, '$1 | $2');
+
+    // 6. "Composição Auxiliar" como delimitador
+    result = result.replace(/(\d[,\.]\d+)\s*(Composição)/g, '$1 | $2');
+
+    const afterLen = result.length;
+    const diff = afterLen - beforeLen;
+    if (diff > 0) {
+        console.log(`[normalizeColumnSpacing] Inserted ${diff} separator chars`);
+    }
+
+    return result;
+}
+
 async function markJobFailed(supabase: any, jobId: string, currentJobData: any, reason: string, userMessage: string, debugSummary: any, technicalError?: string) {
     const errorMsg = technicalError ? String(technicalError).substring(0, 500) : null;
     await supabase.from('import_jobs').update({ status: 'done', current_step: technicalError ? 'waiting_user_technical_failure' : 'waiting_user_extraction_failed', last_error: errorMsg || reason, error_message: userMessage, stage: 'ocr_failed', stage_updated_at: new Date().toISOString(), updated_at: new Date().toISOString(), document_context: { ...(currentJobData?.document_context || {}), ocr_fallback_executed: true, debug_info: { ...createSafeDebugInfo(debugSummary), failure_reason: reason, failure_technical: errorMsg }, user_action: { required: true, reason, message: userMessage, items_count: 0 } } }).eq('id', jobId);
@@ -764,8 +795,9 @@ serve(async (req: Request) => {
                 // Salva extracted_text no banco (com merge de linhas quebradas)
                 if (pdfData?.text) {
                     const mergedText = mergeWrappedLines(pdfData.text);
+                    const normalized = normalizeColumnSpacing(mergedText);
                     await supabase.from('import_files').update({
-                        extracted_text: mergedText
+                        extracted_text: normalized
                     }).eq('id', file.id);
                 }
 
