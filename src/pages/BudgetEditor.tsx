@@ -1322,6 +1322,7 @@ const BudgetEditor = () => {
         let insertAfterIndex = afterIndex;
         let newLevel: number;
         let newParentId: string | null;
+        let provisionalNumber = '';
 
         if (type === 'etapa') {
             // ETAPA = create SIBLING (same level, same parent)
@@ -1349,56 +1350,75 @@ const BudgetEditor = () => {
             if (newParentId === null) {
                 insertAfterIndex = (visibleRows?.length || 1) - 1;
             }
+
+            if (clickedLevel === 1) {
+                // Conta todas as etapas N1
+                const n1Count = items?.filter(it => it.level === 1).length || 0;
+                provisionalNumber = `${n1Count + 1}`;
+            } else {
+                // Conta irmãos do mesmo parent
+                const siblingCount = items?.filter(it => it.parentId === newParentId && it.level === clickedLevel).length || 0;
+                // Pega o número do pai a partir do visibleRows
+                const parentRow = visibleRows?.find(r => r.id === newParentId);
+                const parentNumber = parentRow?.itemNumber || '?';
+                provisionalNumber = `${parentNumber}.${siblingCount + 1}`;
+            }
         } else {
             // SUBETAPA: sempre cria FILHO do item clicado (nível + 1)
             newLevel = clickedLevel + 1;
             newParentId = clickedRow.id || null;
 
-            // Encontra a posição do último descendente do item clicado em visibleRows
-            // || 99: itens sem level definido nunca causam break prematuro
+            // Encontra a posição do último descendente do item clicado no visibleRows
+            // Usa parentId para identificar filhos mesmo quando level está dessincronizado
+            const clickedId = clickedRow?.id;
             let lastDescendantIndex = afterIndex;
-            for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
-                const rowLevel = visibleRows[i]?.level || 99;
-                if (rowLevel <= clickedLevel) break;
-                lastDescendantIndex = i;
-            }
-            insertAfterIndex = lastDescendantIndex;
-        }
 
-        // Calculate provisional number
-        let provisionalNumber = '';
-        if (type === 'etapa') {
-            // Count existing siblings at same level under same parent
-            const clickedNum = clickedRow.itemNumber || '';
-            const numParts = clickedNum.split('.');
-            // Find the last sibling number at this level
-            let maxSiblingNum = 0;
-            for (let i = 0; i < items.length; i++) {
-                if (items[i].level === clickedLevel && items[i].parentId === (newParentId || null)) {
-                    const parts = (items[i].itemNumber || '').split('.');
-                    const lastNum = parseInt(parts[parts.length - 1] || '0', 10);
-                    if (lastNum > maxSiblingNum) maxSiblingNum = lastNum;
+            // Primeiro: coleta todos os IDs de descendentes (recursivo por parentId)
+            const descendantIds = new Set<string>();
+            const findDescendants = (parentId: string) => {
+                if (!visibleRows) return;
+                for (let i = 0; i < visibleRows.length; i++) {
+                    if (visibleRows[i].parentId === parentId && visibleRows[i].id) {
+                        descendantIds.add(visibleRows[i].id);
+                        findDescendants(visibleRows[i].id);
+                    }
+                }
+            };
+            if (clickedId) findDescendants(clickedId);
+
+            // Segundo: encontra o maior índice entre os descendentes
+            for (let i = afterIndex + 1; i < (visibleRows?.length || 0); i++) {
+                if (visibleRows[i].id && descendantIds.has(visibleRows[i].id)) {
+                    lastDescendantIndex = i;
+                } else if (!descendantIds.has(visibleRows[i].id)) {
+                    // Se não é descendente e já passamos do pai, podemos parar
+                    // (mas só se já encontramos pelo menos um descendente)
+                    if (lastDescendantIndex > afterIndex) break;
                 }
             }
-            if (numParts.length === 1) {
-                provisionalNumber = `${maxSiblingNum + 1}`;
-            } else {
-                numParts[numParts.length - 1] = `${maxSiblingNum + 1}`;
-                provisionalNumber = numParts.join('.');
-            }
-        } else {
-            // SUBETAPA: conta filhos diretos existentes do item clicado
-            const clickedId = clickedRow?.id;
+
+            insertAfterIndex = lastDescendantIndex;
+
+            // Conta filhos diretos para o provisionalNumber
             let childCount = 0;
-            for (let i = 0; i < items.length; i++) {
-                if (items[i].parentId === clickedId) childCount++;
+            if (items) {
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].parentId === clickedId) childCount++;
+                }
             }
             const clickedNum = clickedRow?.itemNumber || '?';
             provisionalNumber = `${clickedNum}.${childCount + 1}`;
+            newParentId = clickedId || null;
         }
 
         parentId = newParentId;
-        setInlineInsert({ type, afterIndex: insertAfterIndex, parentId, provisionalNumber });
+        setInlineInsert({
+            type,
+            afterIndex: insertAfterIndex,
+            afterItemId: visibleRows?.[insertAfterIndex]?.id || null,
+            parentId,
+            provisionalNumber
+        });
         setInlineInsertText('');
         setTimeout(() => inlineInsertRef.current?.focus(), 50);
     };
@@ -4197,7 +4217,7 @@ const BudgetEditor = () => {
                                                 {peso.toFixed(2)}%
                                             </td>
                                         </tr>
-                                        {inlineInsert && inlineInsert.afterIndex === index && (
+                                        {inlineInsert && inlineInsert.afterItemId === item.id && (
                                             <tr className="border-b border-blue-300 bg-blue-50">
                                                 <td className="p-1 text-center border-r border-blue-200"></td>
                                                 <td className="p-1 text-center border-r border-blue-200"></td>
