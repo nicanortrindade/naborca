@@ -1440,21 +1440,7 @@ serve(async (req: Request) => {
                     }
                 }).eq("id", job_id);
 
-                if (isComplete) {
-                    const { data: claimed } = await supabase.from("import_jobs")
-                        .update({ stage: 'finalizing' })
-                        .eq("id", job_id)
-                        .not("stage", "in", "(finalizing,pending_hydration,finalized)")
-                        .select("id");
 
-                    if (claimed && claimed.length > 0) {
-                        fetch(`${SUPABASE_URL}/functions/v1/import-finalize-budget`, {
-                            method: 'POST',
-                            headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
-                            body: JSON.stringify({ job_id })
-                        }).catch(() => { });
-                    }
-                }
             } else {
                 // Batches incompletos: marca retryable para que o retry-sweep
                 // continue o Stage B a partir do próximo lote (resume via checkpoint)
