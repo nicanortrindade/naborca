@@ -52,6 +52,13 @@ Deno.serve(async (req) => {
             enable_structure_parser_v1, bdi_equipamentos, obra_nome,
             municipio, bases_selecionadas, bdi_rates, bdi_especial
         } = body;
+        console.log('[FINALIZE] body received:', JSON.stringify({
+            bdi_mode: body.bdi_mode,
+            bdi_rates: body.bdi_rates,
+            bdi_equipamentos: body.bdi_equipamentos,
+            bdi_especial: body.bdi_especial,
+            social_charges: body.social_charges
+        }));
         const force_rehydrate = body?.force_rehydrate === true;
 
         // Resolve User ID if Service Mode (Bypass)
@@ -159,6 +166,12 @@ Deno.serve(async (req) => {
             municipio,
             bases_selecionadas
         };
+        console.log('[FINALIZE] params to SQL:', JSON.stringify({
+            bdi_mode: params.bdi_mode,
+            bdi_rates: params.bdi_rates,
+            bdi_equipamentos: params.bdi_equipamentos,
+            bdi_especial: params.bdi_especial
+        }));
 
         // Dispara RPC de forma assíncrona (fire-and-forget) para evitar timeout da Edge Function
         EdgeRuntime.waitUntil(

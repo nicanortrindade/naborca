@@ -54,8 +54,13 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
         fetchJobContext();
 
         // Polling: verifica stage a cada 10s até finalizar
+        // NOTA: o intervalo é 10000ms. Se aparecerem ticks mais rápidos no
+        // console, significa que múltiplas instâncias do componente estão
+        // ativas simultaneamente (StrictMode em dev monta 2x, ou o componente
+        // está sendo re-montado por rota pai).
         const prevStageRef = { current: jobStage };
         const interval = setInterval(async () => {
+            console.log('[POLLING] tick — jobId:', jobId);
             const { data } = await supabase
                 .from('import_jobs' as any)
                 .select('stage, status, result_budget_id')
@@ -67,12 +72,23 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                 setJobStage(data.stage);
                 prevStageRef.current = data.stage;
 
+                // Parar polling em stages terminais da revisão (itens já carregados)
+                const terminalStages = ['pending_hydration', 'extraction_complete', 'finalized'];
+
                 // Recarregar itens quando stage avança para um estado terminal
-                if (data.stage !== prevStage && ['pending_hydration', 'extraction_complete', 'finalized'].includes(data.stage)) {
+                if (data.stage !== prevStage && terminalStages.includes(data.stage)) {
                     fetchItems();
                 }
 
+                // Parar polling quando a extração já está completa e na revisão
+                if (['extraction_complete', 'pending_hydration'].includes(data.stage)) {
+                    console.log('[POLLING] stage terminal de revisão atingido, parando polling:', data.stage);
+                    clearInterval(interval);
+                    return;
+                }
+
                 if (data.result_budget_id && data.stage === 'finalized') {
+                    console.log('[POLLING] finalized, parando polling e navegando.');
                     clearInterval(interval);
                     navigate(toRelativePath(`/budgets/${data.result_budget_id}`));
                 }
@@ -81,6 +97,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
 
         return () => clearInterval(interval);
     }, [jobId]);
+
 
     const fetchJobContext = async () => {
         const { data } = await supabase
