@@ -85,14 +85,26 @@ Deno.serve(async (req) => {
 
         if (jobCheck?.result_budget_id) {
             if (!force_rehydrate) {
-                console.log(`[FinalizeBudget] Job já tem budget (${jobCheck.result_budget_id}, stage=${jobCheck.stage}), retornando existente.`);
-                return new Response(JSON.stringify({
-                    ok: true,
-                    budget_id: jobCheck.result_budget_id,
-                    already_finalized: true
-                }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+                if (jobCheck.stage === 'pending_hydration') {
+                    console.log('[FINALIZE] Reprocessando budget existente com novos params');
+                } else if (jobCheck.stage === 'finalized') {
+                    console.log(`[FinalizeBudget] Job já finalizado (${jobCheck.result_budget_id}, stage=${jobCheck.stage}), retornando existente sem reprocessar.`);
+                    return new Response(JSON.stringify({
+                        ok: true,
+                        budget_id: jobCheck.result_budget_id,
+                        already_finalized: true
+                    }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+                } else {
+                    console.log(`[FinalizeBudget] Job já tem budget (${jobCheck.result_budget_id}, stage=${jobCheck.stage}), retornando existente.`);
+                    return new Response(JSON.stringify({
+                        ok: true,
+                        budget_id: jobCheck.result_budget_id,
+                        already_finalized: true
+                    }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+                }
+            } else {
+                console.log(`[FinalizeBudget] force_rehydrate=true, reconstruindo budget: ${jobCheck.result_budget_id}`);
             }
-            console.log(`[FinalizeBudget] force_rehydrate=true, reconstruindo budget: ${jobCheck.result_budget_id}`);
         }
 
         // GUARD: só finaliza se todos os batches foram processados
@@ -180,11 +192,11 @@ Deno.serve(async (req) => {
                     // PRE-RPC GUARD: verify no budget was created between the initial check and now
                     const { data: preCheck } = await adminClient
                         .from('import_jobs')
-                        .select('result_budget_id')
+                        .select('result_budget_id, stage')
                         .eq('id', job_id)
                         .single();
-                    if (preCheck?.result_budget_id) {
-                        console.log(`[FinalizeBudget] Budget already exists (${preCheck.result_budget_id}), skipping RPC.`);
+                    if (preCheck?.result_budget_id && preCheck.stage !== 'pending_hydration' && !force_rehydrate) {
+                        console.log(`[FinalizeBudget] Budget already exists (${preCheck.result_budget_id}, stage=${preCheck.stage}), skipping RPC.`);
                         return;
                     }
 
