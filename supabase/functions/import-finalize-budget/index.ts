@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
         const {
             job_id, uf, competence, desonerado, bdi_mode, social_charges,
             enable_structure_parser_v1, bdi_equipamentos, obra_nome,
-            municipio, bases_selecionadas
+            municipio, bases_selecionadas, bdi_rates, bdi_especial
         } = body;
         const force_rehydrate = body?.force_rehydrate === true;
 
@@ -153,6 +153,8 @@ Deno.serve(async (req) => {
             social_charges: social_charges,
             enable_structure_parser_v1: enable_structure_parser_v1 === true,
             bdi_equipamentos,
+            bdi_rates,
+            bdi_especial,
             obra_nome,
             municipio,
             bases_selecionadas

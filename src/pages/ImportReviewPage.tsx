@@ -542,7 +542,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                         className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none transition-colors font-medium text-sm"
                                         placeholder="Ex: Construção de Escola Municipal..."
                                         value={params.obra_nome}
-                                        onChange={e => setParams({ ...params, obra_nome: e.target.value })}
+                                        onChange={e => { const v = e.target.value; setParams(prev => ({ ...prev, obra_nome: v })); }}
                                     />
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
@@ -551,7 +551,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                         <select
                                             className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none transition-colors font-medium text-sm"
                                             value={params.uf}
-                                            onChange={e => setParams({ ...params, uf: e.target.value })}
+                                            onChange={e => { const v = e.target.value; setParams(prev => ({ ...prev, uf: v })); }}
                                         >
                                             <option value="AC">Acre (AC)</option>
                                             <option value="AL">Alagoas (AL)</option>
@@ -589,7 +589,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                             className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none transition-colors font-medium text-sm"
                                             placeholder="Ex: Salvador"
                                             value={params.municipio}
-                                            onChange={e => setParams({ ...params, municipio: e.target.value })}
+                                            onChange={e => { const v = e.target.value; setParams(prev => ({ ...prev, municipio: v })); }}
                                         />
                                     </div>
                                 </div>
@@ -678,13 +678,13 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                         <div className="flex gap-1 bg-slate-100 p-1 rounded-xl h-[46px]">
                                             <button
                                                 className={`flex-1 text-xs font-bold py-1 px-2 rounded-lg transition-all ${params.encargo_mode === 'nao_desonerado' ? 'bg-white text-slate-900 shadow-sm border border-white' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
-                                                onClick={() => setParams({ ...params, encargo_mode: 'nao_desonerado' })}
+                                                onClick={() => setParams(prev => ({ ...prev, encargo_mode: 'nao_desonerado' }))}
                                             >
                                                 Não Des.
                                             </button>
                                             <button
                                                 className={`flex-1 text-xs font-bold py-1 px-2 rounded-lg transition-all ${params.encargo_mode === 'desonerado' ? 'bg-white text-slate-900 shadow-sm border border-white' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
-                                                onClick={() => setParams({ ...params, encargo_mode: 'desonerado' })}
+                                                onClick={() => setParams(prev => ({ ...prev, encargo_mode: 'desonerado' }))}
                                             >
                                                 Desonerado
                                             </button>
@@ -699,7 +699,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                                 type="number"
                                                 className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none transition-colors font-medium text-sm pr-8"
                                                 value={params.encargo_horista_percent}
-                                                onChange={e => setParams({ ...params, encargo_horista_percent: parseFloat(e.target.value) || 0 })}
+                                                onChange={e => { const v = parseFloat(e.target.value) || 0; setParams(prev => ({ ...prev, encargo_horista_percent: v })); }}
                                             />
                                             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">%</span>
                                         </div>
@@ -711,7 +711,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                                 type="number"
                                                 className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none transition-colors font-medium text-sm pr-8"
                                                 value={params.encargo_mensalista_percent}
-                                                onChange={e => setParams({ ...params, encargo_mensalista_percent: parseFloat(e.target.value) || 0 })}
+                                                onChange={e => { const v = parseFloat(e.target.value) || 0; setParams(prev => ({ ...prev, encargo_mensalista_percent: v })); }}
                                             />
                                             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">%</span>
                                         </div>
@@ -733,7 +733,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                             type="number"
                                             className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-blue-500 outline-none transition-colors font-medium text-sm pr-8 text-blue-800 focus:bg-blue-50/50"
                                             value={params.bdi_percent}
-                                            onChange={e => setParams({ ...params, bdi_percent: parseFloat(e.target.value) || 0 })}
+                                            onChange={e => { const v = parseFloat(e.target.value) || 0; setParams(prev => ({ ...prev, bdi_percent: v })); }}
                                         />
                                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">%</span>
                                     </div>
@@ -751,7 +751,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                             type="number"
                                             className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-orange-500 outline-none transition-colors font-medium text-sm pr-8 text-orange-800 focus:bg-orange-50/50"
                                             value={params.bdi_equipamentos}
-                                            onChange={e => setParams({ ...params, bdi_equipamentos: parseFloat(e.target.value) || 0 })}
+                                            onChange={e => { const v = parseFloat(e.target.value) || 0; setParams(prev => ({ ...prev, bdi_equipamentos: v })); }}
                                         />
                                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">%</span>
                                     </div>
@@ -769,7 +769,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                                 type="text"
                                                 className="text-xs font-bold text-slate-500 uppercase bg-transparent border-b border-dashed border-slate-300 focus:border-emerald-500 outline-none w-full"
                                                 value={params.bdi_especial_label || 'BDI Especial'}
-                                                onChange={e => setParams({ ...params, bdi_especial_label: e.target.value })}
+                                                onChange={e => { const v = e.target.value; setParams(prev => ({ ...prev, bdi_especial_label: v })); }}
                                                 placeholder="Nome da faixa"
                                             />
                                             <span className="text-[10px] text-slate-400">(%)</span>
@@ -779,7 +779,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                                                 type="number"
                                                 className="w-full p-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:border-emerald-500 outline-none transition-colors font-medium text-sm pr-8 text-emerald-800 focus:bg-emerald-50/50"
                                                 value={params.bdi_especial}
-                                                onChange={e => setParams({ ...params, bdi_especial: parseFloat(e.target.value) || 0 })}
+                                                onChange={e => { const v = parseFloat(e.target.value) || 0; setParams(prev => ({ ...prev, bdi_especial: v })); }}
                                             />
                                             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">%</span>
                                         </div>
