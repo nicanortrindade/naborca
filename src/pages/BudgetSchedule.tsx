@@ -272,8 +272,8 @@ const BudgetSchedulePage: React.FC = () => {
         // 1. Tentar valor direto (vem do engine hidratado)
         let val = safeNumber(item.finalPrice);
 
-        // 2. Se for 0 e for grupo (L1/L2), usar recursão indexada robusta
-        if (val === 0 && (item.level === 1 || item.level === 2)) {
+        // 2. Se for 0 e for grupo, usar recursão indexada robusta
+        if (val === 0 && item.type === 'group') {
             const derivedTotal = getRecursiveTotal(item.id!);
             if (derivedTotal > 0) {
                 val = derivedTotal;
