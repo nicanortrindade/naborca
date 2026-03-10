@@ -579,10 +579,13 @@ function normalizeColumnSpacing(text: string): string {
     result = result.replace(/(AF_\d{2}\/\d{4})\s*([A-ZÀ-Ú]{2,})/g, '$1 | $2');
 
     // 3. TextoMAIÚSCULO grudado com unidade → TEXTO | UN
-    result = result.replace(/([A-ZÀ-Ú]{3,})((?:UN|M2|M3|KG|VB|CJ|PAR|PCT|M)\b)/g, '$1 | $2');
+    // Lookahead (?=[\s,.\d]|$) garante que a unidade está no fim de um token (espaço, vírgula, dígito ou EOL)
+    // e não é parte de uma palavra acentuada (MONTAGEM, ALUMÍNIO, JUNÇÃO, etc.)
+    result = result.replace(/([A-ZÀ-Ú]{3,})((?:UN|M2|M3|KG|VB|CJ|PAR|PCT|M)(?=[\s,.\d]|$))/g, '$1 | $2');
 
     // 4. Unidade grudada com número → UN | 1,00
-    result = result.replace(/\b(UN|M2|M3|KG|H|VB|CJ|L|T|PAR|PCT|M)\s*(\d)/gi, '$1 | $2');
+    // Lookahead (?=[\s\d]) garante que só atua em unidades soltas, nunca dentro de palavras
+    result = result.replace(/(^|(?<=\s))(UN|M2|M3|KG|H|VB|CJ|L|T|PAR|PCT|M)(?=\d)/gi, '$1$2 | ');
 
     // 5. Número,decimal grudado com letra maiúscula → 592,62 | Composição
     result = result.replace(/(\d,\d{2})([A-ZÀ-Ú])/g, '$1 | $2');
