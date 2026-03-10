@@ -801,7 +801,7 @@ const BudgetSchedulePage: React.FC = () => {
                                                             {getItemNumber(item)}
                                                         </span>
                                                         <span className={`text-xs uppercase line-clamp-2 ${textColor}`}>
-                                                            {item.description}
+                                                            {((item as any).pathKey || (item as any).path_key || '')} {item.description}
                                                         </span>
                                                     </div>
                                                 </div>
