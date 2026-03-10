@@ -770,8 +770,15 @@ const BudgetSchedulePage: React.FC = () => {
 
                                 if (isHidden) return null;
 
-                                const rowBg = item.level === 0 ? "bg-slate-800 text-white" : (item.level === 1 ? "bg-blue-100" : (item.level === 2 ? "bg-blue-50/50" : "bg-white"));
-                                const textColor = item.level === 0 ? "text-white" : (item.level === 1 ? "text-blue-900 font-bold" : (item.level === 2 ? "text-blue-800 font-semibold" : "text-slate-600"));
+                                const isGroup = item.type === 'group';
+                                const rowBg = item.level === 1 ? "bg-[#1e3a8a] text-white" 
+                                    : item.level === 2 ? "bg-[#dbeafe]" 
+                                    : (item.level === 3 && isGroup) ? "bg-[#eff6ff]" 
+                                    : "bg-white";
+                                const textColor = item.level === 1 ? "text-white font-bold" 
+                                    : item.level === 2 ? "text-[#1e3a8a] font-bold" 
+                                    : (item.level === 3 && isGroup) ? "text-slate-800 font-semibold" 
+                                    : "text-slate-600";
 
                                 const isCollapsible = item.level <= 2;
                                 const hasChildren = items.some(i => i.parentId === item.id);
