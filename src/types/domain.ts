@@ -44,6 +44,7 @@ export interface BudgetItem {
     order: number;
     level: number;
     itemNumber: string;
+    pathKey?: string;
     code: string;
     description: string;
     unit: string;
