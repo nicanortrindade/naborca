@@ -139,7 +139,7 @@ export const BUDGET_ITEMS_SELECT = `
     unit, quantity, unit_price, total_price, final_price, type, source, item_type,
     composition_id, insumo_id, custom_bdi, cost_center, notes,
     hydration_status, hydration_details,
-    calculation_memory, calculation_steps, is_locked, is_desonerated, updated_at, path_key
+    calculation_memory, calculation_steps, is_locked, is_desonerated, updated_at
 `.replace(/\s+/g, '');
 
 function toDomain(row: BudgetItemRow): BudgetItem {
