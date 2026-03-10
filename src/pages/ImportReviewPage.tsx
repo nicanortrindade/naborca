@@ -84,6 +84,10 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                 if (['extraction_complete', 'pending_hydration'].includes(data.stage)) {
                     console.log('[POLLING] stage terminal de revisão atingido, parando polling:', data.stage);
                     clearInterval(interval);
+                    // Budget já criado em pending_hydration → navega direto pro orçamento
+                    if (data.result_budget_id && data.stage === 'pending_hydration') {
+                        navigate(toRelativePath(`/budgets/${data.result_budget_id}`));
+                    }
                     return;
                 }
 
@@ -276,7 +280,7 @@ export default function ImportReviewPage({ jobId }: ImportReviewPageProps) {
                         .select('result_budget_id, stage')
                         .eq('id', jobId)
                         .single();
-                    if (jobData?.result_budget_id && jobData?.stage === 'finalized') {
+                    if (jobData?.result_budget_id && ['pending_hydration', 'finalized'].includes(jobData?.stage)) {
                         navigate(toRelativePath(`/budgets/${jobData.result_budget_id}`));
                         return;
                     }
