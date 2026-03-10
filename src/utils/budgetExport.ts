@@ -1183,10 +1183,16 @@ export async function generatePDFAnalyticBuffer(data: ExportData): Promise<Array
                     d.cell.styles.fillColor = [219, 234, 254];
                     d.cell.styles.fontStyle = 'bold';
                     d.cell.styles.textColor = [0, 0, 0];
-                } else {
-                    // Nível 3+ (Item normal)
+                } else if (level === 3) {
+                    // Nível 3 (Subgrupos)
+                    d.cell.styles.fillColor = [255, 255, 255];
                     d.cell.styles.fontStyle = 'bold';
-                    d.cell.styles.fillColor = [245, 245, 245]; // Leve destaque para linha pai de comp
+                    d.cell.styles.textColor = [0, 0, 0];
+                } else {
+                    // Nível 4+ (Item normal)
+                    d.cell.styles.fillColor = [255, 255, 255];
+                    d.cell.styles.fontStyle = 'normal';
+                    d.cell.styles.textColor = [0, 0, 0];
                 }
             } else {
                 // Linhas de Composição (Filhos)
