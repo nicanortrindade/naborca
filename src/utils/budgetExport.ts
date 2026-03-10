@@ -886,7 +886,7 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
                 d.cell.styles.textColor = [0, 0, 0];
             } else if (isGroup) {
                 // Subgrupo level 3+ (ex: 7.1.1 PORTAS DE MADEIRA)
-                d.cell.styles.fillColor = [240, 240, 240];
+                d.cell.styles.fillColor = [237, 245, 255];
                 d.cell.styles.fontStyle = 'bold';
                 d.cell.styles.textColor = [0, 0, 0];
             } else {
