@@ -843,13 +843,15 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
             unitPrice != null ? formatCurrency(unitPrice) : '',
             unitPriceBDI != null ? formatCurrency(unitPriceBDI) : '',
             formatCurrency(calc.tFinal), // ALWAYS DISPLAY FINAL TOTAL (ADJUSTED)
-            formatPercent((row.pesoRaw || 0) * 100) // Keep weight as passed (or recalc?) Let's keep passed to avoid mess.
+            formatPercent((row.pesoRaw || 0) * 100), // Keep weight as passed (or recalc?) Let's keep passed to avoid mess.
+            String(getHierarchyLevel(row.itemNumber)),  // col 10: nível real (oculta)
+            row.isGroup ? 'G' : 'I'                     // col 11: grupo ou item (oculta)
         ];
     });
 
     autoTable(doc, {
         startY: 75,
-        head: [['ITEM', 'BANCO', 'CÓDIGO', 'DESCRIÇÃO', 'UND', 'QTD', 'UNIT', 'UNIT/BDI', 'TOTAL', 'PESO']],
+        head: [['ITEM', 'BANCO', 'CÓDIGO', 'DESCRIÇÃO', 'UND', 'QTD', 'UNIT', 'UNIT/BDI', 'TOTAL', 'PESO', '', '']],
         body: tableData,
         headStyles: { fillColor: [30, 58, 138], fontSize: 7, halign: 'center' },
         styles: { fontSize: 7, valign: 'middle' },
@@ -863,22 +865,34 @@ export async function generatePDFSyntheticBuffer(data: ExportData): Promise<Arra
             6: { halign: 'right', cellWidth: 20 },  // Unit
             7: { halign: 'right', cellWidth: 20 },  // UnitBDI
             8: { halign: 'right', cellWidth: 22 },  // Total
-            9: { halign: 'center', cellWidth: 12 }  // Peso
+            9: { halign: 'center', cellWidth: 12 }, // Peso
+            10: { cellWidth: 0.01, overflow: 'hidden', halign: 'left' },
+            11: { cellWidth: 0.01, overflow: 'hidden', halign: 'left' }
         },
         didParseCell: (d) => {
             if (d.section === 'head') return;
-            const rowIndex = d.row.index;
-            const level = getHierarchyLevel(data.items[rowIndex]?.itemNumber || '');
+            const raw = d.row.raw as any;
+            const realLevel = parseInt(raw[10], 10) || 0;
+            const rowType = raw[11] || '';
+            const isGroup = rowType === 'G';
 
-            if (level === 1) {
+            if (realLevel === 1 && isGroup) {
                 d.cell.styles.fillColor = [30, 58, 138];
                 d.cell.styles.textColor = [255, 255, 255];
                 d.cell.styles.fontStyle = 'bold';
-            } else if (level === 2) {
+            } else if (realLevel === 2 && isGroup) {
                 d.cell.styles.fillColor = [219, 234, 254];
                 d.cell.styles.fontStyle = 'bold';
                 d.cell.styles.textColor = [0, 0, 0];
+            } else if (isGroup) {
+                // Subgrupo level 3+ (ex: 7.1.1 PORTAS DE MADEIRA)
+                d.cell.styles.fillColor = [240, 240, 240];
+                d.cell.styles.fontStyle = 'bold';
+                d.cell.styles.textColor = [0, 0, 0];
             } else {
+                // Item normal (insumo/serviço) — qualquer level
+                d.cell.styles.fillColor = [255, 255, 255];
+                d.cell.styles.fontStyle = 'normal';
                 d.cell.styles.textColor = [0, 0, 0];
             }
         }
