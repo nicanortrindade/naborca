@@ -81,6 +81,10 @@ const BudgetSchedulePage: React.FC = () => {
             const subetapas = fixedItems.filter(i => i.level === 2 && i.parentId === etapa.id);
             flatList.push(etapa);
 
+            // 2.1 Itens level 3+ filhos diretos da etapa (sem subetapa intermediária)
+            const directItems = fixedItems.filter(i => i.level >= 3 && i.parentId === etapa.id);
+            directItems.forEach(item => flatList.push(item));
+
             subetapas.forEach(sub => {
                 flatList.push(sub);
                 // 3. Items (Level 3+)
