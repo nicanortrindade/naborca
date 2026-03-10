@@ -578,13 +578,16 @@ function normalizeColumnSpacing(text: string): string {
     // 2. AF_MM/YYYY seguido de grupo → AF_MM/YYYY | GRUPO
     result = result.replace(/(AF_\d{2}\/\d{4})\s*([A-ZÀ-Ú]{2,})/g, '$1 | $2');
 
-    // 3. TextoMAIÚSCULO grudado com unidade → TEXTO | UN
-    // Lookahead (?=[\s,.\d]|$) garante que a unidade está no fim de um token (espaço, vírgula, dígito ou EOL)
-    // e não é parte de uma palavra acentuada (MONTAGEM, ALUMÍNIO, JUNÇÃO, etc.)
-    result = result.replace(/([A-ZÀ-Ú]{3,})((?:UN|M2|M3|KG|VB|CJ|PAR|PCT|M)(?=[\s,.\d]|$))/g, '$1 | $2');
+    // 3. TextoMAIÚSCULO grudado com unidade — SEM "M" na lista: M sozinho é indistinguível
+    // do fim de palavras como MONTAGEM, DESMONTAGEM, CONCRETAGEM, etc.
+    // Lookahead (?=[\s,.\d]|$) evita quebrar palavras acentuadas (ALUMÍNIO, JUNÇÃO, etc.)
+    result = result.replace(/([A-ZÀ-Ú]{3,})((?:UN|M2|M3|KG|VB|CJ|PAR|PCT)(?=[\s,.\d]|$))/g, '$1 | $2');
+
+    // 3b. Palavras quebradas pelo pdfParse em colunas na mesma linha — fix explícito
+    result = result.replace(/DRYW\s+ALL/gi, 'DRYWALL');
 
     // 4. Unidade grudada com número → UN | 1,00
-    // Lookahead (?=[\s\d]) garante que só atua em unidades soltas, nunca dentro de palavras
+    // Lookahead (?=\d) + lookbehind (?<=\s) garante que só atua em unidades soltas
     result = result.replace(/(^|(?<=\s))(UN|M2|M3|KG|H|VB|CJ|L|T|PAR|PCT|M)(?=\d)/gi, '$1$2 | ');
 
     // 5. Número,decimal grudado com letra maiúscula → 592,62 | Composição
