@@ -76,20 +76,32 @@ const BudgetSchedulePage: React.FC = () => {
         const etapas = fixedItems.filter(i => i.level === 1);
         const flatList: any[] = [];
 
+        const addWithChildren = (parentId: string) => {
+            const kids = fixedItems.filter(i => i.parentId === parentId && !flatList.includes(i));
+            kids.forEach(kid => {
+                flatList.push(kid);
+                addWithChildren(kid.id);
+            });
+        };
+
         etapas.forEach(etapa => {
-            // 2. Subetapas (Level 2)
             const subetapas = fixedItems.filter(i => i.level === 2 && i.parentId === etapa.id);
             flatList.push(etapa);
-
-            // 2.1 Itens level 3+ filhos diretos da etapa (sem subetapa intermediária)
+            
+            // Filhos diretos da etapa (level 3+ sem subetapa)
             const directItems = fixedItems.filter(i => i.level >= 3 && i.parentId === etapa.id);
-            directItems.forEach(item => flatList.push(item));
+            directItems.forEach(item => {
+                flatList.push(item);
+                addWithChildren(item.id);
+            });
 
             subetapas.forEach(sub => {
                 flatList.push(sub);
-                // 3. Items (Level 3+)
                 const subItems = fixedItems.filter(i => i.level >= 3 && i.parentId === sub.id);
-                subItems.forEach(item => flatList.push(item));
+                subItems.forEach(item => {
+                    flatList.push(item);
+                    addWithChildren(item.id);
+                });
             });
         });
 
