@@ -796,6 +796,7 @@ serve(async (req: Request) => {
                 if (pdfData?.text) {
                     const mergedText = mergeWrappedLines(pdfData.text);
                     const normalized = normalizeColumnSpacing(mergedText);
+                    pdfData.text = normalized; // Normaliza in-place: Stage A, Stage B e processMaxExtraction recebem texto limpo
                     await supabase.from('import_files').update({
                         extracted_text: normalized
                     }).eq('id', file.id);
