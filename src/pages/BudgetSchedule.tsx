@@ -259,10 +259,12 @@ const BudgetSchedulePage: React.FC = () => {
 
         return children.reduce((sum, child) => {
             // Se for folha (L3+), soma valor direto. Se for subgrupo, desce mais um nível.
-            if (child.level >= 3) {
-                return sum + (safeNumber(child.finalPrice) || 0);
-            } else {
+            const childVal = safeNumber(child.finalPrice) || 0;
+            const hasChildren = itemsByParent.has(child.id);
+            if (hasChildren && childVal === 0) {
                 return sum + getRecursiveTotal(child.id);
+            } else {
+                return sum + childVal;
             }
         }, 0);
     };
