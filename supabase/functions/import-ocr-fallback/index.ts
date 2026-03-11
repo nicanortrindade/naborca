@@ -1397,8 +1397,8 @@ serve(async (req: Request) => {
             const { data: fileDataForBatches } = await supabase
                 .from("import_files")
                 .select("metadata")
-                .eq("job_id", job_id)
-                .eq("doc_role", "synthetic");
+                .eq("job_id", job_id);
+                // BUGFIX: removed .eq("doc_role", "synthetic") — files com doc_role 'unknown' ou 'analytical' nunca apareciam aqui, causando totalBatches=0 e loop infinito
 
             let lastPersistedBatch = -1;
             let totalBatches = 0;
@@ -1421,11 +1421,18 @@ serve(async (req: Request) => {
             }
 
             if (totalBatches === 0) {
-                // Fallback seguro: jobs iniciados antes deste deploy não têm total_batches
-                // persistido. Usamos lastPersistedBatch + 2 como estimativa conservadora,
-                // com mínimo de 16 (≥307 candidatos / 20 = 15,35 → 16 batches).
-                totalBatches = Math.max(16, lastPersistedBatch + 2);
-                console.warn(`[FINALIZE-GUARD] total_batches not found in metadata. Using fallback=${totalBatches} (lastPersistedBatch=${lastPersistedBatch}). Job may be from before this deploy.`);
+                if (lastPersistedBatch >= 0) {
+                    // Temos lotes processados mas não sabemos o total: o último lote visto É o final
+                    totalBatches = lastPersistedBatch + 1;
+                    console.warn(`[FINALIZE-GUARD] total_batches not found. Inferindo de lastPersistedBatch: totalBatches=${totalBatches}`);
+                } else {
+                    // Nenhuma info de lote disponível. Força encerramento para evitar loop infinito.
+                    // BUGFIX: o fallback anterior (Math.max(16, lastPersistedBatch + 2)) resultava em
+                    // totalBatches=16 com lastPersistedBatch=-1, tornando allBatchesDone sempre false.
+                    totalBatches = 1;
+                    lastPersistedBatch = 0;
+                    console.warn(`[FINALIZE-GUARD] Sem metadata de lote. Forçando allBatchesDone=true para evitar loop infinito.`);
+                }
             }
 
             console.log(`[FINALIZE-GUARD] totalBatches=${totalBatches}, lastPersistedBatch=${lastPersistedBatch}`);
