@@ -1398,7 +1398,7 @@ serve(async (req: Request) => {
                 .from("import_files")
                 .select("metadata")
                 .eq("job_id", job_id);
-                // BUGFIX: removed .eq("doc_role", "synthetic") — files com doc_role 'unknown' ou 'analytical' nunca apareciam aqui, causando totalBatches=0 e loop infinito
+            // BUGFIX: removed .eq("doc_role", "synthetic") — files com doc_role 'unknown' ou 'analytical' nunca apareciam aqui, causando totalBatches=0 e loop infinito
 
             let lastPersistedBatch = -1;
             let totalBatches = 0;
