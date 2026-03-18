@@ -21,7 +21,7 @@ const OCR_EC2_URL = Deno.env.get("OCR_EC2_URL") ?? "";
 // -----------------------------
 const MIN_ITEMS_SUCCESS = 3;
 const MIN_TEXT_LEN_FOR_PARSE = 200;
-const STAGEB_BUILD_SIG = 'section-title-crlf-fix-2026-03-01';
+const STAGEB_BUILD_SIG = 'merge-wrapped-v4-path-fix-2026-03-14';
 
 // -----------------------------
 // SAFETY LIMITS
@@ -526,25 +526,36 @@ function isPdfFile(file: any): { isPdf: boolean; trigger: string | null; } {
 }
 
 // -----------------------------
-// MERGE WRAPPED LINES (v2 — 2026-03-09)
+// MERGE WRAPPED LINES (v3 — 2026-03-14)
 // Deterministic pre-processor: executa APÓS pdfParse, ANTES de salvar extracted_text.
 // Junta linhas de continuação para que o Gemini receba itens completos (descrição + valores).
 // NÃO altera o prompt do Gemini, SQL, chunking ou frontend.
 //
-// Regra única: é INÍCIO DE NOVO ITEM se:
+// Regra: é INÍCIO DE NOVO ITEM se:
 //   - Linha vazia
-//   - Começa com dígito /^\d/ (cobre: "15.2.13", "89746", "6 IMPERMEABILIZAÇÃO")
+//   - Começa com padrão de item/seção numérico (N.N como 1.1., 1.1.0.0.1., 1.10.)
+//     MAS NÃO valores numéricos brasileiros (2.700,00 / 31.154,50)
 //   - Começa com TOTAL/SUBTOTAL/BDI
 // Tudo mais é continuação → concatena na linha anterior.
+// Isso é MUITO mais agressivo que v2: descrições, unidades, valores soltos,
+// headers de página, títulos de seção — tudo é tratado como continuação.
+// Resultado esperado: 2216 → 258 linhas (1958 merges) no PDF Utinga.
 // -----------------------------
 function mergeWrappedLines(rawText: string): string {
     if (!rawText) return rawText;
 
     const isNewItemStart = (line: string): boolean => {
         const trimmed = line.trim();
-        if (!trimmed) return true;                                      // Linha vazia
-        if (/^\d/.test(trimmed)) return true;                          // Começa com dígito
-        if (/^\s*(TOTAL|SUBTOTAL|BDI)\b/i.test(trimmed)) return true;  // Linhas de total
+        if (!trimmed) return true;
+        if (/^\d/.test(trimmed)) {
+            // Brazilian thousands-separated number (e.g. 2.700,00 / 31.154,50) → continuation
+            if (/^\d{1,3}\.\d{3}/.test(trimmed)) return false;
+            // Item/section number with at least 2 segments (e.g. 1.1. / 1.10. / 1.1.0.0.1.) → new item
+            if (/^\d+\.\d+/.test(trimmed)) return true;
+            // Single-segment (e.g. "1.") or bare digits → continuation
+            return false;
+        }
+        if (/^\s*(TOTAL|SUBTOTAL|BDI)\b/i.test(trimmed)) return true;
         return false;
     };
 
@@ -563,7 +574,7 @@ function mergeWrappedLines(rawText: string): string {
     const linesBefore = lines.length;
     const linesAfter = merged.length;
     if (linesBefore !== linesAfter) {
-        console.log(`[mergeWrappedLines] v2 merged ${linesBefore - linesAfter} continuation lines (${linesBefore} \u2192 ${linesAfter})`);
+        console.log(`[mergeWrappedLines] v3 merged ${linesBefore - linesAfter} continuation lines (${linesBefore} → ${linesAfter})`);
     }
     return result;
 }
