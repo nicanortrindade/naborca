@@ -356,7 +356,13 @@ BEGIN
                         -- VERIFICAR SE O ITEM ATUAL É UM GRUPO
                         IF v_item.composition_code IS NULL
                            AND COALESCE(v_item.unit_price, 0) = 0
-                           AND COALESCE(v_item.quantity, 0) = 0 THEN
+                           AND COALESCE(v_item.quantity, 0) = 0
+                           AND NOT EXISTS (
+                               SELECT 1 FROM public.import_ai_items
+                               WHERE job_id = p_job_id
+                                 AND item_path = v_item.item_path
+                                 AND (composition_code IS NOT NULL OR COALESCE(unit_price, 0) > 0)
+                           ) THEN
                             
                             INSERT INTO public.budget_items
                                 (budget_id, user_id, level, parent_id, description, type, order_index, hydration_details)
