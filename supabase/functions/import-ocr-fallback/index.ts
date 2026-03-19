@@ -565,7 +565,7 @@ function mergeWrappedLines(rawText: string): string {
         const trimmed = line.trim();
         if (!trimmed) return true;
         if (/^\d/.test(trimmed)) {
-            if (/^\d{1,3}\.\d{3}[,\s]/.test(trimmed)) return false;
+            if (/^\d{1,3}\.\d{3}/.test(trimmed)) return false;
             if (/^\d+\.\d+/.test(trimmed)) return true;
             if (/^\d{1,2}[A-ZÀ-Ú]/.test(trimmed)) return true;
             return false;
