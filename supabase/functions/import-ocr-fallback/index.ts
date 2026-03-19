@@ -541,6 +541,23 @@ function isPdfFile(file: any): { isPdf: boolean; trigger: string | null; } {
 // headers de página, títulos de seção — tudo é tratado como continuação.
 // Resultado esperado: 2216 → 258 linhas (1958 merges) no PDF Utinga.
 // -----------------------------
+function splitMultiItemLines(rawText: string): string {
+    if (!rawText) return rawText;
+    // Quebra linhas que contêm múltiplos itens grudados.
+    // Padrão: "0,1940 % 20.2" → insere \n antes do número do novo item.
+    // Detecta: percentual (X,XXXX %) seguido de espaço(s) e início de item (N.N)
+    const result = rawText.replace(
+        /(\d,\d{4}\s*%)\s+(\d+\.\d+)/g,
+        '$1\n $2'
+    );
+    const before = rawText.split('\n').length;
+    const after = result.split('\n').length;
+    if (after > before) {
+        console.log(`[splitMultiItemLines] Split ${after - before} multi-item lines (${before} → ${after})`);
+    }
+    return result;
+}
+
 function mergeWrappedLines(rawText: string): string {
     if (!rawText) return rawText;
 
@@ -809,7 +826,7 @@ serve(async (req: Request) => {
 
                 // Salva extracted_text no banco (com merge de linhas quebradas)
                 if (pdfData?.text) {
-                    const mergedText = mergeWrappedLines(pdfData.text);
+                    const mergedText = mergeWrappedLines(splitMultiItemLines(pdfData.text));
                     const normalized = normalizeColumnSpacing(mergedText);
                     pdfData.text = normalized; // Normaliza in-place: Stage A, Stage B e processMaxExtraction recebem texto limpo
                     await supabase.from('import_files').update({
