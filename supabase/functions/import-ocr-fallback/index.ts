@@ -628,23 +628,16 @@ function normalizeColumnSpacing(text: string): string {
         console.log(`[normalizeColumnSpacing] Inserted ${diff} separator chars`);
     }
 
-    // 6a. Remover lixo de rodapé grudado em linhas: "RA PMv3.XXX / 15" e variantes
-    result = result.replace(/\s+RA\s+PMv3[^\n]*/g, '');
-
-    // 6b. Remover lixo "RA Encargos sociais:..." até fim da linha
-    result = result.replace(/\s+RA\s+Encargos sociais[^\n]*/g, '');
-
-    // 6c. Remover "RA" isolado no fim de linha (após valor numérico)
-    result = result.replace(/(\d)\s+RA\s*$/gm, '$1');
-
-    // 6d. Remover lixo de subtotal grudado em grupos: "- - BDI 1- XX.XXX,XX RA..."
-    result = result.replace(/\s*-\s*-\s*BDI\s*\d[^\n]*/g, '');
-
-    // 6e. Remover linha de rodapé "BDI (%) Preço Unitário..."
-    result = result.replace(/^.*BDI\s*\(%\)\s*Preço Unitário[^\n]*/gm, '');
-
     // 7. Remover headers de tabela repetidos pelo pdfParse (grudados no fim de linhas ou em linhas separadas)
+    // Padrão: "PLANILHA DE ORÇAMENTO SINTÉTICO ItemCódigoBanco..." até o fim da linha
     result = result.replace(/\s*PLANILHA DE ORÇAMENTO SINT[EÉ]TICO[^\n]*/gi, '');
+
+    // 8. Remover linhas que são apenas header de página (Secretaria de..., BDI Geral, Encargo Social, etc.)
+    // Detecta linhas que contêm "Encargo Social" E "BDI" E "Bancos:" — são headers repetidos
+    result = result.replace(/^.*Encargo Social.*BDI.*Bancos:.*$/gm, '');
+
+    // 9. Limpar linhas vazias resultantes
+    result = result.replace(/\n{3,}/g, '\n\n');
 
     return result;
 }
