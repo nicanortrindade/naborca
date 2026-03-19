@@ -628,6 +628,17 @@ function normalizeColumnSpacing(text: string): string {
         console.log(`[normalizeColumnSpacing] Inserted ${diff} separator chars`);
     }
 
+    // 7. Remover headers de tabela repetidos pelo pdfParse (grudados no fim de linhas ou em linhas separadas)
+    // Padrão: "PLANILHA DE ORÇAMENTO SINTÉTICO ItemCódigoBanco..." até o fim da linha
+    result = result.replace(/\s*PLANILHA DE ORÇAMENTO SINT[EÉ]TICO[^\n]*/gi, '');
+
+    // 8. Remover linhas que são apenas header de página (Secretaria de..., BDI Geral, Encargo Social, etc.)
+    // Detecta linhas que contêm "Encargo Social" E "BDI" E "Bancos:" — são headers repetidos
+    result = result.replace(/^.*Encargo Social.*BDI.*Bancos:.*$/gm, '');
+
+    // 9. Limpar linhas vazias resultantes
+    result = result.replace(/\n{3,}/g, '\n\n');
+
     return result;
 }
 
