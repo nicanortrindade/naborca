@@ -548,11 +548,9 @@ function mergeWrappedLines(rawText: string): string {
         const trimmed = line.trim();
         if (!trimmed) return true;
         if (/^\d/.test(trimmed)) {
-            // Brazilian thousands-separated number (e.g. 2.700,00 / 31.154,50) → continuation
             if (/^\d{1,3}\.\d{3}/.test(trimmed)) return false;
-            // Item/section number with at least 2 segments (e.g. 1.1. / 1.10. / 1.1.0.0.1.) → new item
             if (/^\d+\.\d+/.test(trimmed)) return true;
-            // Single-segment (e.g. "1.") or bare digits → continuation
+            if (/^\d{1,2}[A-ZÀ-Ú]/.test(trimmed)) return true;
             return false;
         }
         if (/^\s*(TOTAL|SUBTOTAL|BDI)\b/i.test(trimmed)) return true;
