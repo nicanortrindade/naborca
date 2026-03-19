@@ -826,7 +826,7 @@ serve(async (req: Request) => {
 
                 // Salva extracted_text no banco (com merge de linhas quebradas)
                 if (pdfData?.text) {
-                    const mergedText = mergeWrappedLines(splitMultiItemLines(pdfData.text));
+                    const mergedText = splitMultiItemLines(mergeWrappedLines(pdfData.text));
                     const normalized = normalizeColumnSpacing(mergedText);
                     pdfData.text = normalized; // Normaliza in-place: Stage A, Stage B e processMaxExtraction recebem texto limpo
                     await supabase.from('import_files').update({
