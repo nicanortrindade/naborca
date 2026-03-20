@@ -115,13 +115,20 @@ EXTRACTION RULES:
       NOTE: Do NOT classify as "synthetic_item" if no numeric values are present, even if confidence is low.
       Set confidence_score to 0.4 or below when numeric values are absent.
 
-    d) No code AND no numeric values AND description contains a hierarchical number prefix
-       (e.g. "1", "1.1", "2.3.1") → "composition" (section title, no price)
+    d) No code AND no unit AND no quantity AND description contains a hierarchical number
+        prefix (e.g. "1", "1.1", "2.3.1") → "composition" (section title or group subtotal).
+        These lines may contain a numeric total value (e.g. "155.029,10") — this is the
+        GROUP SUBTOTAL, not an item price. Set total_price = null, unit_price = null.
+        The presence of a total value alone does NOT make it a synthetic_item.
+        NOTE: If the line has EITHER unit OR quantity (even just one of them), do NOT apply
+        this rule — fall through to rule 6e instead.
 
-    e) No code AND has numeric values (quantity, unit_price or total_price present) →
-       "synthetic_item" — MANDATORY: extract quantity and unit_price (sem BDI) even without
-       a code. These are valid budget items that reference prices without a database code.
-       Set code = null, price_source = null.
+     e) No code AND (HAS unit OR HAS quantity) AND has numeric values →
+        "synthetic_item" — MANDATORY: extract quantity and unit_price (sem BDI) even without
+        a code. These are valid budget items that reference prices without a database code.
+        Set code = null, price_source = null.
+        NOTE: This rule requires at least one of unit or quantity to be present.
+        If BOTH unit AND quantity are absent, the line is a group/section (rule 6d), not an item.
 
     f) Default for any priced line with values → "synthetic_item"
 7. HIERARCHY: Use item_path to reconstruct the hierarchy from the item number prefix (e.g. "9.2.1" -> item_path: "9.2.1").
@@ -345,6 +352,31 @@ EXTRACTION RULES:
     - context_after contains "SERVICOS COMPLEMENTARES", "LIMPEZA FINAL" → description = "SERVICOS COMPLEMENTARES"
     
     If you cannot determine the group name with confidence, return description = null (do NOT return "SEÇÃO" or "GRUPO").
+
+23. **GROUP/SECTION SUBTOTAL LINES (MANDATORY)**:
+    Lines matching these patterns are SECTION SUBTOTALS — NOT budget items:
+
+    Format A (Utinga/CAIXA style):
+    - "{path}.{NAME} - -   BDI {N}- {total} RA"
+    - Example: "1.3.2.BALDRAMES - -   BDI 1- 155.029,10 RA"
+    - The " - - " before "BDI" is EXCLUSIVE to group subtotal lines
+    - No real budget item has " - - " in its text
+
+    Format B (Simple group with trailing total):
+    - "{path} {NAME} -   {total}" or "{N}{NAME}{total}"
+    - Example: "1.9.3 SANITÁRIAS / PLUVIAL -   251.001,80"
+    - Example: "6IMPERMEABILIZAÇÃO45.086,83"
+    - Key signal: no unit, no quantity, only a description and a single numeric total
+
+    For ALL group/subtotal lines:
+    - Classify as kind="composition"
+    - Set description = section name only (clean: remove "- -", "BDI", numbers, "RA")
+    - Set code=null, unit=null, quantity=null, unit_price=null, total_price=null
+    - The numeric value is the GROUP total, NOT an item price
+    - NEVER extract total_price from these lines
+    - These apply BEFORE rule 6e — a subtotal line must be caught here, not by 6e
+    - The key diagnostic: a line with description + single value but NO unit and NO quantity
+      is a GROUP HEADER, not a synthetic_item
 
 CRITICAL RULE — CONTEXT PRIORITY:
 When extracting numeric fields (quantity, unit_price, total_price) for the current item:
