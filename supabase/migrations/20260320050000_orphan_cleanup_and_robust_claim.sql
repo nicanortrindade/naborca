@@ -1,6 +1,6 @@
 -- Migration: Robust OCR Pipeline — Orphan Cleanup + Safe Claim
 -- Fixes:
---   1. claim_next_ocr_job now skips orphaned OCR jobs (parent already failed/done/cancelled)
+--   1. claim_next_ocr_job now skips orphaned OCR jobs (parent already failed/done)
 --   2. cleanup_stale_ocr_jobs now auto-fails orphaned OCR jobs in addition to stale timeouts
 --   3. Both functions are idempotent and safe for any queue size (1 to 1M jobs)
 
@@ -32,7 +32,7 @@ BEGIN
     WHERE ocr.job_id = j.id
       AND ocr.status IN ('pending', 'processing')
       AND (
-          j.status IN ('failed', 'done', 'cancelled')
+          j.status IN ('failed', 'done')
           OR (j.status = 'done' AND j.stage IN ('extraction_complete', 'pending_hydration', 'hydration_failed', 'failed'))
       );
 
@@ -77,22 +77,22 @@ DECLARE
     v_failed int;
     v_orphaned int;
 BEGIN
-    -- 0. ORPHAN CLEANUP: Fail any OCR jobs whose parent is already done/failed/cancelled
-    -- This catches jobs that were abandoned mid-flight (user cancelled, internet dropped, etc.)
+    -- 0. ORPHAN CLEANUP: Fail any OCR jobs whose parent is already done/failed
+    -- This catches jobs that were abandoned mid-flight (user closed, internet dropped, etc.)
     WITH orphaned AS (
         UPDATE public.import_ocr_jobs ocr
         SET
             status = 'failed',
             locked_by = NULL,
             lock_expires_at = NULL,
-            last_error = 'Orphaned: parent job finished/failed/cancelled. Auto-cleaned by watchdog.',
+            last_error = 'Orphaned: parent job finished/failed. Auto-cleaned by watchdog.',
             completed_at = now(),
             updated_at = now()
         FROM public.import_jobs j
         WHERE ocr.job_id = j.id
           AND ocr.status IN ('pending', 'processing')
           AND (
-              j.status IN ('failed', 'done', 'cancelled')
+              j.status IN ('failed', 'done')
               OR (j.status = 'done' AND j.stage IN ('extraction_complete', 'pending_hydration', 'hydration_failed', 'failed'))
           )
         RETURNING ocr.id
