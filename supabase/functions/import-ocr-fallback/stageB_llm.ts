@@ -9,10 +9,9 @@ import { safeMergeMetadata } from "./persistence_helper.ts";
 const BATCH_SIZE = 20; // Conservative limit for context window
 const MAX_RETRIES = 1;
 const MODEL_FALLBACKS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+  "gemini-2.0-flash",
+  "gemini-2.5-flash-preview-05-20",
+  "gemini-1.5-flash-latest"
 ] as const;
 const MODEL_NAME = MODEL_FALLBACKS[0]; // Default start model
 
@@ -661,11 +660,13 @@ async function generateWithModelFallback(
 
     for (const modelName of modelsToTry) {
         // Retry loop for 429/503
-        for (let retry = 0; retry <= 2; retry++) {
+        for (let retry = 0; retry <= 3; retry++) {
             try {
                 if (retry > 0) {
-                    // Backoff: 400ms, 900ms
-                    await new Promise(r => setTimeout(r, 400 + (retry * 500)));
+                    // Backoff exponencial: 5s, 15s, 30s
+                    const backoffMs = [5000, 15000, 30000][retry - 1] || 30000;
+                    console.warn(`[STAGE-B] Rate limit backoff: waiting ${backoffMs}ms before retry ${retry}`);
+                    await new Promise(r => setTimeout(r, backoffMs));
                     const retryAttempt = { model: modelName, kind: 'retry' as const, error_message: `Retry ${retry} after transient error`, ts: new Date().toISOString() };
                     attempts.push(retryAttempt);
                     // Persist Reuse
@@ -685,8 +686,8 @@ async function generateWithModelFallback(
                     contents: contents,
                     config: {
                         maxOutputTokens: 16384,
-                        temperature: 0.1,
-                        topP: 0.95
+                        temperature: 0.0,
+                        topP: 1.0
                     }
                 });
 
@@ -736,7 +737,7 @@ async function generateWithModelFallback(
                     break; // Break retry loop, move to next model
                 } else if (isTransient) {
                     console.warn(`[STAGE-B] Model ${modelName} transient error: ${msg}. Retry ${retry}/2`);
-                    if (retry === 2) {
+                    if (retry === 3) {
                         const failAttempt = { model: modelName, kind: 'failure' as const, error_message: `Max retries (3) exhausted. ${msg.substring(0, 200)}`, ts: new Date().toISOString() };
                         attempts.push(failAttempt);
                         if (persistenceOpts) {

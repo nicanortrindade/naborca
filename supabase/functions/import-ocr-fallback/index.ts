@@ -558,6 +558,28 @@ function splitMultiItemLines(rawText: string): string {
     return result;
 }
 
+function cleanPageArtifacts(rawText: string): string {
+  if (!rawText) return rawText;
+  const lines = rawText.split('\n');
+  const cleanedLines = lines.filter(line => {
+    const trimmed = line.trim();
+    // Cabeçalho de página: "I PO - PLANILHA ORÇAMENTÁRIA..."
+    if (/^\s*I\s+PO\s+-\s+PLANILHA\s+OR[CÇ]AMENT[AÁ]RIA/i.test(trimmed)) return false;
+    // Linha de metadata município: "0MUNICÍPIO DE..."
+    if (/^0MUNIC[IÍ]PIO\s+DE\s/i.test(trimmed)) return false;
+    // Cabeçalho de coluna repetido: "BDI (%) Preço Unitário..."
+    if (/^BDI\s*\(%\)\s*Pre[çc]o\s*Unit[áa]rio/i.test(trimmed)) return false;
+    // Linha BDI+Provisão sem item_path: "BDI (%) Preço Unitário...Provisão..."
+    if (/^BDI.*Pre[çc]o\s*Total.*Provis[ãa]o/i.test(trimmed)) return false;
+    return true;
+  });
+  const removed = lines.length - cleanedLines.length;
+  if (removed > 0) {
+    console.log(`[cleanPageArtifacts] Removed ${removed} page header/footer lines (${lines.length} → ${cleanedLines.length})`);
+  }
+  return cleanedLines.join('\n');
+}
+
 function mergeWrappedLines(rawText: string): string {
     if (!rawText) return rawText;
 
@@ -837,7 +859,8 @@ serve(async (req: Request) => {
 
                 // Salva extracted_text no banco (com merge de linhas quebradas)
                 if (pdfData?.text) {
-                    const mergedText = splitMultiItemLines(mergeWrappedLines(pdfData.text));
+                    const cleanedText = cleanPageArtifacts(pdfData.text);
+                    const mergedText = splitMultiItemLines(mergeWrappedLines(cleanedText));
                     const normalized = normalizeColumnSpacing(mergedText);
                     pdfData.text = normalized; // Normaliza in-place: Stage A, Stage B e processMaxExtraction recebem texto limpo
                     await supabase.from('import_files').update({
@@ -1321,7 +1344,9 @@ serve(async (req: Request) => {
 
                     await persistOCR(supabase, file.id, pdfData.text, 'full_scan_strategy', realLen > FULLSCAN_MAX_CHARS);
 
-                    if (file.doc_role !== 'analytical' && realLen <= FULLSCAN_MAX_CHARS) {
+                    if (false && file.doc_role !== 'analytical' && realLen <= FULLSCAN_MAX_CHARS) {
+  // DESATIVADO: processMaxExtraction usa SDK antigo e pode duplicar
+  // itens do Stage B. Stage B é superior e suficiente.
                         const modelDiscovery = await discoverGeminiModel(GEMINI_API_KEY);
                         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
                         await processMaxExtraction(supabase, job_id, file.id, pdfData.text, debugSummary, genAI.getGenerativeModel({ model: modelDiscovery.modelId }));
