@@ -966,18 +966,13 @@ ${JSON.stringify(candidatesContext, null, 2)}
         }
 
         if (jsonParseError || !parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items)) {
-            if (candidatesSub.length <= 1) {
-                console.warn(`[stageB] JSON_PARSE_ERROR – candidate failed individually, discarded (OCR junk).`);
-                return [];
-            }
-            if (depth >= MAX_DEPTH) {
+            if (depth >= MAX_DEPTH || candidatesSub.length <= 1) {
                 console.warn(
                     `[stageB] JSON_PARSE_ERROR – max retry depth reached` +
-                    ` (${candidatesSub.length} items lost at depth ${depth}).`
+                    ` (${candidatesSub.length} items lost at depth ${depth})`
                 );
                 return [];
             }
-
             const mid = Math.ceil(candidatesSub.length / 2);
             const half1 = candidatesSub.slice(0, mid);
             const half2 = candidatesSub.slice(mid);

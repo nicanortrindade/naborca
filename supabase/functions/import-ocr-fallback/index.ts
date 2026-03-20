@@ -541,23 +541,6 @@ function isPdfFile(file: any): { isPdf: boolean; trigger: string | null; } {
 // headers de página, títulos de seção — tudo é tratado como continuação.
 // Resultado esperado: 2216 → 258 linhas (1958 merges) no PDF Utinga.
 // -----------------------------
-function splitMultiItemLines(rawText: string): string {
-    if (!rawText) return rawText;
-    // Quebra linhas que contêm múltiplos itens grudados.
-    // Padrão: "0,1940 % 20.2" → insere \n antes do número do novo item.
-    // Detecta: percentual (X,XXXX %) seguido de espaço(s) e início de item (N.N)
-    const result = rawText.replace(
-        /(\d,\d{4}\s*%)\s+(\d+\.\d+)/g,
-        '$1\n $2'
-    );
-    const before = rawText.split('\n').length;
-    const after = result.split('\n').length;
-    if (after > before) {
-        console.log(`[splitMultiItemLines] Split ${after - before} multi-item lines (${before} → ${after})`);
-    }
-    return result;
-}
-
 function mergeWrappedLines(rawText: string): string {
     if (!rawText) return rawText;
 
@@ -565,9 +548,11 @@ function mergeWrappedLines(rawText: string): string {
         const trimmed = line.trim();
         if (!trimmed) return true;
         if (/^\d/.test(trimmed)) {
+            // Brazilian thousands-separated number (e.g. 2.700,00 / 31.154,50) → continuation
             if (/^\d{1,3}\.\d{3}/.test(trimmed)) return false;
+            // Item/section number with at least 2 segments (e.g. 1.1. / 1.10. / 1.1.0.0.1.) → new item
             if (/^\d+\.\d+/.test(trimmed)) return true;
-            if (/^\d{1,2}[A-ZÀ-Ú]/.test(trimmed)) return true;
+            // Single-segment (e.g. "1.") or bare digits → continuation
             return false;
         }
         if (/^\s*(TOTAL|SUBTOTAL|BDI)\b/i.test(trimmed)) return true;
@@ -627,17 +612,6 @@ function normalizeColumnSpacing(text: string): string {
     if (diff > 0) {
         console.log(`[normalizeColumnSpacing] Inserted ${diff} separator chars`);
     }
-
-    // 7. Remover headers de tabela repetidos pelo pdfParse (grudados no fim de linhas ou em linhas separadas)
-    // Padrão: "PLANILHA DE ORÇAMENTO SINTÉTICO ItemCódigoBanco..." até o fim da linha
-    result = result.replace(/\s*PLANILHA DE ORÇAMENTO SINT[EÉ]TICO[^\n]*/gi, '');
-
-    // 8. Remover linhas que são apenas header de página (Secretaria de..., BDI Geral, Encargo Social, etc.)
-    // Detecta linhas que contêm "Encargo Social" E "BDI" E "Bancos:" — são headers repetidos
-    result = result.replace(/^.*Encargo Social.*BDI.*Bancos:.*$/gm, '');
-
-    // 9. Limpar linhas vazias resultantes
-    result = result.replace(/\n{3,}/g, '\n\n');
 
     return result;
 }
@@ -837,7 +811,7 @@ serve(async (req: Request) => {
 
                 // Salva extracted_text no banco (com merge de linhas quebradas)
                 if (pdfData?.text) {
-                    const mergedText = splitMultiItemLines(mergeWrappedLines(pdfData.text));
+                    const mergedText = mergeWrappedLines(pdfData.text);
                     const normalized = normalizeColumnSpacing(mergedText);
                     pdfData.text = normalized; // Normaliza in-place: Stage A, Stage B e processMaxExtraction recebem texto limpo
                     await supabase.from('import_files').update({
