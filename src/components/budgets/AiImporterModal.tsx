@@ -310,12 +310,12 @@ export default function AiImporterModal({ onClose }: AiImporterModalProps) {
 
             // 2.5 Invoke Edge Function (Explicit Execution)
             setUploadStep('Iniciando processamento inteligente...');
-            const { error: invokeError } = await supabase.functions.invoke('import-processor', {
+            const { error: invokeError } = await supabase.functions.invoke('import-ocr-fallback', {
                 body: { job_id: jobData.id }
             });
 
             if (invokeError) {
-                console.error("[UI] Failed to invoke import-processor:", invokeError);
+                console.error("[UI] Failed to invoke import-ocr-fallback:", invokeError);
                 throw new Error("Falha ao iniciar processamento. Tente novamente.");
             }
 
