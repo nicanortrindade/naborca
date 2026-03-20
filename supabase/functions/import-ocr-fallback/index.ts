@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-// GoogleGenerativeAI removed — processMaxExtraction permanently deleted (uses old SDK, conflicts with Stage B)
+import { GoogleGenerativeAI } from "https://esm.sh/@google/generative-ai@0.21.0";
 import { z } from "https://esm.sh/zod@3.23.8";
 import pdfParse from "npm:pdf-parse@1.1.1";
 import { Buffer } from "node:buffer";
@@ -21,7 +21,7 @@ const OCR_EC2_URL = Deno.env.get("OCR_EC2_URL") ?? "";
 // -----------------------------
 const MIN_ITEMS_SUCCESS = 3;
 const MIN_TEXT_LEN_FOR_PARSE = 200;
-const STAGEB_BUILD_SIG = 'pipeline-v6-m2fix-ratelimit-dedup-2026-03-20';
+const STAGEB_BUILD_SIG = 'merge-wrapped-v4-path-fix-2026-03-14';
 
 // -----------------------------
 // SAFETY LIMITS
@@ -449,10 +449,63 @@ function createLineChunks(text: string): { chunk_index: number, text: string }[]
     return chunks;
 }
 
-// processMaxExtraction PERMANENTLY REMOVED (2026-03-20)
-// Reason: used deprecated @google/generative-ai@0.21.0 SDK, generic prompt caused
-// deduplication conflicts with Stage B output, and Stage B is superior.
-// The if(false) guard has also been removed below.
+async function processMaxExtraction(supabase: any, jobId: string, fileId: string, fullText: string, debugContext: any, model: any) {
+    const chunks = createLineChunks(fullText);
+    let totalItemsSaved = 0;
+    let fallbackItemsSaved = 0;
+
+    for (const chunk of chunks) {
+        if (totalItemsSaved >= MAX_TOTAL_ITEMS_PER_FILE) break;
+        const prompt = getUserPrompt({ job_id: jobId, import_file_id: fileId, chunk_index: chunk.chunk_index, chunk_text: chunk.text });
+        let rawItems: any[] = [];
+        let success = false;
+
+        for (let attempt = 0; attempt <= MAX_RETRIES_PER_CHUNK; attempt++) {
+            try {
+                if (attempt > 0) await new Promise(r => setTimeout(r, BACKOFF_MS[attempt - 1]));
+                const result = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: SYSTEM_PROMPT + "\n" + prompt }] }], generationConfig: { responseMimeType: "application/json" } });
+                const text = result.response.text();
+                const parsed = parseJsonLenient(text);
+                if (parsed.success && parsed.data && Array.isArray(parsed.data.items)) { rawItems = parsed.data.items; success = true; break; }
+            } catch (e: any) { if (isRateLimitError(e)) await new Promise(r => setTimeout(r, 10000)); }
+        }
+
+        if (rawItems.length === 0 && chunk.text.trim().length > 8) {
+            const lines = chunk.text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length >= 8);
+            if (lines.length > 0) {
+                rawItems = lines.slice(0, MAX_FALLBACK_LINES_PER_FILE - fallbackItemsSaved).map(line => ({ description: line, raw_line: line, category: 'fallback_line_item', confidence: 0.1 }));
+                fallbackItemsSaved += rawItems.length;
+            } else {
+                rawItems = [{ description: chunk.text.trim().substring(0, 500), raw_line: chunk.text.trim(), category: 'fallback_blob_item', confidence: 0.05 }];
+                fallbackItemsSaved += 1;
+            }
+        }
+
+        if (rawItems.length > 0) {
+            const finalItems = await Promise.all(rawItems.slice(0, MAX_ITEMS_PER_CHUNK).map(async (item: any, idxInChunk: number) => {
+                const dedupKey = await generateDedupKey({ job_id: jobId, import_file_id: fileId, description: item.description, chunk_index: chunk.chunk_index, raw_line: item.raw_line });
+                const cleanNum = (v: any) => {
+                    if (v === null || v === undefined) return null;
+                    if (typeof v === 'number') return v;
+                    const s = String(v).replace(/\./g, '').replace(',', '.').trim();
+                    const f = parseFloat(s);
+                    return isNaN(f) ? null : f;
+                };
+                return { job_id: jobId, import_file_id: fileId, chunk_index: chunk.chunk_index, idx: idxInChunk, dedup_key: dedupKey, description: item.description || item.raw_line || "Item sem descrição", unit: item.unit?.substring(0, 20) || null, quantity: cleanNum(item.quantity), unit_price: cleanNum(item.unit_price), total: cleanNum(item.total), category: item.category || 'general_item', raw_line: item.raw_line?.substring(0, 1000) || null, confidence: typeof item.confidence === 'number' ? item.confidence : 0.6 };
+            }));
+
+            const keysToCheck = finalItems.map(i => i.dedup_key);
+            const { data: existing } = await supabase.from('import_ai_items').select('dedup_key').eq('job_id', jobId).in('dedup_key', keysToCheck);
+            const existingKeys = new Set((existing || []).map((e: any) => e.dedup_key));
+            const distinctItems = finalItems.filter(i => !existingKeys.has(i.dedup_key));
+
+            if (distinctItems.length > 0) {
+                const { error: insErr } = await supabase.from('import_ai_items').insert(distinctItems);
+                if (!insErr) totalItemsSaved += distinctItems.length;
+            }
+        }
+    }
+}
 
 async function extractPdfText(buffer: ArrayBuffer): Promise<{ text: string, numpages: number } | null> {
     try {
@@ -505,35 +558,6 @@ function splitMultiItemLines(rawText: string): string {
     return result;
 }
 
-function cleanPageArtifacts(rawText: string): string {
-  if (!rawText) return rawText;
-  const lines = rawText.split('\n');
-  const cleanedLines = lines.filter(line => {
-    const trimmed = line.trim();
-    // Cabeçalho de página: "I PO - PLANILHA ORÇAMENTÁRIA..."
-    if (/^\s*I\s+PO\s+-\s+PLANILHA\s+OR[CÇ]AMENT[AÁ]RIA/i.test(trimmed)) return false;
-    // Linha de metadata município: "0MUNICÍPIO DE..."
-    if (/^0MUNIC[IÍ]PIO\s+DE\s/i.test(trimmed)) return false;
-    // Cabeçalho de coluna repetido: "BDI (%) Preço Unitário..."
-    if (/^BDI\s*\(%\)\s*Pre[çc]o\s*Unit[áa]rio/i.test(trimmed)) return false;
-    // Linha BDI+Provisão sem item_path: "BDI (%) Preço Unitário...Provisão..."
-    if (/^BDI.*Pre[çc]o\s*Total.*Provis[ãa]o/i.test(trimmed)) return false;
-    return true;
-  });
-  const removed = lines.length - cleanedLines.length;
-  if (removed > 0) {
-    console.log(`[cleanPageArtifacts] Removed ${removed} page header/footer lines (${lines.length} → ${cleanedLines.length})`);
-  }
-  let result = cleanedLines.join('\n');
-
-  // FASE 2 — Replace inline: remover trecho "PLANILHA DE ORÇAMENTO SINTÉTICO..."
-  // colado no final de linhas de seção (ex: "6IMPERMEABILIZAÇÃO45.086,83 PLANILHA DE...")
-  // É idempotente e seguro para Utinga (não aparece) e Araci (aparece colado)
-  result = result.replace(/\s*PLANILHA DE ORÇAMENTO SINT[EÉ]TICO[^\n]*/gi, '');
-
-  return result;
-}
-
 function mergeWrappedLines(rawText: string): string {
     if (!rawText) return rawText;
 
@@ -583,15 +607,14 @@ function normalizeColumnSpacing(text: string): string {
     // 3. TextoMAIÚSCULO grudado com unidade — SEM "M" na lista: M sozinho é indistinguível
     // do fim de palavras como MONTAGEM, DESMONTAGEM, CONCRETAGEM, etc.
     // Lookahead (?=[\s,.\d]|$) evita quebrar palavras acentuadas (ALUMÍNIO, JUNÇÃO, etc.)
-    result = result.replace(/([A-ZÀ-Ú]{3,})((?:UN|M2|M3|KG|VB|CJ|PAR|PCT|M(?![23]))(?=[\s,.\d]|$))/g, '$1 | $2');
+    result = result.replace(/([A-ZÀ-Ú]{3,})((?:UN|M2|M3|KG|VB|CJ|PAR|PCT)(?=[\s,.\d]|$))/g, '$1 | $2');
 
     // 3b. Palavras quebradas pelo pdfParse em colunas na mesma linha — fix explícito
     result = result.replace(/DRYW\s+ALL/gi, 'DRYWALL');
 
     // 4. Unidade grudada com número → UN | 1,00
     // Lookahead (?=\d) + lookbehind (?<=\s) garante que só atua em unidades soltas
-    // M(?![23]) previne que M sozinho match o "M" de "M2" ou "M3" (Bug B fix)
-    result = result.replace(/(^|(?<=\s))(UN|M2|M3|KG|H|VB|CJ|L|T|PAR|PCT|M(?![23]))(?=\d)/gi, '$1$2 | ');
+    result = result.replace(/(^|(?<=\s))(UN|M2|M3|KG|H|VB|CJ|L|T|PAR|PCT|M)(?=\d)/gi, '$1$2 | ');
 
     // 5. Número,decimal grudado com letra maiúscula → 592,62 | Composição
     result = result.replace(/(\d,\d{2})([A-ZÀ-Ú])/g, '$1 | $2');
@@ -607,24 +630,13 @@ function normalizeColumnSpacing(text: string): string {
 
     // 7. Remover headers de tabela repetidos pelo pdfParse (grudados no fim de linhas ou em linhas separadas)
     // Padrão: "PLANILHA DE ORÇAMENTO SINTÉTICO ItemCódigoBanco..." até o fim da linha
-    // Safety net: cleanPageArtifacts já fez isso pré-merge; este replace é idempotente
     result = result.replace(/\s*PLANILHA DE ORÇAMENTO SINT[EÉ]TICO[^\n]*/gi, '');
 
-    // 8-BDI. PÓS-MERGE: Remove subtotais de grupo no formato Utinga/CAIXA.
-    // Padrão: "{path}.{NOME} - -   BDI {N}- {total} RA" → "{path}.{NOME}"
-    // O ' - - ' (dois hifens com espaços) é EXCLUSIVO de linhas de grupo — insumos não têm ' - - '.
-    // Exemplos:
-    //   "1.3.2.BALDRAMES - -   BDI 1- 155.029,10 RA" → "1.3.2.BALDRAMES"
-    //   "1.7.REVESTIMENTOS - -   BDI 1- 400.057,00 RA PMv3.164 / 15" → "1.7.REVESTIMENTOS"
-    // Testado contra 30 linhas reais — zero falsos positivos.
-    result = result.replace(/ - -\s+BDI\s+\d+-?\s+[\d.,]+\s+RA(?:\s+PMv[\d.]+\s*\/\s*\d+)?/g, '');
+    // 8. Remover linhas que são apenas header de página (Secretaria de..., BDI Geral, Encargo Social, etc.)
+    // Detecta linhas que contêm "Encargo Social" E "BDI" E "Bancos:" — são headers repetidos
+    result = result.replace(/^.*Encargo Social.*BDI.*Bancos:.*$/gm, '');
 
-    // 8b-BDI. Remove linhas que são APENAS um trecho BDI órfão (sem título de grupo na mesma linha)
-    // Ocorre quando o mergeWrappedLines separou o título do seu subtotal.
-    // Exemplo: "BDI 1- 104.302,33  RA" → linha vazia (ignorada)
-    result = result.replace(/^BDI\s+\d+-?\s+[\d.,]+\s+RA\s*$/gm, '');
-
-    // 9. Limpar linhas vazias excessivas resultantes
+    // 9. Limpar linhas vazias resultantes
     result = result.replace(/\n{3,}/g, '\n\n');
 
     return result;
@@ -825,8 +837,7 @@ serve(async (req: Request) => {
 
                 // Salva extracted_text no banco (com merge de linhas quebradas)
                 if (pdfData?.text) {
-                    const cleanedText = cleanPageArtifacts(pdfData.text);
-                    const mergedText = splitMultiItemLines(mergeWrappedLines(cleanedText));
+                    const mergedText = splitMultiItemLines(mergeWrappedLines(pdfData.text));
                     const normalized = normalizeColumnSpacing(mergedText);
                     pdfData.text = normalized; // Normaliza in-place: Stage A, Stage B e processMaxExtraction recebem texto limpo
                     await supabase.from('import_files').update({
@@ -1016,39 +1027,8 @@ serve(async (req: Request) => {
                                                     })
                                                 );
 
-                                                // CAMADA 3: Filtro determinístico de grupos/subtotais
-                                                // Remove itens que o Gemini classificou incorretamente como synthetic_item
-                                                // mas que são grupos de seção: SEM code + SEM unit + SEM quantity.
-                                                // Regra baseada em dados empíricos: nenhum insumo legítimo
-                                                // tem os 3 campos ausentes. Testado em 8.696 import_ai_items.
-                                                const isGroupOrSubtotal = (item: any): boolean => {
-                                                    if (item.composition_code) return false; // tem código = é insumo
-                                                    if (item.unit && item.quantity) return false; // tem unit+qty = é insumo
-                                                    if (item.category === 'composition') return false; // já está correto
-                                                    // SEM code + SEM unit + SEM quantity = grupo/subtotal mascarado
-                                                    if (!item.composition_code && !item.unit && !item.quantity) return true;
-                                                    return false;
-                                                };
-
-                                                const preFilterCount = dbItems.length;
-                                                const nonGroupItems = dbItems.filter((item: any) => {
-                                                    if (isGroupOrSubtotal(item)) {
-                                                        console.log('[GROUP-FILTER-DISCARD]', JSON.stringify({
-                                                            description: (item.description || '').substring(0, 60),
-                                                            item_path: item.item_path,
-                                                            category: item.category,
-                                                            total: item.total,
-                                                        }));
-                                                        return false;
-                                                    }
-                                                    return true;
-                                                });
-                                                if (nonGroupItems.length < preFilterCount) {
-                                                    console.log(`[GROUP-FILTER] Discarded ${preFilterCount - nonGroupItems.length} group/subtotal items in batch ${batchIndex}`);
-                                                }
-
                                                 // Filtrar itens sem item_path E sem composition_code — são lixo de página
-                                                const filteredItems = nonGroupItems.filter((item: any) => {
+                                                const filteredItems = dbItems.filter(item => {
                                                     if (item.composition_code !== null || item.item_path !== null) return true;
                                                     if (item.category === 'section_title') return true;
                                                     console.log('[FILTER-DISCARD]', JSON.stringify({
@@ -1103,41 +1083,7 @@ serve(async (req: Request) => {
                                                     return true;
                                                 });
 
-                                                const uniquePreDedup = dedupedCrossSection;
-
-                                                // BUG C FIX: Dedup por item_path sozinho — captura casos onde LLM
-                                                // extrai o mesmo item com códigos diferentes (ex: 103682 vs 103682_ADP-01)
-                                                // Mantém o item com mais campos preenchidos (quantity + unit_price)
-                                                const dedupByItemPath = new Map<string, typeof filteredItems[0]>();
-                                                for (const item of uniquePreDedup) {
-                                                    if (!item.item_path) {
-                                                        dedupByItemPath.set(`__no_path__${Math.random()}`, item);
-                                                        continue;
-                                                    }
-                                                    const existing = dedupByItemPath.get(item.item_path);
-                                                    if (!existing) {
-                                                        dedupByItemPath.set(item.item_path, item);
-                                                    } else {
-                                                        const existingScore = (existing.quantity != null ? 1 : 0) + (existing.unit_price != null ? 1 : 0) + (existing.composition_code ? 1 : 0);
-                                                        const newScore = (item.quantity != null ? 1 : 0) + (item.unit_price != null ? 1 : 0) + (item.composition_code ? 1 : 0);
-                                                        if (newScore > existingScore) {
-                                                            console.log('[DEDUP-ITEM-PATH]', JSON.stringify({
-                                                                item_path: item.item_path,
-                                                                kept_code: item.composition_code,
-                                                                discarded_code: existing.composition_code,
-                                                            }));
-                                                            dedupByItemPath.set(item.item_path, item);
-                                                        } else {
-                                                            console.log('[DEDUP-ITEM-PATH]', JSON.stringify({
-                                                                item_path: item.item_path,
-                                                                kept_code: existing.composition_code,
-                                                                discarded_code: item.composition_code,
-                                                            }));
-                                                        }
-                                                    }
-                                                }
-
-                                                const uniqueDbItems = Array.from(dedupByItemPath.values());
+                                                const uniqueDbItems = dedupedCrossSection;
 
                                                 console.log("[STAGE-B-DB-ATTEMPT] (Incremental)", {
                                                     file_id: file.id,
@@ -1375,8 +1321,11 @@ serve(async (req: Request) => {
 
                     await persistOCR(supabase, file.id, pdfData.text, 'full_scan_strategy', realLen > FULLSCAN_MAX_CHARS);
 
-                    // processMaxExtraction permanently removed (2026-03-20)
-                    // Stage B is the sole extraction path.
+                    if (file.doc_role !== 'analytical' && realLen <= FULLSCAN_MAX_CHARS) {
+                        const modelDiscovery = await discoverGeminiModel(GEMINI_API_KEY);
+                        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+                        await processMaxExtraction(supabase, job_id, file.id, pdfData.text, debugSummary, genAI.getGenerativeModel({ model: modelDiscovery.modelId }));
+                    }
 
                     const { count: itemsInserted } = await supabase.from('import_ai_items').select('*', { count: 'exact', head: true }).eq('import_file_id', file.id);
                     // Double count fix: Do NOT accumulate globalItemsFound here, it will be done at the end of the loop

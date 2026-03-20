@@ -10,7 +10,7 @@ declare const EdgeRuntime: any;
 
 // Worker Constants
 const WORKER_ID = `worker-${crypto.randomUUID().split('-')[0]}`;
-const CHUNK_BATCH_SIZE = 5; // Process 5 batches per invocation (~4min each, safe under 10min watchdog)
+const CHUNK_BATCH_SIZE = 1; // Process 1 chunk per invocation to be safe, or more if fast
 const MAX_EXECUTION_TIME_MS = 45000; // Leave buffer for overhead
 
 // Reuse logic from fallback? 
@@ -44,8 +44,7 @@ serve(async (req) => {
 
         // 2. Claim Job
         const { data: jobs, error: claimErr } = await supabase.rpc('claim_next_ocr_job', {
-            p_worker_id: WORKER_ID,
-            p_lock_duration_sec: 600 // 10 min lock — matches watchdog timeout, extended per-batch by save_chunk_progress
+            p_worker_id: WORKER_ID
         });
 
         if (claimErr) throw claimErr;
@@ -93,7 +92,7 @@ serve(async (req) => {
                     target_file_id: resolvedImportFileId,
                     mode: 'worker_chunk_process', // Instruction: Run specific chunk range
                     start_chunk_index: job.next_chunk_index,
-                    max_chunks: CHUNK_BATCH_SIZE, // 5 batches per run: ~4min each, safe under 10min watchdog
+                    max_chunks: 1, // Process 1 chunk per run (Avoid 502)
                     ocr_job_id: job.id // Pass ID to update progress
                 };
 
