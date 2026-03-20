@@ -1345,7 +1345,7 @@ async function handleRequest(req: Request): Promise<Response> {
                         headers: {
                             'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
                             'x-internal-call': '1',
-                            // 'x-ocr-enqueue-only': '1', // CORREÇÃO CIRÚRGICA: Processamento Monolítico Direto
+                            'x-ocr-enqueue-only': '1',
                             'x-user-id': authenticatedUserId,
                             'x-job-id': jobId
                         },

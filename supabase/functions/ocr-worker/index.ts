@@ -92,7 +92,7 @@ serve(async (req) => {
                     target_file_id: resolvedImportFileId,
                     mode: 'worker_chunk_process', // Instruction: Run specific chunk range
                     start_chunk_index: job.next_chunk_index,
-                    max_chunks: 1, // Process 1 chunk per run (Avoid 502)
+                    max_chunks: 2, // Process 2 chunks per run (Segurança contra timeout de 150s)
                     ocr_job_id: job.id // Pass ID to update progress
                 };
 
@@ -157,7 +157,7 @@ serve(async (req) => {
 
                         console.log(`[OCR-WORKER] Job ${job.id} continued. Releasing lock for next chunk.`);
                         finalStatus = 'pending'; // Release lock, stay pending
-                        shouldRedispatch = true;
+                        shouldRedispatch = false; // DESATIVADO: Confiar exclusivamente no cron ocr-poker
                     } else {
                         finalStatus = 'completed'; // Done
                         console.log(`[OCR-WORKER] Job ${job.id} completed successfully.`);
@@ -189,13 +189,9 @@ serve(async (req) => {
 
             // Auto-continue (Queue Self) if needed
             if (shouldRedispatch) {
-                console.log(`[OCR-WORKER] Re-dispatching worker for continued job.`);
-                EdgeRuntime.waitUntil(
-                    fetch(`${SUPABASE_URL}/functions/v1/ocr-worker`, {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` }
-                    })
-                );
+                console.log(`[OCR-WORKER] Re-dispatching worker for continued job (DESATIVADO).`);
+                // EdgeRuntime.waitUntil falhava silenciosamente e impedia finalização sadia.
+                // fetch(`${SUPABASE_URL}/functions/v1/ocr-worker`...) removido.
             }
         }
 
