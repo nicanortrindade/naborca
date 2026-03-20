@@ -21,7 +21,7 @@ const OCR_EC2_URL = Deno.env.get("OCR_EC2_URL") ?? "";
 // -----------------------------
 const MIN_ITEMS_SUCCESS = 3;
 const MIN_TEXT_LEN_FOR_PARSE = 200;
-const STAGEB_BUILD_SIG = 'pipeline-v5-group-filter-prompt-fix-2026-03-20';
+const STAGEB_BUILD_SIG = 'pipeline-v6-m2fix-ratelimit-dedup-2026-03-20';
 
 // -----------------------------
 // SAFETY LIMITS
@@ -583,14 +583,15 @@ function normalizeColumnSpacing(text: string): string {
     // 3. TextoMAIÚSCULO grudado com unidade — SEM "M" na lista: M sozinho é indistinguível
     // do fim de palavras como MONTAGEM, DESMONTAGEM, CONCRETAGEM, etc.
     // Lookahead (?=[\s,.\d]|$) evita quebrar palavras acentuadas (ALUMÍNIO, JUNÇÃO, etc.)
-    result = result.replace(/([A-ZÀ-Ú]{3,})((?:UN|M2|M3|KG|VB|CJ|PAR|PCT)(?=[\s,.\d]|$))/g, '$1 | $2');
+    result = result.replace(/([A-ZÀ-Ú]{3,})((?:UN|M2|M3|KG|VB|CJ|PAR|PCT|M(?![23]))(?=[\s,.\d]|$))/g, '$1 | $2');
 
     // 3b. Palavras quebradas pelo pdfParse em colunas na mesma linha — fix explícito
     result = result.replace(/DRYW\s+ALL/gi, 'DRYWALL');
 
     // 4. Unidade grudada com número → UN | 1,00
     // Lookahead (?=\d) + lookbehind (?<=\s) garante que só atua em unidades soltas
-    result = result.replace(/(^|(?<=\s))(UN|M2|M3|KG|H|VB|CJ|L|T|PAR|PCT|M)(?=\d)/gi, '$1$2 | ');
+    // M(?![23]) previne que M sozinho match o "M" de "M2" ou "M3" (Bug B fix)
+    result = result.replace(/(^|(?<=\s))(UN|M2|M3|KG|H|VB|CJ|L|T|PAR|PCT|M(?![23]))(?=\d)/gi, '$1$2 | ');
 
     // 5. Número,decimal grudado com letra maiúscula → 592,62 | Composição
     result = result.replace(/(\d,\d{2})([A-ZÀ-Ú])/g, '$1 | $2');
@@ -1102,7 +1103,41 @@ serve(async (req: Request) => {
                                                     return true;
                                                 });
 
-                                                const uniqueDbItems = dedupedCrossSection;
+                                                const uniquePreDedup = dedupedCrossSection;
+
+                                                // BUG C FIX: Dedup por item_path sozinho — captura casos onde LLM
+                                                // extrai o mesmo item com códigos diferentes (ex: 103682 vs 103682_ADP-01)
+                                                // Mantém o item com mais campos preenchidos (quantity + unit_price)
+                                                const dedupByItemPath = new Map<string, typeof filteredItems[0]>();
+                                                for (const item of uniquePreDedup) {
+                                                    if (!item.item_path) {
+                                                        dedupByItemPath.set(`__no_path__${Math.random()}`, item);
+                                                        continue;
+                                                    }
+                                                    const existing = dedupByItemPath.get(item.item_path);
+                                                    if (!existing) {
+                                                        dedupByItemPath.set(item.item_path, item);
+                                                    } else {
+                                                        const existingScore = (existing.quantity != null ? 1 : 0) + (existing.unit_price != null ? 1 : 0) + (existing.composition_code ? 1 : 0);
+                                                        const newScore = (item.quantity != null ? 1 : 0) + (item.unit_price != null ? 1 : 0) + (item.composition_code ? 1 : 0);
+                                                        if (newScore > existingScore) {
+                                                            console.log('[DEDUP-ITEM-PATH]', JSON.stringify({
+                                                                item_path: item.item_path,
+                                                                kept_code: item.composition_code,
+                                                                discarded_code: existing.composition_code,
+                                                            }));
+                                                            dedupByItemPath.set(item.item_path, item);
+                                                        } else {
+                                                            console.log('[DEDUP-ITEM-PATH]', JSON.stringify({
+                                                                item_path: item.item_path,
+                                                                kept_code: existing.composition_code,
+                                                                discarded_code: item.composition_code,
+                                                            }));
+                                                        }
+                                                    }
+                                                }
+
+                                                const uniqueDbItems = Array.from(dedupByItemPath.values());
 
                                                 console.log("[STAGE-B-DB-ATTEMPT] (Incremental)", {
                                                     file_id: file.id,

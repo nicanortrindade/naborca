@@ -10,7 +10,7 @@ declare const EdgeRuntime: any;
 
 // Worker Constants
 const WORKER_ID = `worker-${crypto.randomUUID().split('-')[0]}`;
-const CHUNK_BATCH_SIZE = 1; // Process 1 chunk per invocation to be safe, or more if fast
+const CHUNK_BATCH_SIZE = 5; // Process 5 batches per invocation (~4min each, safe under 10min watchdog)
 const MAX_EXECUTION_TIME_MS = 45000; // Leave buffer for overhead
 
 // Reuse logic from fallback? 
@@ -92,7 +92,7 @@ serve(async (req) => {
                     target_file_id: resolvedImportFileId,
                     mode: 'worker_chunk_process', // Instruction: Run specific chunk range
                     start_chunk_index: job.next_chunk_index,
-                    max_chunks: 1, // Process 1 chunk per run (Avoid 502)
+                    max_chunks: CHUNK_BATCH_SIZE, // 5 batches per run: ~4min each, safe under 10min watchdog
                     ocr_job_id: job.id // Pass ID to update progress
                 };
 

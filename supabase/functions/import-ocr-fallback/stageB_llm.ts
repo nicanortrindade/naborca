@@ -695,8 +695,8 @@ async function generateWithModelFallback(
         for (let retry = 0; retry <= 3; retry++) {
             try {
                 if (retry > 0) {
-                    // Backoff exponencial: 5s, 15s, 30s
-                    const backoffMs = [5000, 15000, 30000][retry - 1] || 30000;
+                    // Backoff exponencial: 15s, 45s, 90s (increased for Free Tier rate limits)
+                    const backoffMs = [15000, 45000, 90000][retry - 1] || 90000;
                     console.warn(`[STAGE-B] Rate limit backoff: waiting ${backoffMs}ms before retry ${retry}`);
                     await new Promise(r => setTimeout(r, backoffMs));
                     const retryAttempt = { model: modelName, kind: 'retry' as const, error_message: `Retry ${retry} after transient error`, ts: new Date().toISOString() };
