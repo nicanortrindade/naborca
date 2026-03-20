@@ -44,7 +44,8 @@ serve(async (req) => {
 
         // 2. Claim Job
         const { data: jobs, error: claimErr } = await supabase.rpc('claim_next_ocr_job', {
-            p_worker_id: WORKER_ID
+            p_worker_id: WORKER_ID,
+            p_lock_duration_sec: 600 // 10 min lock — matches watchdog timeout, extended per-batch by save_chunk_progress
         });
 
         if (claimErr) throw claimErr;
