@@ -11,8 +11,8 @@ const MAX_RETRIES = 1;
 const MODEL_FALLBACKS = [
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-2.5-flash",
+    "gemini-3.1-flash-lite",
 ] as const;
 const MODEL_NAME = MODEL_FALLBACKS[0]; // Default start model
 
@@ -150,27 +150,21 @@ EXTRACTION RULES:
    - Line has NO words with 5 or more consecutive letters (e.g. "A B C 1 2 3")
    - It is a page header, "BDI Geral: 25,00%", "Encargo Social", "Data:", "Revisao:", "Peso (%)", column headers, or percentage-only line.
 8b. **SECTION TITLE PRESERVATION (MANDATORY)**:
-    Lines that contain ONLY an item_path prefix (numeric, alphabetic or roman) followed
-    by a description text, with NO code, NO unit, NO quantity, NO price → classify as
-    kind: "composition" with confidence_score 0.9.
-    These are section headers that MUST be preserved to avoid generic fallback names
-    in the SQL finalization step (e.g. "SEÇÃO 1").
+    Lines that represent a budget section or root group (e.g., "1.", "6", "1.1.", "A -") MUST be extracted.
+    - If the line contains ONLY an item_path prefix and description (NO code, NO quantity), classify as kind: "composition".
+    - CRITICAL: Root budget titles (e.g. "1 CONSTRUÇÃO...") might have a total price mirroring the spreadsheet total. You MUST still extract them! If they have a price, classify as "synthetic_item". If they don't, classify as "composition".
+    - CRITICAL item_path FORMATTING: NEVER include trailing dots in the item_path. 
+      "1." -> "1", "1.1." -> "1.1", "6" -> "6". It must be a clean depth-based path.
+    These are section headers that MUST be preserved to avoid generic fallback names (e.g. "SEÇÃO 1", "SEÇÃO 6").
     Examples that MUST be preserved:
+    - "1 CONSTRUÇÃO DE 20 HABITAÇÕES..." (even with price at end) → description: "CONSTRUÇÃO DE 20 HABITAÇÕES...", item_path: "1", code: null
+    - "6 IMPERMEABILIZAÇÃO" → description: "IMPERMEABILIZAÇÃO", item_path: "6", code: null
     - "3 PAVIMENTAÇÃO" → description: "PAVIMENTAÇÃO", item_path: "3", code: null
     - "1.4 DRENAGEM PLUVIAL" → description: "DRENAGEM PLUVIAL", item_path: "1.4", code: null
-    - "A - SERVIÇOS INICIAIS" → description: "SERVIÇOS INICIAIS", item_path: null, code: null
-    - "II - FUNDAÇÕES" → description: "FUNDAÇÕES", item_path: null, code: null
     MANDATORY fields for section titles:
-    - description: MUST contain the title text after the prefix — NEVER null or empty
+    - description: MUST contain the title text — NEVER null or empty
     - code: MUST be null
-    - unit: MUST be null
-    - quantity: MUST be null
-    - unit_price: MUST be null
-    - total_price: MUST be null
-    - kind: MUST be "composition"
-    Set item_path from the numeric prefix if present, null otherwise.
-    NEVER discard these as garbage.
-    NEVER return description as null or empty for these items.
+    NEVER discard section headers as garbage.
 
 8d. **STOP WORDS — DISCARD THESE LINES (MANDATORY)**:
     If a candidate description matches any of these patterns, set kind = "composition",
@@ -828,7 +822,8 @@ async function processCandidatesBatch(
     apiKey: string,
     candidates: any[],
     batchIndex: number,
-    persistenceOpts?: PersistenceOpts
+    persistenceOpts?: PersistenceOpts,
+    fullText?: string
 ): Promise<{ items: StageBItem[]; error?: string; debug?: any }> {
     if (!candidates.length) return { items: [] };
 
@@ -841,10 +836,23 @@ async function processCandidatesBatch(
 
     for (const c of candidates) {
         if (c.warnings?.includes("section_title_candidate")) {
+            let sectionName = c.extracted_signals?.description_fragment || "SEÇÃO";
+            
+            // TENTATIVA DE RECUPERAR NOME REAL SE GENÉRICO (Placeholder "SEÇÃO")
+            if (sectionName === "SEÇÃO" && fullText && c.extracted_signals?.item_path) {
+                const sectionNumber = c.extracted_signals.item_path;
+                // Regex para buscar o número da seção no início da linha seguido de texto maiúsculo
+                const sectionRegex = new RegExp(`^\\s*${sectionNumber.replace(/\./g, '\\.')}\\s+([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ][A-ZÁÉÍÓÚÀÂÊÔÃÕÇ\\s,/\\-]+)`, 'm');
+                const match = fullText.match(sectionRegex);
+                if (match) {
+                    sectionName = match[1].trim();
+                }
+            }
+
             bypassedItems.push({
                 kind: "composition",
                 code: null,
-                description: c.extracted_signals?.description_fragment || "SEÇÃO",
+                description: sectionName,
                 unit: null,
                 quantity: null,
                 unit_price: null,
@@ -1365,7 +1373,8 @@ export async function executeStageB(
         startBatchIndex?: number;
         maxBatches?: number;
         onBatchResult?: (result: { batchIndex: number; candidateCount: number; items: StageBItem[]; totalBatches: number }) => Promise<void>;
-    }
+    },
+    fullText?: string
 ): Promise<StageBOutput> {
     console.log(`[STAGE-B-EXEC] Starting executeStageB. Valid Candidates: ${candidates.length}, ResumeBatch: ${resumeOpts?.startBatchIndex || 0}`);
     const batches: StageBOutput['batches'] = [];
@@ -1431,7 +1440,7 @@ export async function executeStageB(
         const batchIndex = Math.floor(i / BATCH_SIZE);
 
         // Execute Batch
-        const result = await processCandidatesBatch(apiKey, batchCandidates, batchIndex, persistenceOpts);
+        const result = await processCandidatesBatch(apiKey, batchCandidates, batchIndex, persistenceOpts, fullText);
 
         // Record Batch Stats
         batches.push({
