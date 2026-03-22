@@ -85,10 +85,10 @@ EXTRACTION RULES:
    The OCR may concatenate numeric values, bank names, or adaptation suffixes directly
    into the composition code. Apply ALL rules below in sequence:
 
-   a) Strip adaptation suffixes:
-      - Remove trailing " - ADAPT." (with or without spaces): "C0002 - ADAPT." → "C0002"
-      - Remove trailing "_ADP-01" or "_ADP-XX" patterns: "97096_ADP-01" → "97096"
-      - Remove trailing "-ADP-01" or "-ADP-XX" patterns: "97096-ADP-01" → "97096"
+   a) PRESERVE adaptation suffixes and variations:
+      - DO NOT remove suffixes like "_ADP-01" or "- ADAPT.". Keep them exactly as they are: "97096_ADP-01" → "97096_ADP-01"
+      - DO NOT remove slashes for code variations: "74210/1" → "74210/1"
+      - Suffixes are CRITICAL for budget traceability.
 
    b) Strip bank name suffixes fused to code (no space):
       - "95673SINAPI" → "95673"
@@ -102,7 +102,7 @@ EXTRACTION RULES:
    d) Strip decimal suffixes fused to code:
       - "88316,00" → "88316"
 
-   Return only the clean alphanumeric code (e.g. "C0002", "97096", "CPU-03", "JORRO001").
+   Return the clean code, STRICTLY PRESERVING slashes and ADP suffixes (e.g. "C0002", "97096_ADP-01", "74210/1", "CPU-03").
 6. **SYNTHETIC vs ANALYTIC — CLASSIFICATION RULE (MANDATORY)**:
    Use this decision tree strictly, in order:
 

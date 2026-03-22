@@ -1,4 +1,4 @@
-﻿
+
 // ------------------------------------------------------------------
 // STAGE A: Deterministic Candidate Generation (Heuristics)
 // ------------------------------------------------------------------
@@ -154,7 +154,7 @@ const REGEX_ITEM_PATH = /^\s*(\d{1,3}(?:\.\d{1,3}){1,6})\s*(.{5,})$/;
 // Captura: "1SERVIÇOS PRELIMINARES E INDIRETOS185.303,28" ou "1 SERVIÇOS..."
 // Remove o total financeiro colado no final (ex: 185.303,28)
 const REGEX_SECTION_TITLE = /^\s*(\d{1,3})\s*([A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ][A-ZÁÉÍÓÚÀÃÕÂÊÎÔÛÇ\s,\/\-().°"']{3,})(?:[\s\d.,]+%?\s*)*$/;
-const REGEX_CODE_START = /^(\d{4,10}|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/; // "94321 Description" or "CPU123 Desc" or "2451 Desc"
+const REGEX_CODE_START = /^(\d{4,10}(?:[\/-]\d+)?(?:_ADP-\d{2,})?|[A-Z]{2,5}\d{3,10})\s+(.{5,})$/i; // "94321 Description" or "CPU123 Desc" or "2451 Desc"
 const REGEX_UNIT = /\b(UN|und|m²|m2|m³|m3|kg|h|vb|m)\b/i;
 const REGEX_MONEY_OR_QTY = /\b\d{1,3}(?:\.\d{3})*(?:,\d{1,4})?\b|\b\d{1,6}(?:\.\d{1,4})?\b/g; // 1.234,56 or 1234.56
 // Guard: detecta linhas que são títulos de seção e NÃO devem ser consumidas pelo S0
@@ -291,13 +291,13 @@ export function generateCandidatesStageA(text: string, options: {
         // Ampliado 2026-02-23 (Kennedy fix):
         //   • Adiciona Composição/Composicao ao grupo de bancos
         //   • Permite espaço opcional entre banco e código numérico (ORSE 20, ORSE 2511)
-        const REGEX_ISOLATED_CODE = /^(\d{1,3}(?:\.\d{1,3}){1,6})\.(SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|Composi[çc][aã]o?)\s*(\w+(?:[-_]\w*)?)?\s*$/i;
+        const REGEX_ISOLATED_CODE = /^(\d{1,3}(?:\.\d{1,3}){1,6})\.(SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|Composi[çc][aã]o?)\s*([A-Za-z0-9_/\-]+)?\s*$/i;
 
         // S0b: linha FULL collapse — item_path + banco + código + descrição + unidade na mesma linha.
         // Ex: "1.3.0.0.2.ORSE 2511 Carga manual de material de 3ª categoriaM3"
         // Ex: "1.7.0.0.1.Composição KENE001 BANCO DE ALVENARIA COM PINTURA ACRILICAM"
         // Ex: "1.2.0.0.1.ComposiçãoKENNE011Administração local da obraMÊS"
-        const REGEX_S0B_FULL = /^(\d{1,3}(?:\.\d{1,3}){1,6})\.(SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|Composi[çc][aã]o?)\s*(\w+(?:[-_]\w*)?)?\s+(.+?)\s*(M2|M3|UN|ML|KG|MÊS|KM|VB|CJ|SC|T|HA|H|L|M|m²|m³)\s*$/i;
+        const REGEX_S0B_FULL = /^(\d{1,3}(?:\.\d{1,3}){1,6})\.(SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|Composi[çc][aã]o?)\s*([A-Za-z0-9_/\-]+)?\s+(.+?)\s*(M2|M3|UN|ML|KG|MÊS|KM|VB|CJ|SC|T|HA|H|L|M|m²|m³)\s*$/i;
 
         const KNOWN_N2_SHORT = new Set([
             'TETO', 'PISO', 'FORRO', 'SPDA', 'DADOS', 'VOZ',
@@ -319,10 +319,7 @@ export function generateCandidatesStageA(text: string, options: {
             const mFull = sLine.match(REGEX_S0B_FULL);
             if (mFull) {
                 const [, pathPart, bankPart, codePart = '', descPart, unitPart] = mFull;
-                const rawCode = codePart
-                    .replace(/\s*-\s*ADAPT\.?\s*$/i, '')
-                    .replace(/[-_]ADP[-_]?\d*/i, '')
-                    .trim();
+                const rawCode = codePart.trim();
 
                 // Coletar valores numéricos nas próximas linhas (quantidade, preço)
                 const valueLookahead: string[] = [];
@@ -366,11 +363,8 @@ export function generateCandidatesStageA(text: string, options: {
             if (!mCode) continue;
 
             const [, pathPart, bankPart, codePart = ''] = mCode;
-            // Limpar sufixos ADP do código
-            const rawCode = codePart
-                .replace(/\s*-\s*ADAPT\.?\s*$/i, '')
-                .replace(/[-_]ADP[-_]?\d*/i, '')
-                .trim();
+            // Preservar sufixos ADP e barras no código
+            const rawCode = codePart.trim();
 
             // Coletar fragmentos de descrição (sem valores, sem nova âncora)
             const descFragments: string[] = [];
@@ -645,7 +639,7 @@ export function generateCandidatesStageA(text: string, options: {
                 while (nextIdx < limit && lines[nextIdx].trim() === '') nextIdx++;
                 if (nextIdx < limit) {
                     const nextLine = lines[nextIdx].replace(/\r/g, '').trim();
-                    const REGEX_CODE_PREFIX_PEEK = /^(\d{4,10}|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)?/i;
+                    const REGEX_CODE_PREFIX_PEEK = /^(\d{4,10}(?:[\/-]\d+)?(?:_ADP-\d{2,})?|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)?/i;
 
                     if (REGEX_CODE_PREFIX_PEEK.test(nextLine)) {
                         line = line.trim() + ' ' + nextLine;
@@ -700,7 +694,7 @@ export function generateCandidatesStageA(text: string, options: {
                 let extracted_description = matchPath[2];
 
                 // Separa código colado no início do texto: "90776SINAPI..." ou "CPU2527Próprio..."
-                const REGEX_CODE_PREFIX = /^(\d{4,10}|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)?\s*(.+)$/;
+                const REGEX_CODE_PREFIX = /^(\d{4,10}(?:[\/-]\d+)?(?:_ADP-\d{2,})?|CPU\d{3,10}|[A-Z]{2,5}\d{3,10})\s*(SINAPI|ORSE|Próprio|SBC|IOPES|EMOP|SETOP|SEINFRA|AGETOP|AGESUL|CPOS)?\s*(.+)$/i;
                 const textoPart = matchPath[2]; // texto após o item_path
                 const codeMatch = textoPart.match(REGEX_CODE_PREFIX);
                 if (codeMatch) {
