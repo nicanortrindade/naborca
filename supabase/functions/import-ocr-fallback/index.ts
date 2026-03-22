@@ -526,6 +526,13 @@ function isPdfFile(file: any): { isPdf: boolean; trigger: string | null; } {
 }
 
 // -----------------------------
+// NORMALIZE OCR UNITS
+// -----------------------------
+function normalizeOcrUnits(text: string): string {
+    return text.replace(/\bM\s*\|\s*([23])\b/gi, 'M$1');
+}
+
+// -----------------------------
 // MERGE WRAPPED LINES (v3 — 2026-03-14)
 // Deterministic pre-processor: executa APÓS pdfParse, ANTES de salvar extracted_text.
 // Junta linhas de continuação para que o Gemini receba itens completos (descrição + valores).
@@ -826,7 +833,7 @@ serve(async (req: Request) => {
 
                 // Salva extracted_text no banco (com merge de linhas quebradas)
                 if (pdfData?.text) {
-                    const mergedText = splitMultiItemLines(mergeWrappedLines(pdfData.text));
+                    const mergedText = normalizeOcrUnits(splitMultiItemLines(mergeWrappedLines(pdfData.text)));
                     const normalized = normalizeColumnSpacing(mergedText);
                     pdfData.text = normalized; // Normaliza in-place: Stage A, Stage B e processMaxExtraction recebem texto limpo
                     await supabase.from('import_files').update({
