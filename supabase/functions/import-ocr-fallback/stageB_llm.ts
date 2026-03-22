@@ -1218,6 +1218,16 @@ ${JSON.stringify(candidatesContext, null, 2)}
                         });
                         continue;
                     }
+                    // FIX: UNIDADE M -> M2/M3
+                    if (safe.data.unit && safe.data.unit.toUpperCase() === 'M') {
+                        const origCand = candidates.find((c: any) => c.id === safe.data.evidence?.candidate_id);
+                        const targetLine = raw.raw_line || origCand?.raw_line || origCand?.snippet || origCand?.evidence || '';
+                        const pipeMatch = targetLine.toUpperCase().match(/\bM\s*\|\s*([23])\b/);
+                        if (pipeMatch) {
+                            safe.data.unit = `M${pipeMatch[1]}`;
+                        }
+                    }
+
                     validatedItems.push(validatePriceCoherence(safe.data));
                 } else {
                     rejectedCount++;
