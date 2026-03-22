@@ -1034,14 +1034,23 @@ serve(async (req: Request) => {
                                                     return false;
                                                 });
 
-                                                // Deduplica por dedup_key — mantém última ocorrência (caso LLM retorne descrições repetidas no mesmo batch)
+                                                // Deduplica por dedup_key — mantém item com descrição mais completa (Bug #5)
                                                 const deduped = new Map<string, typeof filteredItems[0]>();
                                                 for (const item of filteredItems) {
-                                                    deduped.set(item.dedup_key, item);
+                                                    const existing = deduped.get(item.dedup_key);
+                                                    if (!existing) {
+                                                        deduped.set(item.dedup_key, item);
+                                                    } else {
+                                                        const existingLen = (existing.description || '').length;
+                                                        const newLen = (item.description || '').length;
+                                                        if (newLen > existingLen) {
+                                                            deduped.set(item.dedup_key, item);
+                                                        }
+                                                    }
                                                 }
 
                                                 // FIX: Para itens com mesmo composition_code + item_path,
-                                                // manter apenas o que tem quantity preenchida
+                                                // manter apenas o que tem quantity preenchida ou descrição mais longa (Bug #5)
                                                 const dedupedByPath = new Map<string, typeof filteredItems[0]>();
                                                 for (const item of Array.from(deduped.values())) {
                                                     const pathKey = item.composition_code
@@ -1056,6 +1065,13 @@ serve(async (req: Request) => {
                                                         if (newScore > existingScore ||
                                                             (newScore === existingScore && item.quantity != null && existing.quantity == null)) {
                                                             dedupedByPath.set(pathKey, item);
+                                                        } else if (newScore === existingScore && !!item.quantity === !!existing.quantity) {
+                                                            // Bug #5: desempatar pela descrição mais longa se mesmos scores
+                                                            const existingLen = (existing.description || '').length;
+                                                            const newLen = (item.description || '').length;
+                                                            if (newLen > existingLen) {
+                                                                dedupedByPath.set(pathKey, item);
+                                                            }
                                                         }
                                                     }
                                                 }
