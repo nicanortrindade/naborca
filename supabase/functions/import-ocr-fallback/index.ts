@@ -437,6 +437,13 @@ async function generateDedupKey(params: { job_id: string, import_file_id: string
 }
 
 function createLineChunks(text: string): { chunk_index: number, text: string }[] {
+    // Separar número colado em texto maiúsculo
+    text = text.replace(/(\d)([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ]{3,})/g, '$1 $2');
+    // Separar texto maiúsculo colado em número/valor
+    text = text.replace(/([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ]{3,})(\d)/g, '$1 $2');
+    
+
+    
     const lines = text.split(/\r?\n/);
     const chunks = [];
     let chunkIndex = 0;
@@ -833,8 +840,16 @@ serve(async (req: Request) => {
 
                 // Salva extracted_text no banco (com merge de linhas quebradas)
                 if (pdfData?.text) {
-                    const mergedText = normalizeOcrUnits(splitMultiItemLines(mergeWrappedLines(pdfData.text)));
-                    const normalized = normalizeColumnSpacing(mergedText);
+                    let cleaned = normalizeOcrUnits(splitMultiItemLines(mergeWrappedLines(pdfData.text)));
+                    
+                    // Separar número colado em texto maiúsculo
+                    cleaned = cleaned.replace(/(\d)([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ]{3,})/g, '$1 $2');
+                    // Separar texto maiúsculo colado em número/valor
+                    cleaned = cleaned.replace(/([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ]{3,})(\d)/g, '$1 $2');
+                    
+
+
+                    const normalized = normalizeColumnSpacing(cleaned);
                     pdfData.text = normalized; // Normaliza in-place: Stage A, Stage B e processMaxExtraction recebem texto limpo
                     await supabase.from('import_files').update({
                         extracted_text: normalized
@@ -1150,7 +1165,8 @@ serve(async (req: Request) => {
                                             }
                                         }, 'stage_b_checkpoint');
                                     }
-                                }
+                                },
+                                pdfData.text
                             );
                             // --- [STAGE-B-VERIFY LOGS START] ---
                             try {
