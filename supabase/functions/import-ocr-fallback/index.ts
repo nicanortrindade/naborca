@@ -621,7 +621,7 @@ function normalizeColumnSpacing(text: string): string {
 
     // 4. Unidade grudada com número → UN | 1,00
     // Lookahead (?=\d) + lookbehind (?<=\s) garante que só atua em unidades soltas
-    result = result.replace(/(^|(?<=\s))(UN|M2|M3|KG|H|VB|CJ|L|T|PAR|PCT|M)(?=\d)/gi, '$1$2 | ');
+    result = result.replace(/(^|(?<=\s))(UN|M2|M3|KG|H|VB|CJ|L|T|PAR|PCT|M(?![23]))(?=\d)/gi, '$1$2 | ');
 
     // 5. Número,decimal grudado com letra maiúscula → 592,62 | Composição
     result = result.replace(/(\d,\d{2})([A-ZÀ-Ú])/g, '$1 | $2');
