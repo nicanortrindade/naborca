@@ -1065,7 +1065,16 @@ serve(async (req: Request) => {
                                                 const crossSectionSeen = new Map<string, boolean>();
                                                 const dedupedCrossSection = Array.from(dedupedByPath.values()).filter(item => {
                                                     if (!item.composition_code || !item.quantity || !item.unit_price) return true;
-                                                    const xKey = `${item.composition_code}|${item.quantity}|${item.unit_price}`;
+                                                    // Bug #1 fix: incluir grupo pai (2 primeiros níveis do item_path) na chave de dedup
+                                                    // para preservar itens legítimos em seções diferentes do orçamento
+                                                    // Ex: item_path "16.1.74" → parentGroup "16.1"
+                                                    //     item_path "16.2.9"  → parentGroup "16.2"
+                                                    // Mesma seção = dedup ativo (remove clones da IA)
+                                                    // Seções diferentes = ambos preservados (insumo repetido legítimo)
+                                                    const parentGroup = (item.item_path && item.item_path.includes('.'))
+                                                        ? item.item_path.split('.').slice(0, 2).join('.')
+                                                        : 'no_path';
+                                                    const xKey = `${item.composition_code}|${item.quantity}|${item.unit_price}|${parentGroup}`;
                                                     if (crossSectionSeen.has(xKey)) {
                                                         console.log('[DEDUP-CROSS-SECTION]', JSON.stringify({
                                                             code: item.composition_code,
