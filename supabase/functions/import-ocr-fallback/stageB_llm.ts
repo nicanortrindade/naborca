@@ -1218,13 +1218,22 @@ ${JSON.stringify(candidatesContext, null, 2)}
                         });
                         continue;
                     }
-                    // FIX: UNIDADE M -> M2/M3
-                    if (safe.data.unit && safe.data.unit.toUpperCase() === 'M') {
-                        const origCand = candidates.find((c: any) => c.id === safe.data.evidence?.candidate_id);
-                        const targetLine = raw.raw_line || origCand?.raw_line || origCand?.snippet || origCand?.evidence || '';
-                        const pipeMatch = targetLine.toUpperCase().match(/\bM\s*\|\s*([23])\b/);
-                        if (pipeMatch) {
-                            safe.data.unit = `M${pipeMatch[1]}`;
+                    // FIX: UNIDADE M -> M2/M3 (cobre ambos os casos)
+                    if (safe.data.unit) {
+                        const upperUnit = safe.data.unit.toUpperCase().replace(/\s/g, '');
+                        // Caso 1: Gemini retornou "M | 2" ou "M | 3" ou "M|2" etc
+                        const pipeInUnit = upperUnit.match(/^M\|([23])$/);
+                        if (pipeInUnit) {
+                            safe.data.unit = `M${pipeInUnit[1]}`;
+                        }
+                        // Caso 2: Gemini retornou "M" mas raw_line tem "M | 2" ou "M | 3"
+                        else if (upperUnit === 'M') {
+                            const origCand = candidates.find((c: any) => c.id === safe.data.evidence?.candidate_id);
+                            const targetLine = raw.raw_line || origCand?.raw_line || origCand?.snippet || origCand?.evidence || '';
+                            const pipeMatch = targetLine.toUpperCase().match(/\bM\s*\|\s*([23])\b/);
+                            if (pipeMatch) {
+                                safe.data.unit = `M${pipeMatch[1]}`;
+                            }
                         }
                     }
 
