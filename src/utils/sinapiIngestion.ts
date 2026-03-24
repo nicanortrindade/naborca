@@ -568,40 +568,7 @@ function parseCompositionSheet(
     }
     // ===== FIM NOVO =====
 
-    // DEBUG COMPLETO CSD - remover depois
-    if (sheetName === 'CSD') {
-        const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
-        console.log(`[CSD FULL] range=${sheet['!ref']} totalCols=${range.e.c + 1} totalRows=${range.e.r + 1}`);
-        
-        // Headers: linhas 8, 9, 10 (índice 0-based: 7, 8, 9)
-        for (let r = 7; r <= 10; r++) {
-            const cells: string[] = [];
-            for (let c = 0; c <= Math.min(range.e.c, 30); c++) {
-                const addr = XLSX.utils.encode_cell({r, c});
-                const cell = sheet[addr];
-                cells.push(`${XLSX.utils.encode_col(c)}${r+1}=${cell ? JSON.stringify(cell.v).substring(0,25) : '___'}`);
-            }
-            console.log(`[CSD FULL] ROW ${r+1}:`, cells.join(' | '));
-        }
-        
-        // Dados: linhas 11, 12, 13 (primeiras 3 composições)
-        for (let r = 10; r <= 12; r++) {
-            const cells: string[] = [];
-            for (let c = 0; c <= Math.min(range.e.c, 30); c++) {
-                const addr = XLSX.utils.encode_cell({r, c});
-                const cell = sheet[addr];
-                cells.push(`${XLSX.utils.encode_col(c)}${r+1}=${cell ? JSON.stringify(cell.v).substring(0,25) : '___'}`);
-            }
-            console.log(`[CSD FULL] ROW ${r+1}:`, cells.join(' | '));
-        }
-        
-        // sheet_to_json vs raw para mesma linha
-        const jsonData = XLSX.utils.sheet_to_json<any>(sheet, {header: 1, defval: null, blankrows: false});
-        console.log(`[CSD FULL] sheet_to_json rows=${jsonData.length} cols_row0=${jsonData[0]?.length} cols_row10=${jsonData[10]?.length}`);
-        console.log(`[CSD FULL] json[9] (header?):`, JSON.stringify(jsonData[9])?.substring(0, 300));
-        console.log(`[CSD FULL] json[10] (data1?):`, JSON.stringify(jsonData[10])?.substring(0, 300));
-        console.log(`[CSD FULL] json[11] (data2?):`, JSON.stringify(jsonData[11])?.substring(0, 300));
-    }
+
 
     const data = XLSX.utils.sheet_to_json<any>(sheet, {
         header: 1,
@@ -669,10 +636,7 @@ function parseCompositionSheet(
             discardedRows++;
             discardReasons['codigo_invalido'] = (discardReasons['codigo_invalido'] || 0) + 1;
             
-            // DEBUG - remover depois
-            if (discardReasons.codigo_invalido < 3) {
-                console.log(`[CSD DEBUG FULL] row=${i}`, JSON.stringify(row.slice(0, 8)));
-            }
+
             continue;
         }
 
