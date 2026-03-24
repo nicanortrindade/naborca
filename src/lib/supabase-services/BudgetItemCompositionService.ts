@@ -1,16 +1,10 @@
 import { supabase } from '../supabase';
-import { type Database } from '../../types/supabase';
 import { type BudgetItemComposition } from '../../types/domain';
 
-type Row = Database['public']['Tables']['budget_item_compositions']['Row'];
-type Insert = Database['public']['Tables']['budget_item_compositions']['Insert'];
-
-function toDomain(row: Row): BudgetItemComposition {
-    const meta = (row as any).metadata || {};
+function toDomain(row: any): BudgetItemComposition {
+    const meta = row.metadata || {};
     const basePrice = row.unit_price;
     let effectivePrice = basePrice;
-
-    // Logic: Amount takes precedence (or is exclusive strategy)
     if (meta.adjustment_amount !== undefined && meta.adjustment_amount !== null) {
         effectivePrice = basePrice + (Number(meta.adjustment_amount) || 0);
     } else if (meta.adjustment_factor !== undefined && meta.adjustment_factor !== null) {
@@ -28,7 +22,13 @@ function toDomain(row: Row): BudgetItemComposition {
         totalPrice: effectivePrice * row.quantity,
         type: row.type as any,
         updatedAt: new Date(row.updated_at),
-        metadata: meta
+        metadata: meta,
+        coefficient: row.quantity,
+        // Novos campos
+        parentCompositionId: row.parent_composition_id || null,
+        compositionCode: row.composition_code || '',
+        code: meta.code || row.composition_code || '',
+        level: meta.level ? Number(meta.level) : (row.parent_composition_id ? 2 : 1),
     };
 }
 
@@ -42,8 +42,32 @@ function toInsert(item: Partial<BudgetItemComposition>): any {
         total_price: item.totalPrice || 0,
         type: item.type as any || 'material',
         updated_at: new Date().toISOString(),
-        metadata: item.metadata
+        metadata: item.metadata,
+        parent_composition_id: item.parentCompositionId || null,
+        composition_code: item.compositionCode || null,
     };
+}
+
+function buildTree(items: BudgetItemComposition[]): BudgetItemComposition[] {
+    const map = new Map<string, BudgetItemComposition>();
+    const roots: BudgetItemComposition[] = [];
+
+    // Inicializar children
+    items.forEach(item => {
+        item.children = [];
+        if (item.id) map.set(item.id, item);
+    });
+
+    // Montar árvore
+    items.forEach(item => {
+        if (item.parentCompositionId && map.has(item.parentCompositionId)) {
+            map.get(item.parentCompositionId)!.children!.push(item);
+        } else {
+            roots.push(item);
+        }
+    });
+
+    return roots;
 }
 
 export const BudgetItemCompositionService = {
@@ -52,9 +76,13 @@ export const BudgetItemCompositionService = {
             .from('budget_item_compositions')
             .select('*')
             .eq('budget_item_id', budgetItemId);
-
         if (error) throw error;
         return data.map(toDomain);
+    },
+
+    async getTreeByBudgetItemId(budgetItemId: string): Promise<BudgetItemComposition[]> {
+        const all = await this.getByBudgetItemId(budgetItemId);
+        return buildTree(all);
     },
 
     async create(item: Partial<BudgetItemComposition>): Promise<BudgetItemComposition> {
@@ -63,13 +91,11 @@ export const BudgetItemCompositionService = {
             .insert(toInsert(item))
             .select()
             .single();
-
         if (error) throw error;
         return toDomain(data);
     },
 
     async update(id: string, item: Partial<BudgetItemComposition>): Promise<BudgetItemComposition> {
-        // Map camelCase to snake_case for the payload
         const dbPayload: any = {
             updated_at: new Date().toISOString()
         };
@@ -80,14 +106,12 @@ export const BudgetItemCompositionService = {
         if (item.totalPrice !== undefined) dbPayload.total_price = item.totalPrice;
         if (item.type !== undefined) dbPayload.type = item.type;
         if (item.metadata !== undefined) dbPayload.metadata = item.metadata;
-
         const { data, error } = await (supabase
             .from('budget_item_compositions') as any)
             .update(dbPayload)
             .eq('id', id)
             .select()
             .single();
-
         if (error) throw error;
         return toDomain(data);
     },
@@ -97,7 +121,6 @@ export const BudgetItemCompositionService = {
             .from('budget_item_compositions')
             .delete()
             .eq('id', id);
-
         if (error) throw error;
     },
 
@@ -106,7 +129,6 @@ export const BudgetItemCompositionService = {
             .from('budget_item_compositions')
             .delete()
             .eq('budget_item_id', budgetItemId);
-
         if (error) throw error;
     },
 
@@ -116,44 +138,28 @@ export const BudgetItemCompositionService = {
             .from('budget_item_compositions') as any)
             .insert(payloads)
             .select();
-
         if (error) throw error;
         return data.map(toDomain);
     },
 
-    /**
-     * Substitui ATOMICAMENTE os itens filhos de uma composição no orçamento.
-     * 1. Remove itens atuais
-     * 2. Insere novos itens
-     */
     async replaceCompositionChildren(budgetItemId: string, children: Partial<BudgetItemComposition>[]): Promise<void> {
-        // 1. Delete Existing
         const { error: deleteError } = await supabase
             .from('budget_item_compositions')
             .delete()
             .eq('budget_item_id', budgetItemId);
-
         if (deleteError) throw deleteError;
-
         if (!children || children.length === 0) return;
-
-        // 2. Insert Batch (using standard insert as we don't have complex dedupe needs here for now)
-        // Adjust items to ensure budget_item_id is set
         const itemsToInsert = children.map(c => ({
             ...c,
             budgetItemId: budgetItemId
         }));
-
         const payloads = itemsToInsert.map(toInsert);
-
-        // Supabase has limitation on number of rows per insert, chunking if safe practice
         const CHUNK_SIZE = 100;
         for (let i = 0; i < payloads.length; i += CHUNK_SIZE) {
             const chunk = payloads.slice(i, i + CHUNK_SIZE);
             const { error: insertError } = await (supabase
                 .from('budget_item_compositions') as any)
                 .insert(chunk);
-
             if (insertError) throw insertError;
         }
     }

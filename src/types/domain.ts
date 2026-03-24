@@ -85,6 +85,13 @@ export interface BudgetItemComposition {
     updatedAt: Date;
     metadata?: Record<string, any>;
     baseUnitPrice?: number;
+    coefficient?: number;
+    // Novos campos para hierarquia
+    parentCompositionId?: string | null;
+    compositionCode?: string;
+    code?: string;
+    level?: number;
+    children?: BudgetItemComposition[];
 }
 
 export interface Insumo {

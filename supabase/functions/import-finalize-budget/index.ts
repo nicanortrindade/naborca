@@ -154,9 +154,34 @@ Deno.serve(async (req) => {
             .limit(1);
 
         if (analyticFiles?.[0]?.extracted_text) {
+            const rawText = analyticFiles[0].extracted_text;
             try {
-                analyticData = AnalyticReportParser.parse(analyticFiles[0].extracted_text);
-                console.log(`[FinalizeBudget] Parsed ${Object.keys(analyticData).length} compositions for SQL consumption.`);
+                const parsed = AnalyticReportParser.parse(rawText);
+                
+                // Remapear código -> path_key usando pós-processamento
+                const pathCodeMap = new Map<string, string>();
+                const pathRegex = /(\d{1,2}\.\d{1,2}\.\d{1,2})\s+.*?Composi[çc][ãa]o\s+(?:CPU\s*)?(\S+)/gi;
+                let match;
+                while ((match = pathRegex.exec(rawText)) !== null) {
+                    const itemPath = match[1];
+                    const code = match[2].replace(/,00$/, '').replace(/\s+/g, '');
+                    if (!pathCodeMap.has(code)) {
+                        pathCodeMap.set(code, itemPath);
+                    }
+                }
+
+                const reIndexed: Record<string, any> = {};
+                for (const [code, comp] of Object.entries(parsed)) {
+                    const cleanCode = code.replace(/,00$/, '').replace(/\s+/g, '');
+                    const itemPath = pathCodeMap.get(cleanCode) || pathCodeMap.get(code);
+                    if (itemPath) {
+                        reIndexed[itemPath] = { ...comp as any, code: cleanCode };
+                    } else {
+                        reIndexed[code] = comp;
+                    }
+                }
+
+                analyticData = reIndexed;
             } catch (parseErr) {
                 console.warn(`[FinalizeBudget] AnalyticReportParser failed, continuing without analytic data:`, parseErr);
                 analyticData = {};
@@ -222,8 +247,77 @@ Deno.serve(async (req) => {
 
                     console.log(`[FinalizeBudget] RPC concluído: budget_id=${rpcData.budget_id}, stage=${rpcData.stage}`);
 
-                    // Disparar hydration-worker após RPC concluir
+                    // Disparar pós-processamento de valores zero e hydration-worker após RPC concluir
                     if (rpcData.budget_id) {
+                        // POST-PROCESS ZEROES: Corrigir itens com total_price = 0
+                        try {
+                            const { data: budgetItems } = await adminClient
+                                .from('budget_items')
+                                .select('id')
+                                .eq('budget_id', rpcData.budget_id);
+
+                            const budgetItemIds = budgetItems?.map(i => i.id) || [];
+                            
+                            if (budgetItemIds.length > 0) {
+                                const { data: zeroItemsDb } = await adminClient
+                                    .from('budget_item_compositions')
+                                    .select('id, description, budget_item_id')
+                                    .eq('total_price', 0)
+                                    .eq('user_id', targetUserId);
+
+                                const zeroItems = (zeroItemsDb || []).filter(item => budgetItemIds.includes(item.budget_item_id));
+
+                                for (const item of zeroItems) {
+                                    let m = item.description.match(
+                                        /(?:Material|Equipamento|SEDI[^)]*)\s*([A-ZÁ-Ú²³]{1,6})\s*(\d+,\d{5,9})\s+(\d+[.,]\d{2})\s+(\d+[.,]\d{2})\s+MO sem/i
+                                    );
+
+                                    if (!m) {
+                                        m = item.description.match(
+                                            /\s([A-Z²³]{1,6})\s+(\d+,\d{5,9})\s+(\d+[.,]\d{2})\s+(\d+[.,]\d{2})\s+MO sem/i
+                                        );
+                                    }
+
+                                    if (!m) {
+                                        m = item.description.match(
+                                            /\s([A-Z²³]{1,6})\s*(\d+,\d{5,9})\s+(\d+[.,]\d{2})\s+(\d+[.,]\d{2})\s*$/i
+                                        );
+                                    }
+
+                                    if (m) {
+                                        const unit = m[1];
+                                        const coef = parseFloat(m[2].replace(',', '.'));
+                                        const price = parseFloat(m[3].replace(',', '.'));
+                                        const total = parseFloat(m[4].replace(',', '.'));
+
+                                        let cleanDesc = item.description;
+                                        if (item.description.match(/(?:Material|Equipamento|SEDI[^)]*)\s*[A-ZÁ-Ú²³]{1,6}\s*\d+,\d{5,9}/i)) {
+                                            cleanDesc = item.description.replace(/\s*(Material|Equipamento|SEDI).*$/i, '').trim();
+                                        } else {
+                                            const suffixMatch = item.description.match(new RegExp(`\\s+${unit}\\s*${m[2]}\\s*${m[3]}\\s*${m[4]}.*$`, 'i')) 
+                                                             || item.description.match(new RegExp(`\\s${unit}\\s*${m[2]}\\s*${m[3]}\\s*.*$`, 'i'));
+                                            if (suffixMatch) {
+                                                cleanDesc = item.description.replace(suffixMatch[0], '').trim();
+                                            }
+                                        }
+
+                                        await adminClient
+                                            .from('budget_item_compositions')
+                                            .update({
+                                                description: cleanDesc,
+                                                unit: unit,
+                                                quantity: coef,
+                                                unit_price: price,
+                                                total_price: total
+                                            })
+                                            .eq('id', item.id);
+                                    }
+                                }
+                            }
+                        } catch (errZ: any) {
+                            console.error('[FinalizeBudget] Error cleaning zeroes:', errZ?.message);
+                        }
+
                         const hydrationPayload = {
                             budget_id: rpcData.budget_id,
                             job_id: job_id,

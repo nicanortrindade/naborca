@@ -561,7 +561,7 @@ const BudgetEditor = () => {
     // REGRA 1: Valores vêm PRONTOS do backend
     // O frontend NÃO recalcula valores, apenas calcula peso (%) dinamicamente
 
-    const loadBudget = async (silent = false) => {
+    const loadBudgetCore = async (silent = false) => {
         try {
             if (!silent) setLoading(true);
             const b = await BudgetService.getById(budgetId);
@@ -608,6 +608,35 @@ const BudgetEditor = () => {
         }
     };
 
+    // Wrapper com debounce + deduplicação: evita chamadas excessivas ao Supabase
+    const loadBudget = async (silent = false) => {
+        const now = Date.now();
+        const MIN_INTERVAL = 800; // ms entre chamadas
+
+        // Se já está carregando, ignora
+        if (isLoadingBudgetRef.current) {
+            if (import.meta.env.DEV) console.debug('[loadBudget] Ignorado - já em andamento');
+            return;
+        }
+
+        // Se chamou há menos de MIN_INTERVAL ms, agendar para depois
+        const elapsed = now - loadBudgetLastCallRef.current;
+        if (elapsed < MIN_INTERVAL) {
+            if (loadBudgetTimerRef.current) clearTimeout(loadBudgetTimerRef.current);
+            loadBudgetTimerRef.current = setTimeout(() => loadBudget(silent), MIN_INTERVAL - elapsed);
+            if (import.meta.env.DEV) console.debug(`[loadBudget] Debounced - aguardando ${MIN_INTERVAL - elapsed}ms`);
+            return;
+        }
+
+        isLoadingBudgetRef.current = true;
+        loadBudgetLastCallRef.current = now;
+        try {
+            await loadBudgetCore(silent);
+        } finally {
+            isLoadingBudgetRef.current = false;
+        }
+    };
+
     const loadSettings = async () => {
         try {
             const s = await CompanyService.get();
@@ -627,6 +656,7 @@ const BudgetEditor = () => {
     const [quantity, setQuantity] = useState(1);
     const [editingItem, setEditingItem] = useState<any>(null);
     const [itemComposition, setItemComposition] = useState<any[]>([]);
+    const [expandedCompositions, setExpandedCompositions] = useState<Set<string>>(new Set());
     const [compositionSearchTerm, setCompositionSearchTerm] = useState('');
     const [showCompositionSearch, setShowCompositionSearch] = useState(false);
     const [showABC, setShowABC] = useState(false);
@@ -662,6 +692,9 @@ const BudgetEditor = () => {
     const [inlineSearchLoading, setInlineSearchLoading] = useState(false);
     const inlineSearchRef = useRef<HTMLInputElement>(null);
     const [editingQuantity, setEditingQuantity] = useState<{ itemId: string; value: string } | null>(null);
+    const loadBudgetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const loadBudgetLastCallRef = useRef<number>(0);
+    const isLoadingBudgetRef = useRef<boolean>(false);
 
     // Estados de Busca e Filtros Multi-Base
     const [selectedBases, setSelectedBases] = useState<string[]>(() => {
@@ -2296,7 +2329,7 @@ const BudgetEditor = () => {
 
     const handleStartEdit = async (item: any) => {
         setEditingItem(item);
-        let comp = await BudgetItemCompositionService.getByBudgetItemId(item.id!);
+        let comp = await BudgetItemCompositionService.getTreeByBudgetItemId(item.id!);
 
         if (comp.length === 0 && item.compositionId) {
             const globalCompItems = await CompositionService.getItems(item.compositionId);
@@ -3781,7 +3814,6 @@ const BudgetEditor = () => {
                                 const item = row;
                                 // Dados flat na raiz (SSOT)
 
-                                if (item.level === 1) console.log(`[EDITOR RENDER] Etapa ${item.description}: Total=${item.total}`);
                                 const isGroup = item.kind === 'GROUP'; // ou item.type === 'group'
 
                                 // Leitura via campos canônicos
@@ -4815,57 +4847,197 @@ const BudgetEditor = () => {
                                                 <table className="w-full text-xs">
                                                     <thead className="bg-slate-800 text-white font-bold">
                                                         <tr>
-                                                            <th className="p-2 text-left">Código</th>
+                                                            <th className="p-2 text-left w-8"></th>
+                                                            <th className="p-2 text-left" style={{width: '60px'}}>Código</th>
                                                             <th className="p-2 text-left">Descrição</th>
-                                                            <th className="p-2 text-center">Unid.</th>
-                                                            <th className="p-2 text-right">Coef.</th>
-                                                            <th className="p-2 text-right">Unitário</th>
-                                                            <th className="p-2 text-right">Total</th>
-                                                            <th className="p-2 w-10"></th>
+                                                            <th className="p-2 text-center" style={{width: '50px'}}>Unid.</th>
+                                                            <th className="p-2 text-right" style={{width: '90px'}}>Coef.</th>
+                                                            <th className="p-2 text-right" style={{width: '90px'}}>Unitário</th>
+                                                            <th className="p-2 text-right" style={{width: '90px'}}>Total</th>
+                                                            <th className="p-2 w-8"></th>
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-100">
-                                                        {itemComposition.map((comp, idx) => (
-                                                            <tr key={idx} className="hover:bg-slate-50">
-                                                                <td className="p-2 font-mono text-slate-400">{comp.code}</td>
-                                                                <td className="p-2 font-medium text-slate-700">{comp.description}</td>
-                                                                <td className="p-2 text-center text-slate-500 italic">{comp.unit}</td>
-                                                                <td className="p-2">
-                                                                    <input
-                                                                        type="number"
-                                                                        className="w-full text-right bg-white border border-slate-200 rounded px-2 py-1 font-bold text-blue-600 focus:border-blue-400 outline-none"
-                                                                        value={comp.coefficient}
-                                                                        onChange={e => handleUpdateCompositionItem(idx, 'coefficient', Number(e.target.value))}
-                                                                    />
-                                                                </td>
-                                                                <td className="p-2 text-right text-slate-600 font-mono">
-                                                                    {new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(comp.unitPrice)}
-                                                                </td>
-                                                                <td className="p-2 text-right font-black text-slate-800">
-                                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(comp.totalPrice)}
-                                                                </td>
-                                                                <td className="p-2 text-center">
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => setItemComposition(prev => prev.filter((_, i) => i !== idx))}
-                                                                        className="text-slate-300 hover:text-red-500"
-                                                                    >
-                                                                        <Trash2 size={14} />
-                                                                    </button>
-                                                                </td>
-                                                            </tr>
-                                                        ))}
+                                                        {(() => {
+                                                            const renderRows = (items: any[], depth: number = 0): any[] => {
+                                                                const rows: any[] = [];
+                                                                items.forEach((comp: any, idx: number) => {
+                                                                    const hasChildren = comp.children && comp.children.length > 0;
+                                                                    const isExpanded = expandedCompositions?.has(comp.id);
+                                                                    
+                                                                    // Cores por nível
+                                                                    const bgColor = depth === 0 ? 'bg-white' : depth === 1 ? 'bg-slate-50/70' : 'bg-slate-100/50';
+                                                                    
+                                                                    // Tipo real do item (do metadata ou inferido)
+                                                                    const itemType = (comp.metadata?.type || '').toLowerCase();
+                                                                    const desc = (comp.description || '').trim();
+                                                                    const isComposition = hasChildren || itemType === 'composition';
+                                                                    const isMaoDeObra = !isComposition && (
+                                                                        itemType === 'mao_de_obra' || 
+                                                                        !!desc.match(/^(PEDREIRO|SERVENTE|AJUDANTE|ARMADOR|CARPINTEIRO|ELETRICISTA|ENCANADOR|PINTOR|SOLDADOR|OPERADOR|MONTADOR|MESTRE|ENGENHEIRO|CURSO DE CAPACITA|TRANSPORTE\s*-\s*HORISTA|ALIMENTA[CÇ])/i) ||
+                                                                        !!desc.match(/^(EXAMES|EPI\s*-|SEGURO\s*-|FERRAMENTAS\s*-)/i)
+                                                                    );
+                                                                    const isEquipamento = !isComposition && !isMaoDeObra && (
+                                                                        itemType === 'equipamento' ||
+                                                                        comp.unit === 'CHP' || comp.unit === 'CHI' || comp.unit === 'HP' ||
+                                                                        !!desc.match(/^(VIBRADOR|BETONEIRA|CAMINHAO|RETROESCAV|COMPACTADOR|GUINCHO|GRUA|PLACA VIBRAT|TANQUE DE ACO)/i)
+                                                                    );
+                                                                    const isMaterial = !isComposition && !isMaoDeObra && !isEquipamento && (
+                                                                        itemType === 'material' ||
+                                                                        !!desc.match(/^(AREIA|CIMENTO|BRITA|PEDRA|PREGO|CONCRETO|ARGAMASSA|TIJOLO|BLOCO|TUBO|TINTA|FERRO|ACO|MADEIRA|ADITIVO)/i)
+                                                                    );
+
+                                                                    const borderColor = isComposition ? 'border-blue-400' :
+                                                                                       isMaterial ? 'border-emerald-400' :
+                                                                                       isEquipamento ? 'border-amber-400' :
+                                                                                       isMaoDeObra ? 'border-violet-400' : 'border-slate-200';
+                                                                    
+                                                                    const typeIcon = isComposition ? '📦' :
+                                                                                    isMaterial ? '🧱' :
+                                                                                    isEquipamento ? '⚙️' :
+                                                                                    isMaoDeObra ? '👷' : '📋';
+
+                                                                    rows.push(
+                                                                        <tr key={comp.id || `${depth}-${idx}`} className={`${bgColor} hover:bg-blue-50/50 transition-colors group`}>
+                                                                            {/* Seta expand/collapse */}
+                                                                            <td className="p-1 text-center w-8" style={{paddingLeft: `${depth * 12 + 4}px`}}>
+                                                                                {hasChildren ? (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => {
+                                                                                            setExpandedCompositions(prev => {
+                                                                                                const next = new Set(prev);
+                                                                                                if (next.has(comp.id)) next.delete(comp.id);
+                                                                                                else next.add(comp.id);
+                                                                                                return next;
+                                                                                            });
+                                                                                        }}
+                                                                                        className="text-slate-400 hover:text-blue-600 transition-all p-0.5 rounded hover:bg-blue-100"
+                                                                                    >
+                                                                                        <span className={`inline-block transition-transform duration-200 text-[10px] ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                                                                                    </button>
+                                                                                ) : (
+                                                                                    <span className="text-slate-300 text-[7px]">●</span>
+                                                                                )}
+                                                                            </td>
+                                                                            {/* Código */}
+                                                                            <td className="p-2 font-mono text-[10px] text-slate-400 whitespace-nowrap">
+                                                                                {comp.code || comp.compositionCode || ''}
+                                                                            </td>
+                                                                            {/* Descrição */}
+                                                                            <td className={`p-2 border-l-2 ${borderColor}`} style={{paddingLeft: `${depth * 16 + 8}px`}}>
+                                                                                <div className="flex items-center gap-1.5">
+                                                                                    <span className="text-[10px] opacity-60">{typeIcon}</span>
+                                                                                    <span className={`${depth === 0 ? 'font-semibold text-slate-800 text-[12px]' : depth === 1 ? 'text-slate-600 text-[11px]' : 'text-slate-500 text-[10px] italic'}`}>
+                                                                                        {comp.description}
+                                                                                    </span>
+                                                                                    {hasChildren && (
+                                                                                        <span className="ml-1.5 text-[8px] font-medium text-blue-500 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                                                                                            {comp.children.length} sub
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                            </td>
+                                                                            {/* Unidade */}
+                                                                            <td className="p-2 text-center text-slate-500 text-[10px] font-mono">{comp.unit}</td>
+                                                                            {/* Coeficiente */}
+                                                                            <td className="p-2 text-right font-mono text-[10px]">
+                                                                                {depth === 0 ? (
+                                                                                    <input
+                                                                                        type="number"
+                                                                                        className="w-full text-right bg-white border border-slate-200 rounded px-2 py-1 font-bold text-blue-700 focus:border-blue-400 focus:ring-1 focus:ring-blue-200 outline-none text-[11px] transition-colors"
+                                                                                        value={comp.coefficient || comp.quantity}
+                                                                                        onChange={e => handleUpdateCompositionItem(idx, 'coefficient', Number(e.target.value))}
+                                                                                    />
+                                                                                ) : (
+                                                                                    <span className="text-slate-500 tabular-nums">{(comp.coefficient || comp.quantity || 0).toFixed(7)}</span>
+                                                                                )}
+                                                                            </td>
+                                                                            {/* Preço Unitário */}
+                                                                            <td className="p-2 text-right text-slate-600 font-mono text-[10px] tabular-nums">
+                                                                                {new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(comp.unitPrice)}
+                                                                            </td>
+                                                                            {/* Total */}
+                                                                            <td className="p-2 text-right font-mono text-[10px] tabular-nums">
+                                                                                <span className={depth === 0 ? 'font-bold text-slate-800' : depth === 1 ? 'text-slate-600' : 'text-slate-400'}>
+                                                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(comp.totalPrice)}
+                                                                                </span>
+                                                                            </td>
+                                                                            {/* Ações */}
+                                                                            <td className="p-2 text-center">
+                                                                                {depth === 0 && (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => setItemComposition(prev => prev.filter((_, i) => i !== idx))}
+                                                                                        className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                                    >
+                                                                                        <Trash2 size={14} />
+                                                                                    </button>
+                                                                                )}
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                    if (hasChildren && isExpanded) {
+                                                                        rows.push(...renderRows(comp.children, depth + 1));
+                                                                    }
+                                                                });
+                                                                return rows;
+                                                            };
+                                                            return renderRows(itemComposition);
+                                                        })()}
                                                     </tbody>
-                                                    <tfoot className="bg-slate-50 font-black border-t">
-                                                        <tr>
-                                                            <td colSpan={5} className="p-2 text-right uppercase text-[10px] text-slate-400">Total CPU:</td>
-                                                            <td className="p-2 text-right text-blue-700">
-                                                                {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(itemComposition.reduce((acc, c) => acc + c.totalPrice, 0))}
+                                                    {/* Rodapé com total */}
+                                                    <tfoot>
+                                                        <tr className="bg-gradient-to-r from-slate-800 to-slate-700 border-t-2 border-slate-600">
+                                                            <td colSpan={6} className="p-3 text-right uppercase text-[11px] font-semibold tracking-wider text-slate-300">
+                                                                Total CPU:
                                                             </td>
-                                                            <td></td>
+                                                            <td className="p-3 text-right">
+                                                                <span className="text-white font-bold text-sm tabular-nums">
+                                                                    {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(itemComposition.reduce((acc: number, c: any) => acc + (c.totalPrice || 0), 0))}
+                                                                </span>
+                                                            </td>
+                                                            <td className="bg-slate-800"></td>
                                                         </tr>
                                                     </tfoot>
                                                 </table>
+                                                {/* Legenda + Expandir/Recolher */}
+                                                <div className="flex items-center justify-between p-2.5 bg-slate-50 border-t border-slate-100">
+                                                    <div className="flex items-center gap-3 text-[8px] text-slate-400">
+                                                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-400 inline-block"></span> Composição</span>
+                                                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span> Material</span>
+                                                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block"></span> Equipamento</span>
+                                                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-violet-400 inline-block"></span> Mão de Obra</span>
+                                                    </div>
+                                                    <div className="flex gap-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                const allIds = new Set<string>();
+                                                                const collect = (items: any[]) => {
+                                                                    items.forEach((item: any) => {
+                                                                        if (item.children && item.children.length > 0) {
+                                                                            allIds.add(item.id);
+                                                                            collect(item.children);
+                                                                        }
+                                                                    });
+                                                                };
+                                                                collect(itemComposition);
+                                                                setExpandedCompositions(allIds);
+                                                            }}
+                                                            className="text-[9px] text-slate-500 hover:text-blue-600 px-2.5 py-1 rounded-md hover:bg-blue-50 border border-transparent hover:border-blue-200 transition-all"
+                                                        >
+                                                            ↕ Expandir Tudo
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setExpandedCompositions(new Set())}
+                                                            className="text-[9px] text-slate-500 hover:text-blue-600 px-2.5 py-1 rounded-md hover:bg-blue-50 border border-transparent hover:border-blue-200 transition-all"
+                                                        >
+                                                            ↕ Recolher Tudo
+                                                        </button>
+                                                    </div>
+                                                </div>
                                             </div>
                                         ) : (
                                             <div className="text-center py-10 border-2 border-dashed border-slate-100 rounded-2xl bg-slate-50/30">

@@ -24,7 +24,11 @@ const BANKS = 'SINAPI|ORSE|SICRO3?|CPU|Próprio|PROP|EMOP|KENE|SBC|SETOP|CDHU|CP
 
 function parseNum(s: string | undefined): number {
     if (!s) return 0;
-    const cleaned = s.replace(/\./g, '').replace(',', '.');
+    // Remove pontos de milhar (ponto seguido de 3 dígitos antes de vírgula ou fim)
+    // Ex: 708.162,14 → 708162,14 → 708162.14
+    const cleaned = s
+        .replace(/\.(?=\d{3}(,|\s|$))/g, '')  // Remove pontos de milhar
+        .replace(',', '.');                      // Troca vírgula decimal por ponto
     return parseFloat(cleaned) || 0;
 }
 
@@ -92,12 +96,71 @@ function splitGluedNumbers(s: string): { coef: number; price: number } | null {
     return null;
 }
 
+function validateAndFixNumbers(coef: number, price: number, total: number, rawNumString: string): { coef: number; price: number; total: number } {
+    // Se coef * price já bate com total (tolerância 5%), retorna como está
+    if (total > 0 && Math.abs(coef * price - total) / total < 0.05) {
+        return { coef, price, total };
+    }
+    
+    // Tentar re-parsear a string bruta com diferentes pontos de corte
+    // Procurar padrão: coeficiente (5-9 decimais) + preço (com ou sem milhar) + total
+    const rawClean = rawNumString.trim();
+    const parts = rawClean.split(/\s+/);
+    
+    if (parts.length === 3) {
+        // Já separados por espaço — tentar variações
+        const p0 = parseNum(parts[0]);
+        const p1 = parseNum(parts[1]);
+        const p2 = parseNum(parts[2]);
+        
+        // Variação: mover último dígito do coef para início do price
+        const s0 = parts[0];
+        const s1 = parts[1];
+        if (s0.length > 3) {
+            const altCoefStr = s0.substring(0, s0.length - 1);
+            const altPriceStr = s0.charAt(s0.length - 1) + s1;
+            const altCoef = parseNum(altCoefStr);
+            const altPrice = parseNum(altPriceStr);
+            if (p2 > 0 && Math.abs(altCoef * altPrice - p2) / p2 < 0.05) {
+                return { coef: altCoef, price: altPrice, total: p2 };
+            }
+        }
+        
+        // Variação: mover primeiro dígito do price para final do coef
+        if (s1.length > 1) {
+            const altCoefStr = s0 + s1.charAt(0);
+            const altPriceStr = s1.substring(1);
+            const altCoef = parseNum(altCoefStr);
+            const altPrice = parseNum(altPriceStr);
+            if (p2 > 0 && Math.abs(altCoef * altPrice - p2) / p2 < 0.05) {
+                return { coef: altCoef, price: altPrice, total: p2 };
+            }
+        }
+    }
+    
+    return { coef, price, total };
+}
+
 export class AnalyticReportParser {
     static parse(text: string): Record<string, AnalyzedComposition> {
         const compositions: Record<string, AnalyzedComposition> = {};
         if (!text) return compositions;
 
-        const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        // PRÉ-PROCESSAMENTO
+        text = text.replace(/\s*\|\s*/g, '\n');
+        text = text.replace(/(Composição Auxiliar)/gi, '\n$1\n');
+        text = text.replace(/(?<!Composição\s)(Composição)(?!\s+Auxiliar)/gi, '\n$1\n');
+        text = text.replace(/(Insumo)/gi, '\n$1\n');
+        text = text.replace(/(\d)([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ]{3,})/g, '$1 $2');
+        text = text.replace(/([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ]{3,})(\d)/g, '$1 $2');
+        text = text.replace(/(?<=.)(UNXMÊS|M²|M³|M2|M3|ML|KG|UN|VB|H|L)(\s*\d+[,.]?\d*)/gi, '\n$1$2');
+        // Separar números colados com preço que tem ponto de milhar (ex: 708.162,14)
+        text = text.replace(/(\d+,\d{7})(\d{1,3}\.\d{3},\d{2})(\d+,\d{2})/g, '$1 $2 $3');
+        text = text.replace(/(\d+,\d{7})(\d+,\d{2})(\d+,\d{2})/g, '$1 $2 $3');
+        text = text.replace(/(\d+,\d{2})(SINAPI|ORSE|Próprio)/gi, '$1 $2');
+        text = text.replace(/(SINAPI|ORSE|Próprio)([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ])/gi, '$1 $2');
+
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
         let currentComp: AnalyzedComposition | null = null;
 
         let state: 'IDLE' | 'IN_COMPOSITION_HEADER' | 'IN_ITEM_HEADER' | 'IGNORE_UNTIL_MARKER' = 'IDLE';
@@ -107,9 +170,24 @@ export class AnalyticReportParser {
         let itemBuffer: string[] = [];
 
         const categoryRegex = /(CANT|SEDI|REVES|FUND|ESTRU|ACAB|INST|MAT|EQUIP|SERV)\s*-\s*[A-ZÀÁÂÃÉÊÍÓÔÕÚÜÇ\s]+$/i;
-        const headerUnitNumsRegex = /^(UNXMÊS|M²|M³|M2|M3|ML|KG|UN|VB|H|L)\d/i;
+        const headerUnitNumsRegex = /^(UNXMÊS|M²|M³|M2|M3|ML|KG|UN|VB|H|L)\s*\d/i;
 
-        for (let line of lines) {
+
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i];
+
+            // Ignorar marcador de seção auxiliar (não afeta lógica)
+            if (line.match(/^Composi[çc][õo]es\s+Auxiliares/i)) {
+                continue;
+            }
+            // Ignorar cabeçalhos de página repetidos do OCR
+            if (line.match(/^Secretaria\s+de\s+Aten[çc][ãa]o/i)) {
+                continue;
+            }
+            if (line.match(/^C[óo]digo\s*Banco\s*Descri[çc][ãa]o\s*Tipo\s*Und\s*Quant/i)) {
+                continue;
+            }
+
             const isComposicao = line.toLowerCase() === 'composição';
             const isComposicaoAux = line.toLowerCase() === 'composição auxiliar' || line.toLowerCase() === 'composição auxiliar ref';
             const isInsumo = line.toLowerCase() === 'insumo';
@@ -142,7 +220,7 @@ export class AnalyticReportParser {
                 continue;
             }
 
-            if (line.match(/^Observação/i)) {
+            if (line.match(/^Observa[çc][ãa]o/i)) {
                 state = 'IGNORE_UNTIL_MARKER';
                 continue;
             }
@@ -152,18 +230,21 @@ export class AnalyticReportParser {
                 if (!line) continue;
             }
 
-            const lowerLine = line.toLowerCase();
-            if (lowerLine === 'material' || lowerLine === 'materialunxmês') {
-                continue;
-            }
+            // Clean up glued garbage at the end of lines
+            line = line.replace(/\s*MO sem LS.*$/i, '')
+                       .replace(/\s*Valor do BDI.*$/i, '')
+                       .replace(/\s*MO com LS.*$/i, '')
+                       .replace(/\s*(?:Material|Equipamento|Mão de Obra|Serviços|Taxas|Franquia)\s*$/i, '')
+                       .trim();
 
-            if (lowerLine.startsWith('mo sem ls') || lowerLine.startsWith('valor do bdi')) {
+            if (!line || line.toLowerCase() === 'materialunxmês') {
                 continue;
             }
 
             if (state === 'IN_COMPOSITION_HEADER') {
+                // Check 1: unidade + número na mesma linha
                 if (headerUnitNumsRegex.test(line)) {
-                    const match = line.match(/^(UNXMÊS|M²|M³|M2|M3|ML|KG|UN|VB|H|L)(\d.*)$/i);
+                    const match = line.match(/^(UNXMÊS|M²|M³|M2|M3|ML|KG|UN|VB|H|L)\s*(\d.*)$/i);
                     let unit = 'UN';
                     if (match) {
                         unit = match[1].toUpperCase();
@@ -173,7 +254,6 @@ export class AnalyticReportParser {
                     let code = 'UNKNOWN';
                     let desc = fullDesc;
 
-                    // Tenta: CODE BANCO descrição (com espaço entre código e banco)
                     const altMatch = fullDesc.match(new RegExp(`^([A-Z0-9.\\-,/]+)\\s+(?:${BANKS})\\s*(.*)$`, 'i'));
                     if (altMatch) {
                         code = altMatch[1];
@@ -193,15 +273,53 @@ export class AnalyticReportParser {
                         items: []
                     };
                     state = 'IDLE';
-                } else {
+                }
+                // Check 2: unidade sozinha na linha (ex: "H", "M³", "UN")
+                else if (line.match(/^(UNXMÊS|M²|M³|M2|M3|ML|KG|UN|VB|H|L)$/i)) {
+                    // Verificar se a próxima linha começa com número
+                    const nextLine = (i + 1 < lines.length) ? lines[i + 1] : '';
+                    if (nextLine.match(/^\d/)) {
+                        const unit = line.toUpperCase();
+
+                        const fullDesc = headerBuffer.join(' ');
+                        let code = 'UNKNOWN';
+                        let desc = fullDesc;
+
+                        const altMatch = fullDesc.match(new RegExp(`^([A-Z0-9.\\-,/]+)\\s+(?:${BANKS})\\s*(.*)$`, 'i'));
+                        if (altMatch) {
+                            code = altMatch[1];
+                            desc = altMatch[2];
+                        } else {
+                            const spaceIdx = fullDesc.indexOf(' ');
+                            if (spaceIdx !== -1) {
+                                code = fullDesc.substring(0, spaceIdx);
+                                desc = fullDesc.substring(spaceIdx + 1).replace(new RegExp(`^(?:${BANKS})\\s*`, 'i'), '');
+                            }
+                        }
+
+                        currentComp = {
+                            code: code.trim().replace(/,00$/, ''),
+                            description: desc.trim(),
+                            unit: unit,
+                            items: []
+                        };
+                        state = 'IDLE';
+                        i++; // pular a próxima linha (é o número que já processamos como parte do header)
+                    } else {
+                        headerBuffer.push(line);
+                    }
+                }
+                else {
                     headerBuffer.push(line);
                 }
             } else if (state === 'IN_ITEM_HEADER') {
-                const numsMatch = line.match(/^(.*?)(\d+[,]\d+(?:[,.]\d+)*)$/);
+                // Casar números normais (1,23) e números com ponto de milhar (708.162,14)
+                const numTokenRx = '(?:\\d{1,3}(?:\\.\\d{3})+,\\d{2}|\\d+[,.]\\d+)';
+                const numsMatch = line.match(new RegExp(`^(.*?)\\s*((?:${numTokenRx}\\s*){1,3})$`));
 
-                if (numsMatch && /\d+[,]\d+/.test(numsMatch[2]) && (numsMatch[2].match(/,/g) || []).length >= 1) {
+                if (numsMatch && /\d+[,.]\d+/.test(numsMatch[2])) {
                     const prefixString = numsMatch[1];
-                    const numString = numsMatch[2];
+                    const numString = numsMatch[2].trim();
 
                     if (prefixString) {
                         itemBuffer.push(prefixString);
@@ -211,13 +329,11 @@ export class AnalyticReportParser {
                     let code = '';
                     let desc = fullText;
 
-                    // Tenta: CODE BANCO descrição (com espaço entre código e banco)
                     const mCodeBank = fullText.match(new RegExp(`^([A-Z0-9.\\-,/]+)\\s+(?:${BANKS})\\s*(.*)$`, 'i'));
                     if (mCodeBank) {
                         code = mCodeBank[1];
                         desc = mCodeBank[2];
                     } else {
-                        // Tenta: CODE colado a BANCO sem espaço (ex: 88316,00SINAPI... já virou 88316 SINAPI após buffer join)
                         const mCodeGlued = fullText.match(new RegExp(`^([A-Z0-9.\\-,/]+?)(?:${BANKS})(.*)$`, 'i'));
                         if (mCodeGlued) {
                             code = mCodeGlued[1];
@@ -234,20 +350,32 @@ export class AnalyticReportParser {
                     }
 
                     let unit = 'UN';
-                    const unitMatch = desc.match(new RegExp(`(?:Material)?(${UNITS_ALT})$`, 'i'));
+                    const unitMatch = desc.match(new RegExp(`(?:Material|Equipamento|Mão de Obra)?(${UNITS_ALT})$`, 'i'));
                     if (unitMatch) {
                         unit = unitMatch[1].toUpperCase();
                         desc = desc.substring(0, desc.length - unitMatch[0].length).trim();
                     } else if (prefixString) {
-                        const preUnitMatch = prefixString.match(new RegExp(`(?:Material)?(${UNITS_ALT})$`, 'i'));
+                        const preUnitMatch = prefixString.match(new RegExp(`(?:Material|Equipamento|Mão de Obra)?(${UNITS_ALT})$`, 'i'));
                         if (preUnitMatch) {
                             unit = preUnitMatch[1].toUpperCase();
                         }
                     }
 
-                    const parsedNums = splitGluedNumbers(numString);
-                    const coef = parsedNums ? parsedNums.coef : 1;
-                    const price = parsedNums ? parsedNums.price : 0;
+                    let coef = 1;
+                    let price = 0;
+                    if (numString.includes(' ')) {
+                        const parts = numString.split(/\s+/);
+                        coef = parseNum(parts[0]);
+                        price = parts.length > 1 ? parseNum(parts[1]) : 0;
+                        const rawTotal = parts.length > 2 ? parseNum(parts[2]) : 0;
+                        const fixed = validateAndFixNumbers(coef, price, rawTotal, numString);
+                        coef = fixed.coef;
+                        price = fixed.price;
+                    } else {
+                        const parsedNums = splitGluedNumbers(numString);
+                        coef = parsedNums ? parsedNums.coef : 1;
+                        price = parsedNums ? parsedNums.price : 0;
+                    }
 
                     if (currentComp) {
                         currentComp.items.push({
@@ -271,8 +399,17 @@ export class AnalyticReportParser {
             compositions[currentComp.code] = currentComp;
         }
 
+        // Filter out garbage codes (e.g. "original,", "POR", "de")
+        for (const code of Object.keys(compositions)) {
+            if (!/\d/.test(code) && !/^CPU/i.test(code) && !/^COMP/i.test(code)) {
+                delete compositions[code];
+            }
+        }
+
         const totalItems = Object.values(compositions).reduce((sum, c) => sum + c.items.length, 0);
-        console.log(`[AnalyticParser] Parsed ${Object.keys(compositions).length} compositions with ${totalItems} total items.`);
+        const mainComps = Object.keys(compositions).filter(k => k.includes('.')).length;
+        const auxComps = Object.keys(compositions).filter(k => /^\d{4,6}$/.test(k)).length;
+        console.log(`[AnalyticParser] Parsed ${Object.keys(compositions).length} compositions (${mainComps} main, ${auxComps} auxiliary) with ${totalItems} total items.`);
 
         return compositions;
     }
