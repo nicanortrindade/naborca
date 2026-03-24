@@ -25,7 +25,7 @@ const SinapiImporter = () => {
 
     // Import Form State
     const [selectedUf] = useState('BA');
-    const [selectedYear] = useState(2025);
+    const [selectedYear, setSelectedYear] = useState(2025);
     const [selectedMonth, setSelectedMonth] = useState(1);
     const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
     const [fileValidation, setFileValidation] = useState<{
@@ -376,12 +376,15 @@ const SinapiImporter = () => {
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-slate-700 mb-1">Ano</label>
-                                        <input
-                                            type="number"
+                                        <select
                                             value={selectedYear}
-                                            disabled
-                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 text-slate-600"
-                                        />
+                                            onChange={(e) => setSelectedYear(Number(e.target.value))}
+                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                        >
+                                            {[2024, 2025, 2026].map(y => (
+                                                <option key={y} value={y}>{y}</option>
+                                            ))}
+                                        </select>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-slate-700 mb-1">Mês</label>

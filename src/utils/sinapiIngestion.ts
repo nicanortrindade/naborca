@@ -10,6 +10,7 @@
 
 import * as XLSX from 'xlsx';
 import { SinapiService } from '../lib/supabase-services/SinapiService';
+import { supabase } from '../lib/supabase';
 
 // Re-export multi-file ingestion
 export { ingestSinapiMultipleFiles } from './sinapiMultiFileIngestion';
@@ -64,6 +65,15 @@ export interface IngestionResult {
     };
     errors: string[];
     logs: string[];
+    csdPrices?: Array<{
+        description: string;
+        unit: string;
+        price: number;
+        group: string;
+        regime: string;
+    }>;
+    /** Cabeçalhos da aba Analítico: mapeamento direto código → descrição da composição */
+    analyticHeaders?: Array<{ code: string; description: string }>;
 }
 
 // =====================================================
@@ -491,8 +501,74 @@ function parseInputSheet(sheet: XLSX.WorkSheet, sheetName: string, uf: string = 
     return results;
 }
 
-function parseCompositionSheet(sheet: XLSX.WorkSheet, sheetName: string): ParsedComposition[] {
+function parseCompositionSheet(
+    sheet: XLSX.WorkSheet, 
+    sheetName: string, 
+    uf?: string, 
+    regime?: string, 
+    result?: IngestionResult
+): ParsedComposition[] {
     const results: ParsedComposition[] = [];
+
+    // ===== NOVO: Extrair preços de composição do CSD/CCD via células raw =====
+    // As abas CSD/CCD do formato 2025 NÃO contêm o código na coluna B (sempre 0).
+    // Estratégia: ler a descrição (col C) e o preço da UF, depois vincular ao código
+    // via sinapi_compositions (que já foi populada pela aba Analítico).
+
+    if ((sheetName === 'CSD' || sheetName === 'CCD') && uf && result) {
+        const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+        
+        // Encontrar a coluna da UF na linha 9 (row index 8)
+        let ufPriceCol = -1;
+        for (let c = 0; c <= range.e.c; c++) {
+            const cell = sheet[XLSX.utils.encode_cell({r: 8, c})]; // Row 9 = index 8
+            if (cell && String(cell.v).toUpperCase().trim() === uf.toUpperCase()) {
+                ufPriceCol = c;
+                break;
+            }
+        }
+        
+        if (ufPriceCol === -1) {
+            console.warn(`[CSD/CCD] Coluna da UF "${uf}" não encontrada na linha 9!`);
+        } else {
+            console.log(`[CSD/CCD] UF "${uf}" encontrada na coluna ${XLSX.utils.encode_col(ufPriceCol)} (índice ${ufPriceCol})`);
+            
+            const compositionPrices: Array<{description: string, unit: string, price: number, group: string}> = [];
+            
+            // Dados começam na linha 11 (row index 10)
+            for (let r = 10; r <= range.e.r; r++) {
+                const descCell = sheet[XLSX.utils.encode_cell({r, c: 2})]; // Col C = Descrição
+                const unitCell = sheet[XLSX.utils.encode_cell({r, c: 3})]; // Col D = Unidade
+                const priceCell = sheet[XLSX.utils.encode_cell({r, c: ufPriceCol})]; // Col UF = Preço
+                const groupCell = sheet[XLSX.utils.encode_cell({r, c: 0})]; // Col A = Grupo
+                
+                const desc = descCell ? String(descCell.v).trim() : '';
+                const unit = unitCell ? String(unitCell.v).trim() : '';
+                const price = priceCell ? Number(priceCell.v) : 0;
+                const group = groupCell ? String(groupCell.v).trim() : '';
+                
+                if (desc && price > 0) {
+                    compositionPrices.push({description: desc, unit, price, group});
+                }
+            }
+            
+            console.log(`[CSD/CCD] ${sheetName}: ${compositionPrices.length} composições com preço > 0 para ${uf}`);
+            if (compositionPrices.length > 0) {
+                console.log(`[CSD/CCD] Sample:`, JSON.stringify(compositionPrices[0]));
+            }
+            
+            // Retornar os preços para vincular depois (via descrição → código)
+            // Armazenar no resultado para processamento posterior
+            result.csdPrices = result.csdPrices || [];
+            result.csdPrices.push(...compositionPrices.map(cp => ({
+                ...cp,
+                regime: regime || 'NAO_DESONERADO'
+            })));
+        }
+    }
+    // ===== FIM NOVO =====
+
+
 
     const data = XLSX.utils.sheet_to_json<any>(sheet, {
         header: 1,
@@ -559,6 +635,8 @@ function parseCompositionSheet(sheet: XLSX.WorkSheet, sheetName: string): Parsed
         if (!code || code.length < 4) {
             discardedRows++;
             discardReasons['codigo_invalido'] = (discardReasons['codigo_invalido'] || 0) + 1;
+            
+
             continue;
         }
 
@@ -589,10 +667,12 @@ function parseCompositionSheet(sheet: XLSX.WorkSheet, sheetName: string): Parsed
 function parseAnalyticSheet(sheet: XLSX.WorkSheet): {
     compositions: ParsedComposition[];
     items: ParsedCompositionItem[];
+    analyticHeaders: Array<{ code: string; description: string }>;
 } {
     const compositions: ParsedComposition[] = [];
     const items: ParsedCompositionItem[] = [];
     const compositionSet = new Set<string>();
+    const analyticHeaders: Array<{ code: string; description: string }> = [];
 
     const data = XLSX.utils.sheet_to_json<any>(sheet, {
         header: 1,
@@ -611,7 +691,7 @@ function parseAnalyticSheet(sheet: XLSX.WorkSheet): {
         console.error('[SINAPI PARSER] aba=Analítico ERRO: Header não encontrado nas primeiras 50 linhas');
         console.log('[SINAPI PARSER] aba=Analítico Sample (primeiras 5 linhas):',
             data.slice(0, 5).map(row => (row as any[]).slice(0, 12)));
-        return { compositions, items };
+        return { compositions, items, analyticHeaders };
     }
 
     const headers = (data[headerRow] as any[]).map(h => cleanText(h));
@@ -680,6 +760,19 @@ function parseAnalyticSheet(sheet: XLSX.WorkSheet): {
                     description: currentCompDesc,
                     unit: currentCompUnit
                 });
+
+                // Capturar cabeçalho (linha sem itemCode) para mapeamento CSD/CCD
+                // A linha de cabeçalho tem compCode válido mas itemCode vazio (itemCode vem depois)
+                const tipoItem = itemTypeCol.index >= 0 ? cleanText(row[itemTypeCol.index]) : '';
+                if (!tipoItem || tipoItem === '' || tipoItem === '0') {
+                    // Esta é a linha de cabeçalho da composição — a descrição vem da col E (compDesc)
+                    // mas no SINAPI 2025 compDescCol pode ser -1, então também tentamos itemCodeCol como fallback (col E)
+                    const headerDesc = currentCompDesc ||
+                        (itemCodeCol.index >= 0 ? cleanText(row[itemCodeCol.index]) : '');
+                    if (headerDesc && headerDesc.length > 3) {
+                        analyticHeaders.push({ code: currentCompCode, description: headerDesc });
+                    }
+                }
             }
         }
 
@@ -707,8 +800,8 @@ function parseAnalyticSheet(sheet: XLSX.WorkSheet): {
         }
     }
 
-    console.log(`[SINAPI PARSER] Analítico Results: ${compositions.length} compositions, ${validItems} items, ${discardedItems} items discarded`);
-    return { compositions, items };
+    console.log(`[SINAPI PARSER] Analítico Results: ${compositions.length} compositions, ${validItems} items, ${discardedItems} items discarded, ${analyticHeaders.length} headers captured`);
+    return { compositions, items, analyticHeaders };
 }
 
 function parsePricesSheet(sheet: XLSX.WorkSheet, sheetName: string): {
@@ -933,7 +1026,7 @@ export async function ingestSinapiFromFile(
                             const regime = mapping.regime!;
                             onProgress?.({ step: sheetName, message: `Processando Composições ${sheetName}...`, current: step++, total: totalSteps });
 
-                            const compositions = parseCompositionSheet(sheet, sheetName);
+                            const compositions = parseCompositionSheet(sheet, sheetName, uf, regime, result);
                             log(`aba=${sheetName} Lidos=${compositions.length} composições.`);
 
                             if (compositions.length === 0) {
@@ -978,8 +1071,12 @@ export async function ingestSinapiFromFile(
                         else if (mapping.type === 'analytic') {
                             onProgress?.({ step: sheetName, message: 'Processando Analítico Completo...', current: step++, total: totalSteps });
 
-                            const { compositions, items } = parseAnalyticSheet(sheet);
+                            const { compositions, items, analyticHeaders } = parseAnalyticSheet(sheet);
                             log(`aba=${sheetName} Lidos=${compositions.length} composições e ${items.length} itens de composição.`);
+
+                            // Armazenar headers para uso no [CSD/CCD LINK]
+                            result.analyticHeaders = (result.analyticHeaders || []).concat(analyticHeaders);
+                            log(`aba=${sheetName} analyticHeaders capturados: ${analyticHeaders.length}`);
 
                             if (items.length === 0) {
                                 log(`[WARN] Aba Analítico vazia. Importação de itens falhará.`);
@@ -1027,6 +1124,83 @@ export async function ingestSinapiFromFile(
                                     log(`aba=${sheetName} -> regime=${regime}: ${itemCount} itens vinculados.`);
                                 }
                             }
+
+                            // ===== VINCULAR PREÇOS CSD/CCD VIA DESCRIÇÃO → CÓDIGO =====
+                            if (result.csdPrices && result.csdPrices.length > 0) {
+                                console.log(`[CSD/CCD LINK] Iniciando vinculação de ${result.csdPrices.length} preços via descrição (FromFile)`);
+
+                                // Construir mapa descrição→código usando os dados RAW do Analítico (só cabeçalhos)
+                                const descToCode = new Map<string, string>();
+                                if (result.analyticHeaders && result.analyticHeaders.length > 0) {
+                                    for (const header of result.analyticHeaders) {
+                                        const normDesc = header.description.trim().toUpperCase();
+                                        descToCode.set(normDesc, header.code);
+                                    }
+                                    console.log(`[CSD/CCD LINK] Mapa criado via analyticHeaders: ${descToCode.size} composições`);
+                                } else {
+                                    // Fallback: buscar do banco
+                                    const {data: dbComps} = await supabase
+                                        .from('sinapi_compositions')
+                                        .select('code, description')
+                                        .eq('source', 'SINAPI');
+                                    if (dbComps) {
+                                        for (const comp of dbComps) {
+                                            const normDesc = comp.description.trim().toUpperCase();
+                                            descToCode.set(normDesc, comp.code);
+                                        }
+                                    }
+                                    console.log(`[CSD/CCD LINK] Mapa criado via banco (fallback): ${descToCode.size} composições`);
+                                }
+
+                                if (descToCode.size > 0) {
+                                    // Vincular preços por regime
+                                    for (const regime of ['NAO_DESONERADO', 'DESONERADO'] as const) {
+                                        const regimePrices = result.csdPrices.filter((p) => p.regime === regime);
+                                        if (regimePrices.length === 0) continue;
+
+                                        // Deduplicar por descrição
+                                        const dedupMap = new Map<string, typeof regimePrices[0]>();
+                                        for (const rp of regimePrices) {
+                                            dedupMap.set(rp.description.trim().toUpperCase(), rp);
+                                        }
+                                        const dedupedPrices = Array.from(dedupMap.values());
+                                        console.log(`[CSD/CCD LINK] ${regime}: ${regimePrices.length} raw → ${dedupedPrices.length} após dedup`);
+
+                                        const {data: pt} = await supabase
+                                            .from('sinapi_price_tables')
+                                            .select('id')
+                                            .eq('source', 'SINAPI')
+                                            .eq('uf', uf)
+                                            .eq('competence', competence)
+                                            .eq('regime', regime)
+                                            .single();
+
+                                        if (!pt) continue;
+
+                                        const pricesToInsert: Array<{composition_code: string, price: number}> = [];
+                                        let matched = 0, unmatched = 0;
+
+                                        for (const cp of dedupedPrices) {
+                                            const normDesc = cp.description.trim().toUpperCase();
+                                            const code = descToCode.get(normDesc);
+                                            if (code) {
+                                                pricesToInsert.push({composition_code: code, price: cp.price});
+                                                matched++;
+                                            } else {
+                                                unmatched++;
+                                            }
+                                        }
+
+                                        console.log(`[CSD/CCD LINK] ${regime}: ${matched} matched, ${unmatched} unmatched de ${dedupedPrices.length}`);
+
+                                        if (pricesToInsert.length > 0) {
+                                            const count = await SinapiService.batchUpsertCompositionPrices(pt.id, pricesToInsert);
+                                            result.counts.composition_prices += (typeof count === 'number' ? count : pricesToInsert.length);
+                                        }
+                                    }
+                                }
+                            }
+                            // ===== FIM VINCULAR PREÇOS =====
                         }
 
                         // PREÇOS (Analítico com Custo)
@@ -1236,7 +1410,7 @@ export async function ingestSinapiReferencia(
                 const regime = mapping.regime!;
                 onProgress?.({ step: sheetName, message: `Processando ${sheetName} (${regime})...`, current: step++, total: totalSteps });
 
-                const compositions = parseCompositionSheet(sheet, sheetName);
+                const compositions = parseCompositionSheet(sheet, sheetName, uf, regime, result);
                 log(`aba=${sheetName} regime=${regime} uf=${uf} competencia=${competence} rows=${compositions.length}`);
 
                 if (compositions.length === 0) {
@@ -1283,8 +1457,12 @@ export async function ingestSinapiReferencia(
             else if (mapping.type === 'analytic') {
                 onProgress?.({ step: sheetName, message: 'Processando analítico...', current: step++, total: totalSteps });
 
-                const { compositions, items } = parseAnalyticSheet(sheet);
+                const { compositions, items, analyticHeaders } = parseAnalyticSheet(sheet);
                 log(`aba=${sheetName} uf=${uf} competencia=${competence} rows=${items.length}`);
+
+                // Armazenar headers para uso no [CSD/CCD LINK]
+                result.analyticHeaders = (result.analyticHeaders || []).concat(analyticHeaders);
+                log(`aba=${sheetName} analyticHeaders capturados: ${analyticHeaders.length}`);
 
                 if (items.length === 0) {
                     log(`AVISO: aba=${sheetName} retornou 0 itens (possível erro de parsing)`);
@@ -1319,6 +1497,89 @@ export async function ingestSinapiReferencia(
                         result.errors.push(`Aba ${sheetName}: tabela de preço não encontrada para ${regime}`);
                     }
                 }
+
+                // ===== VINCULAR PREÇOS CSD/CCD VIA DESCRIÇÃO → CÓDIGO =====
+                if (result.csdPrices && result.csdPrices.length > 0) {
+                    console.log(`[CSD/CCD LINK] Iniciando vinculação de ${result.csdPrices.length} preços via descrição`);
+
+                    // Construir mapa descrição→código usando os dados RAW do Analítico (só cabeçalhos)
+                    const descToCode = new Map<string, string>();
+                    if (result.analyticHeaders && result.analyticHeaders.length > 0) {
+                        for (const header of result.analyticHeaders) {
+                            const normDesc = header.description.trim().toUpperCase();
+                            descToCode.set(normDesc, header.code);
+                        }
+                        console.log(`[CSD/CCD LINK] Mapa criado via analyticHeaders: ${descToCode.size} composições`);
+                    } else {
+                        // Fallback: buscar do banco
+                        const {data: dbComps} = await supabase
+                            .from('sinapi_compositions')
+                            .select('code, description')
+                            .eq('source', 'SINAPI');
+                        if (dbComps) {
+                            for (const comp of dbComps) {
+                                const normDesc = comp.description.trim().toUpperCase();
+                                descToCode.set(normDesc, comp.code);
+                            }
+                        }
+                        console.log(`[CSD/CCD LINK] Mapa criado via banco (fallback): ${descToCode.size} composições`);
+                    }
+
+                    if (descToCode.size > 0) {
+                        // Vincular preços por regime
+                        for (const regime of ['NAO_DESONERADO', 'DESONERADO'] as const) {
+                            const regimePrices = result.csdPrices.filter((p) => p.regime === regime);
+                            if (regimePrices.length === 0) continue;
+
+                            // Deduplicar por descrição
+                            const dedupMap = new Map<string, typeof regimePrices[0]>();
+                            for (const rp of regimePrices) {
+                                dedupMap.set(rp.description.trim().toUpperCase(), rp);
+                            }
+                            const dedupedPrices = Array.from(dedupMap.values());
+                            console.log(`[CSD/CCD LINK] ${regime}: ${regimePrices.length} raw → ${dedupedPrices.length} após dedup`);
+
+                            const {data: pt} = await supabase
+                                .from('sinapi_price_tables')
+                                .select('id')
+                                .eq('source', 'SINAPI')
+                                .eq('uf', uf)
+                                .eq('competence', competence)
+                                .eq('regime', regime)
+                                .single();
+
+                            if (!pt) {
+                                console.warn(`[CSD/CCD LINK] PriceTable não encontrada para ${regime}`);
+                                continue;
+                            }
+
+                            let matched = 0, unmatched = 0;
+                            const pricesToInsert: Array<{composition_code: string, price: number}> = [];
+
+                            for (const cp of dedupedPrices) {
+                                const normDesc = cp.description.trim().toUpperCase();
+                                const code = descToCode.get(normDesc);
+                                if (code) {
+                                    pricesToInsert.push({composition_code: code, price: cp.price});
+                                    matched++;
+                                } else {
+                                    unmatched++;
+                                }
+                            }
+
+                            console.log(`[CSD/CCD LINK] ${regime}: ${matched} matched, ${unmatched} unmatched de ${dedupedPrices.length}`);
+
+                            if (pricesToInsert.length > 0) {
+                                const count = await SinapiService.batchUpsertCompositionPrices(pt.id, pricesToInsert);
+                                console.log(`[CSD/CCD LINK] ${regime}: ${count} preços persistidos`);
+                                result.counts.composition_prices += (typeof count === 'number' ? count : pricesToInsert.length);
+                            }
+                        }
+                    } else {
+                        console.warn('[CSD/CCD LINK] Mapa vazio — nenhum preço vinculado');
+                    }
+                }
+                // ===== FIM VINCULAR PREÇOS =====
             }
         }
 
