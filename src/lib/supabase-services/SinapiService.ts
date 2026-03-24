@@ -684,7 +684,7 @@ export const SinapiService = {
 
         const [tables, inputs, compositions, mockTables] = await Promise.all([
             tableQuery,
-            (supabase.from('insumos') as any).select('id', { count: 'exact' }),
+            (supabase.from('sinapi_inputs_base') as any).select('id', { count: 'exact' }),
             (supabase.from('sinapi_compositions') as any).select('id', { count: 'exact' }),
             (supabase.from('sinapi_price_tables') as any).select('id', { count: 'exact' }).eq('is_mock', true)
         ]);

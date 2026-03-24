@@ -727,7 +727,7 @@ function parseAnalyticSheet(sheet: XLSX.WorkSheet): {
         console.error('[SINAPI PARSER] aba=Analítico ERRO: Header não encontrado nas primeiras 50 linhas');
         console.log('[SINAPI PARSER] aba=Analítico Sample (primeiras 5 linhas):',
             data.slice(0, 5).map(row => (row as any[]).slice(0, 12)));
-        return { compositions, items };
+        return { compositions, items, analyticHeaders };
     }
 
     const headers = (data[headerRow] as any[]).map(h => cleanText(h));
