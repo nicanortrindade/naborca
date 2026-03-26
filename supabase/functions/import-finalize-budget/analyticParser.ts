@@ -149,7 +149,7 @@ export class AnalyticReportParser {
         // PRÉ-PROCESSAMENTO
         text = text.replace(/\s*\|\s*/g, '\n');
         text = text.replace(/(Composição Auxiliar)/gi, '\n$1\n');
-        text = text.replace(/(?<!Composição\s)(Composição)(?!\s+Auxiliar)/gi, '\n$1\n');
+        text = text.replace(/(?<!Composição\s)(Composição)(?!\s+Auxiliar)(?!\s+de\b)(?!\s+original\b)/gi, '\n$1\n');
         text = text.replace(/(Insumo)/gi, '\n$1\n');
         text = text.replace(/(\d)([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ]{3,})/g, '$1 $2');
         text = text.replace(/([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ]{3,})(\d)/g, '$1 $2');
@@ -159,6 +159,8 @@ export class AnalyticReportParser {
         text = text.replace(/(\d+,\d{7})(\d+,\d{2})(\d+,\d{2})/g, '$1 $2 $3');
         text = text.replace(/(\d+,\d{2})(SINAPI|ORSE|Próprio)/gi, '$1 $2');
         text = text.replace(/(SINAPI|ORSE|Próprio)([A-ZÁÉÍÓÚÀÂÊÔÃÕÇ])/gi, '$1 $2');
+        text = text.replace(/\bCPU([A-Z]{2,})/g, 'CPU $1');
+        text = text.replace(/([A-Z]{2,})(Próprio)/g, '$1 $2');
 
         const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
         let currentComp: AnalyzedComposition | null = null;
@@ -184,7 +186,12 @@ export class AnalyticReportParser {
             if (line.match(/^Secretaria\s+de\s+Aten[çc][ãa]o/i)) {
                 continue;
             }
-            if (line.match(/^C[óo]digo\s*Banco\s*Descri[çc][ãa]o\s*Tipo\s*Und\s*Quant/i)) {
+            if (line.match(/C.digo\s*Banco\s*Descri/i)) {
+                const cpuMatch = line.match(/Composi[çc][ãa]o\s+(CPU\s+.+)$/i) 
+                              || line.match(/Composi[çc][ãa]o\s+(\d{3,6},?\d{0,2}\s+(?:SINAPI|ORSE|CPOS|SBC).+)$/i);
+                if (cpuMatch) {
+                    lines.splice(i + 1, 0, 'Composição', cpuMatch[1].trim());
+                }
                 continue;
             }
 
@@ -202,16 +209,27 @@ export class AnalyticReportParser {
                 continue;
             }
 
-            if (isComposicaoAux) {
+            if (isComposicaoAux || isInsumo) {
+                // CORREÇÃO B: Se estávamos coletando header, tentar finalizar antes de mudar estado
+                if (state === 'IN_COMPOSITION_HEADER' && headerBuffer.length > 0) {
+                    const emergencyDesc = headerBuffer.join(' ');
+                    const cpuEmergency = emergencyDesc.match(
+                      /^(CPU\s+\S+)\s+(?:Próprio|PROP|SINAPI|ORSE|SICRO3?|EMOP|KENE|SBC|SETOP|CDHU|CPOS(?:\/CDHU)?|COMP)\s*(.*)/i
+                    );
+                    if (cpuEmergency) {
+                        const eCode = cpuEmergency[1].replace(/^CPU\s+/i, '').replace(/,\d+$/, '').trim();
+                        const eDesc = (cpuEmergency[2] || '').replace(new RegExp(`\\s*(?:${UNITS_ALT})\\s*$`, 'i'), '').trim();
+                        let eUnit = 'UN';
+                        const unitTail = (cpuEmergency[2] || '').match(new RegExp(`(${UNITS_ALT})\\s*$`, 'i'));
+                        if (unitTail) eUnit = unitTail[1].toUpperCase();
+                        currentComp = { code: eCode, description: eDesc, unit: eUnit, items: [] };
+                        if (currentComp.code && currentComp.code !== 'UNKNOWN') {
+                            compositions[currentComp.code] = currentComp;
+                        }
+                    }
+                }
                 state = 'IN_ITEM_HEADER';
-                currentSection = 'composition';
-                itemBuffer = [];
-                continue;
-            }
-
-            if (isInsumo) {
-                state = 'IN_ITEM_HEADER';
-                currentSection = 'insumo';
+                currentSection = isComposicaoAux ? 'composition' : 'insumo';
                 itemBuffer = [];
                 continue;
             }
@@ -254,15 +272,24 @@ export class AnalyticReportParser {
                     let code = 'UNKNOWN';
                     let desc = fullDesc;
 
-                    const altMatch = fullDesc.match(new RegExp(`^([A-Z0-9.\\-,/]+)\\s+(?:${BANKS})\\s*(.*)$`, 'i'));
-                    if (altMatch) {
-                        code = altMatch[1];
-                        desc = altMatch[2];
+                    // CORREÇÃO A: Detectar "CPU XXXX Banco Descrição" antes do regex genérico
+                    const cpuPrefixMatch = fullDesc.match(
+                      /^(CPU\s+\S+)\s+(?:Próprio|PROP|SINAPI|ORSE|SICRO3?|EMOP|KENE|SBC|SETOP|CDHU|CPOS(?:\/CDHU)?|COMP)\s*(.*)/i
+                    );
+                    if (cpuPrefixMatch) {
+                        code = cpuPrefixMatch[1].replace(/^CPU\s+/i, '').replace(/,\d+$/, '').trim();
+                        desc = cpuPrefixMatch[2] || '';
                     } else {
-                        const spaceIdx = fullDesc.indexOf(' ');
-                        if (spaceIdx !== -1) {
-                            code = fullDesc.substring(0, spaceIdx);
-                            desc = fullDesc.substring(spaceIdx + 1).replace(new RegExp(`^(?:${BANKS})\\s*`, 'i'), '');
+                        const altMatch = fullDesc.match(new RegExp(`^([A-Z0-9.\\-,/]+)\\s+(?:${BANKS})\\s*(.*)$`, 'i'));
+                        if (altMatch) {
+                            code = altMatch[1];
+                            desc = altMatch[2];
+                        } else {
+                            const spaceIdx = fullDesc.indexOf(' ');
+                            if (spaceIdx !== -1) {
+                                code = fullDesc.substring(0, spaceIdx);
+                                desc = fullDesc.substring(spaceIdx + 1).replace(new RegExp(`^(?:${BANKS})\\s*`, 'i'), '');
+                            }
                         }
                     }
 
@@ -285,15 +312,24 @@ export class AnalyticReportParser {
                         let code = 'UNKNOWN';
                         let desc = fullDesc;
 
-                        const altMatch = fullDesc.match(new RegExp(`^([A-Z0-9.\\-,/]+)\\s+(?:${BANKS})\\s*(.*)$`, 'i'));
-                        if (altMatch) {
-                            code = altMatch[1];
-                            desc = altMatch[2];
+                        // CORREÇÃO A: Detectar "CPU XXXX Banco Descrição" antes do regex genérico
+                        const cpuPrefixMatch2 = fullDesc.match(
+                          /^(CPU\s+\S+)\s+(?:Próprio|PROP|SINAPI|ORSE|SICRO3?|EMOP|KENE|SBC|SETOP|CDHU|CPOS(?:\/CDHU)?|COMP)\s*(.*)/i
+                        );
+                        if (cpuPrefixMatch2) {
+                            code = cpuPrefixMatch2[1].replace(/^CPU\s+/i, '').replace(/,\d+$/, '').trim();
+                            desc = cpuPrefixMatch2[2] || '';
                         } else {
-                            const spaceIdx = fullDesc.indexOf(' ');
-                            if (spaceIdx !== -1) {
-                                code = fullDesc.substring(0, spaceIdx);
-                                desc = fullDesc.substring(spaceIdx + 1).replace(new RegExp(`^(?:${BANKS})\\s*`, 'i'), '');
+                            const altMatch = fullDesc.match(new RegExp(`^([A-Z0-9.\\-,/]+)\\s+(?:${BANKS})\\s*(.*)$`, 'i'));
+                            if (altMatch) {
+                                code = altMatch[1];
+                                desc = altMatch[2];
+                            } else {
+                                const spaceIdx = fullDesc.indexOf(' ');
+                                if (spaceIdx !== -1) {
+                                    code = fullDesc.substring(0, spaceIdx);
+                                    desc = fullDesc.substring(spaceIdx + 1).replace(new RegExp(`^(?:${BANKS})\\s*`, 'i'), '');
+                                }
                             }
                         }
 

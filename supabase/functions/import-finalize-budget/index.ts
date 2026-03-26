@@ -171,13 +171,17 @@ Deno.serve(async (req) => {
                 }
 
                 const reIndexed: Record<string, any> = {};
-                for (const [code, comp] of Object.entries(parsed)) {
-                    const cleanCode = code.replace(/,00$/, '').replace(/\s+/g, '');
+                for (const [key, comp] of Object.entries(parsed)) {
+                    const code = (comp as any).code || key;
+                    const cleanCode = code.replace(/,00$/, '').replace(/^CPU\s+/i, '').trim();
                     const itemPath = pathCodeMap.get(cleanCode) || pathCodeMap.get(code);
-                    if (itemPath) {
-                        reIndexed[itemPath] = { ...comp as any, code: cleanCode };
-                    } else {
-                        reIndexed[code] = comp;
+
+                    // Sempre manter chave por código limpo
+                    reIndexed[cleanCode] = { ...(comp as any), code: cleanCode };
+
+                    // Se existe path diferente, adicionar também por path_key
+                    if (itemPath && itemPath !== cleanCode) {
+                        reIndexed[itemPath] = { ...(comp as any), code: cleanCode };
                     }
                 }
 

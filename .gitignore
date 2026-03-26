@@ -22,3 +22,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+dump_*.sql
+.env
+
+test_*.ts
+test_*.ps1
+debug_*.ts
+debug_*.txt
+update_settings*.ts
+workspace_metadata.json
+test_run.txt
