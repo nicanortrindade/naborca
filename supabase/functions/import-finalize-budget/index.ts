@@ -253,6 +253,55 @@ Deno.serve(async (req) => {
 
                     // Disparar pós-processamento de valores zero e hydration-worker após RPC concluir
                     if (rpcData.budget_id) {
+
+                        // ─── PERSIST ANALYTIC DATA ───────────────────────────────────────
+                        // Popula budget_item_compositions com dados hierárquicos do PDF analítico.
+                        // Deve rodar ANTES do hydration-worker para que itens já populados
+                        // sejam marcados como 'analytic_file' e o worker não os sobrescreva.
+                        if (Object.keys(analyticData).length > 0) {
+                            try {
+                                console.log(`[FinalizeBudget] Calling persist_analytic_data for budget ${rpcData.budget_id} (${Object.keys(analyticData).length} compositions)...`);
+                                const { data: persistCount, error: persistError } = await adminClient.rpc('persist_analytic_data', {
+                                    p_budget_id: rpcData.budget_id,
+                                    p_user_id: targetUserId,
+                                    p_analytic_data: analyticData
+                                });
+                                if (persistError) {
+                                    console.error(`[FinalizeBudget] persist_analytic_data error:`, persistError.message);
+                                } else {
+                                    console.log(`[FinalizeBudget] persist_analytic_data: ${persistCount} compositions inserted/updated`);
+                                }
+                            } catch (errP: any) {
+                                console.error('[FinalizeBudget] persist_analytic_data threw:', errP?.message);
+                            }
+                        } else {
+                            console.log('[FinalizeBudget] No analytic data available, skipping persist_analytic_data.');
+                        }
+                        // ─────────────────────────────────────────────────────────────────
+
+                        // ─── EXPAND COMPOSITION HIERARCHY (SINAPI) ───────────────────────
+                        // Expande recursivamente itens tipo 'composition' buscando sub-itens
+                        // na base SINAPI, criando a árvore completa com parent_composition_id.
+                        try {
+                            console.log(`[FinalizeBudget] Expanding composition hierarchy for budget ${rpcData.budget_id}...`);
+                            const { data: expandCount, error: expandError } = await adminClient.rpc('expand_composition_hierarchy', {
+                                p_budget_id: rpcData.budget_id,
+                                p_user_id: targetUserId,
+                                p_uf: params.uf || 'BA',
+                                p_competence: params.competence || null,
+                                p_desonerado: params.desonerado !== false,
+                                p_max_depth: 4
+                            });
+                            if (expandError) {
+                                console.error(`[FinalizeBudget] expand_composition_hierarchy error:`, expandError.message);
+                            } else {
+                                console.log(`[FinalizeBudget] expand_composition_hierarchy: ${expandCount} sub-compositions inserted`);
+                            }
+                        } catch (errE: any) {
+                            console.error('[FinalizeBudget] expand_composition_hierarchy threw:', errE?.message);
+                        }
+                        // ─────────────────────────────────────────────────────────────────
+
                         // POST-PROCESS ZEROES: Corrigir itens com total_price = 0
                         try {
                             const { data: budgetItems } = await adminClient

@@ -4750,7 +4750,7 @@ const BudgetEditor = () => {
                                                     type="number"
                                                     step="0.01"
                                                     className={`w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all text-sm font-medium ${itemComposition.length > 0 ? 'bg-slate-50 text-slate-400' : 'text-blue-600'}`}
-                                                    value={itemComposition.length > 0 ? itemComposition.reduce((acc, c) => acc + c.totalPrice, 0) : editingItem.unitPrice}
+                                                    value={itemComposition.length > 0 ? Math.round(itemComposition.reduce((acc, c) => acc + (c.totalPrice || 0), 0) * 100) / 100 : Math.round((editingItem.unitPrice || 0) * 100) / 100}
                                                     readOnly={itemComposition.length > 0}
                                                     onChange={e => setEditingItem({ ...editingItem, unitPrice: Number(e.target.value) })}
                                                 />
@@ -4898,9 +4898,9 @@ const BudgetEditor = () => {
                                                                                     isMaoDeObra ? '👷' : '📋';
 
                                                                     rows.push(
-                                                                        <tr key={comp.id || `${depth}-${idx}`} className={`${bgColor} hover:bg-blue-50/50 transition-colors group`}>
+                                                                        <tr key={comp.id || `${depth}-${idx}`} className={`${bgColor} hover:bg-blue-50/50 transition-colors group`} style={{borderLeft: depth > 0 ? `${3}px solid ${depth === 1 ? '#3b82f6' : '#94a3b8'}` : 'none', marginLeft: `${depth * 8}px`}}>
                                                                             {/* Seta expand/collapse */}
-                                                                            <td className="p-1 text-center w-8" style={{paddingLeft: `${depth * 12 + 4}px`}}>
+                                                                            <td className="p-1 text-center w-8" style={{paddingLeft: `${depth * 24 + 4}px`}}>
                                                                                 {hasChildren ? (
                                                                                     <button
                                                                                         type="button"
@@ -4925,10 +4925,10 @@ const BudgetEditor = () => {
                                                                                 {comp.code || comp.compositionCode || ''}
                                                                             </td>
                                                                             {/* Descrição */}
-                                                                            <td className={`p-2 border-l-2 ${borderColor}`} style={{paddingLeft: `${depth * 16 + 8}px`}}>
+                                                                            <td className={`p-2 border-l-2 ${borderColor}`} style={{paddingLeft: `${depth * 28 + 8}px`}}>
                                                                                 <div className="flex items-center gap-1.5">
                                                                                     <span className="text-[10px] opacity-60">{typeIcon}</span>
-                                                                                    <span className={`${depth === 0 ? 'font-semibold text-slate-800 text-[12px]' : depth === 1 ? 'text-slate-600 text-[11px]' : 'text-slate-500 text-[10px] italic'}`}>
+                                                                                    <span className={`${depth === 0 ? 'font-bold text-slate-900 text-[12px]' : depth === 1 ? 'font-medium text-slate-700 text-[11px]' : 'text-slate-500 text-[10px] italic'}`}>
                                                                                         {comp.description}
                                                                                     </span>
                                                                                     {hasChildren && (
@@ -4950,7 +4950,7 @@ const BudgetEditor = () => {
                                                                                         onChange={e => handleUpdateCompositionItem(idx, 'coefficient', Number(e.target.value))}
                                                                                     />
                                                                                 ) : (
-                                                                                    <span className="text-slate-500 tabular-nums">{(comp.coefficient || comp.quantity || 0).toFixed(7)}</span>
+                                                                                    <span className="text-slate-500 tabular-nums">{(comp.coefficient || comp.quantity || 0).toFixed(4)}</span>
                                                                                 )}
                                                                             </td>
                                                                             {/* Preço Unitário */}

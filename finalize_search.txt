@@ -1,7 +1,0 @@
-﻿7: 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-18: const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-23: const authHeader = req.headers.get('Authorization');
-29: // Check for Service Role Bypass
-34: console.log("FINALIZE_BUDGET_AUTH=service_role");
-37: const authClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: authHeader } } });
-49: // Resolve User ID if Service Mode (Bypass)
