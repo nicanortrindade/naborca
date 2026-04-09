@@ -187,6 +187,21 @@ serve(async (req) => {
             if (syncErr) console.error(`[OCR-WORKER] Sync Failed:`, syncErr);
             else console.log(`[OCR-WORKER] Sync Result:`, JSON.stringify(syncRes));
 
+            // 6. [KEY FIX] If OCR completed, trigger import-extract-worker so chunk
+            //    extraction starts with the now-available extracted_text.
+            //    Previously the UI triggered it too early (before text was ready), causing "0 extraídos".
+            if (finalStatus === 'completed') {
+                console.log(`[OCR-WORKER] OCR done for file ${job.import_file_id}. Triggering import-extract-worker for job ${job.job_id}.`);
+                fetch(`${SUPABASE_URL}/functions/v1/import-extract-worker`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ job_id: job.job_id })
+                }).catch((e: any) => console.error('[OCR-WORKER] Failed to trigger import-extract-worker:', e));
+            }
+
             // Auto-continue (Queue Self) if needed
             if (shouldRedispatch) {
                 console.log(`[OCR-WORKER] Re-dispatching worker for continued job.`);
