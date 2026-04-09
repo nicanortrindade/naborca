@@ -417,16 +417,23 @@ Deno.serve(async (req) => {
                 }).eq('id', job_id);
 
             } else {
-                // OCR text not ready yet — ocr-worker will trigger us again after extracted_text is saved.
-                // Do NOT mark as failed (would break UI state). Return silently (202).
-                console.warn("[ExtractWorker] OCR text not ready yet. Returning 202 – awaiting ocr-worker trigger.");
+                console.error("[ExtractWorker] FATAL: Neither Synthetic nor Analytic files have OCR text.");
+                const msg = "Nenhum arquivo (Sintético ou Analítico) contém texto OCR válido para extração.";
+
+                await safeUpdateImportFile(job_id, {
+                    extraction_status: 'failed',
+                    extraction_reason: 'all_files_ocr_missing',
+                    extraction_last_error: msg,
+                    extraction_completed_at: new Date().toISOString()
+                });
+
                 return new Response(JSON.stringify({
                     ok: false,
-                    code: "OCR_TEXT_PENDING",
-                    message: "Texto OCR ainda não disponível. O worker será re-disparado pelo ocr-worker após o OCR concluir.",
+                    code: "OCR_TEXT_MISSING",
+                    message: msg,
                     files_debug: candidates
                 }), {
-                    status: 202,
+                    status: 400,
                     headers: { ...corsHeaders, 'Content-Type': 'application/json' }
                 });
             }
