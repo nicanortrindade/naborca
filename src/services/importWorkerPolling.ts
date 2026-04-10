@@ -149,19 +149,26 @@ export async function runImportParseWorkerUntilDone(params: {
                 .select('*', { count: 'exact', head: true })
                 .eq('job_id', jobId);
 
-            // Buscar progresso real dos batches
+            // BUGFIX (mesma fix do import-ocr-fallback linha 1475):
+            // Removido .eq('doc_role', 'synthetic') — arquivos com doc_role 'unknown' (padrão)
+            // nunca apareciam, causando batchProgress=undefined e UI presa em "0 extraídos".
             let batchProgress: { current: number; total: number; percent: number } | undefined;
-            const { data: batchMetaRaw } = await supabase
+            const { data: allFilesMeta } = await supabase
                 .from('import_files' as any)
                 .select('metadata')
-                .eq('job_id', jobId)
-                .eq('doc_role', 'synthetic')
-                .single();
-            const batchMeta = batchMetaRaw as any;
+                .eq('job_id', jobId);
 
-            if (batchMeta?.metadata?.stageB?.total_batches) {
-                const total = batchMeta.metadata.stageB.total_batches as number;
-                const current = (batchMeta.metadata.stageB.last_persisted_batch_index as number ?? -1) + 1;
+            let bestBatchFile: any = null;
+            for (const fd of (allFilesMeta || [])) {
+                if ((fd as any)?.metadata?.stageB?.total_batches) {
+                    bestBatchFile = fd;
+                    break;
+                }
+            }
+
+            if (bestBatchFile?.metadata?.stageB?.total_batches) {
+                const total = bestBatchFile.metadata.stageB.total_batches as number;
+                const current = (bestBatchFile.metadata.stageB.last_persisted_batch_index as number ?? -1) + 1;
                 const percent = Math.min(99, Math.round((current / total) * 100));
                 batchProgress = { current, total, percent };
             }
